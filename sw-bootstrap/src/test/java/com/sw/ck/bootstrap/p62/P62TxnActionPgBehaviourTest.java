@@ -1,44 +1,65 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.dto.FormDataUpdateRequest;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
+import com.sw.ck.form.service.FormDataDeleteService;
+import com.sw.ck.form.service.FormDataUpdateService;
 import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.service.FormImportExportService;
 import com.sw.ck.form.service.FormSubmitService;
+import com.sw.ck.form.txn.entity.TxnReservationEntity;
 import com.sw.ck.form.txn.model.C1PolicyModel;
 import com.sw.ck.form.txn.model.C1PolicyView;
 import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.model.TxnInvokeResult;
+import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.form.txn.service.TxnActionExecutor;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.form.txn.service.TxnActionTxOperations;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -70,15 +91,15 @@ class P62TxnActionPgBehaviourTest {
 
     private FormDefService formDefService;
     private FormSubmitService submitService;
-    private com.sw.ck.form.service.FormDataUpdateService updateService;
-    private com.sw.ck.form.service.FormDataDeleteService deleteService;
-    private com.sw.ck.form.service.FormImportExportService importExportService;
-    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
+    private FormDataUpdateService updateService;
+    private FormDataDeleteService deleteService;
+    private FormImportExportService importExportService;
+    private C1PolicyService c1PolicyService;
     private TxnActionService actionService;
     private TxnActionExecutor executor;
     private TxnActionTxOperations txOps;
     private TransactionTemplate txTemplate;
-    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private ObjectMapper objectMapper;
 
     @BeforeAll
     void boot() throws Exception {
@@ -92,37 +113,37 @@ class P62TxnActionPgBehaviourTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p62-pg-test-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-pg-test-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-pg-test", props));
+                            new MapPropertySource("p62-pg-test", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62PgTestLoginContextProvider", provider);
                 })
                 .run();
         jdbc = app.getBean(JdbcTemplate.class);
         formDefService = app.getBean(FormDefService.class);
         submitService = app.getBean(FormSubmitService.class);
-        updateService = app.getBean(com.sw.ck.form.service.FormDataUpdateService.class);
-        deleteService = app.getBean(com.sw.ck.form.service.FormDataDeleteService.class);
-        importExportService = app.getBean(com.sw.ck.form.service.FormImportExportService.class);
-        c1PolicyService = app.getBean(com.sw.ck.form.txn.service.C1PolicyService.class);
+        updateService = app.getBean(FormDataUpdateService.class);
+        deleteService = app.getBean(FormDataDeleteService.class);
+        importExportService = app.getBean(FormImportExportService.class);
+        c1PolicyService = app.getBean(C1PolicyService.class);
         actionService = app.getBean(TxnActionService.class);
         executor = app.getBean(TxnActionExecutor.class);
         txOps = app.getBean(TxnActionTxOperations.class);
-        objectMapper = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class);
+        objectMapper = app.getBean(ObjectMapper.class);
         txTemplate = new TransactionTemplate(app.getBean(PlatformTransactionManager.class));
         seedStockForm();
         System.out.println("[P62-PG] 真实 PostgreSQL 完整启动成功 pgPort=" + pg.getPort() + " table=" + stockTable);
@@ -267,7 +288,7 @@ class P62TxnActionPgBehaviourTest {
         });
         Future<Boolean> sweepFuture = pool.submit(() -> {
             start.await(10, TimeUnit.SECONDS);
-            com.sw.ck.form.txn.entity.TxnReservationEntity res = new com.sw.ck.form.txn.entity.TxnReservationEntity();
+            TxnReservationEntity res = new TxnReservationEntity();
             res.setId(reservationId);
             res.setTenantId(TENANT);
             res.setActionId(reserveId);
@@ -277,7 +298,7 @@ class P62TxnActionPgBehaviourTest {
             res.setRecordId(recordId);
             res.setQuantity(new BigDecimal("6"));
             return asTenant(TENANT, USER, () ->
-                    txOps.settleExpired(res, java.util.UUID.randomUUID().toString(), "EXPIRE:" + reservationId,
+                    txOps.settleExpired(res, UUID.randomUUID().toString(), "EXPIRE:" + reservationId,
                             sha256("EXPIRE|" + reservationId), USER));
         });
         start.countDown();
@@ -363,7 +384,7 @@ class P62TxnActionPgBehaviourTest {
     void c1ProtectsAllWritePaths() {
         String c1Key = "p62_stock_c1";
         String c1FormId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(c1Key, "P62库存表C1", null, null);
+            FormDefVO draft = formDefService.createDraft(c1Key, "P62库存表C1", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -386,7 +407,7 @@ class P62TxnActionPgBehaviourTest {
         Long blankVersion = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(c1Table)
                 + " WHERE " + q("id") + " = ?", Long.class, blankId);
         asTenant(TENANT, USER, () -> {
-            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            FormDataUpdateRequest req = new FormDataUpdateRequest();
             req.setVersion(blankVersion);
             req.setData(data("material", "C1-BLANK", "qty_available", "0", "qty_reserved", "0"));
             updateService.updateRecord(c1Key, blankId, req);
@@ -406,14 +427,14 @@ class P62TxnActionPgBehaviourTest {
         Long version = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(c1Table)
                 + " WHERE " + q("id") + " = ?", Long.class, recordId);
         assertRejected(() -> asTenant(TENANT, USER, () -> {
-            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            FormDataUpdateRequest req = new FormDataUpdateRequest();
             req.setVersion(version);
             req.setData(data("material", "C1-A", "qty_available", "999", "qty_reserved", "0"));
             updateService.updateRecord(c1Key, recordId, req);
             return null;
         }), protectedCode);
         assertRejected(() -> asTenant(TENANT, USER, () -> {
-            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            FormDataUpdateRequest req = new FormDataUpdateRequest();
             req.setVersion(version);
             req.setData(data("material", "C1-A2"));
             updateService.updateRecord(c1Key, recordId, req);
@@ -454,7 +475,7 @@ class P62TxnActionPgBehaviourTest {
     void c1CoversImportEntry() throws Exception {
         String protectedKey = "p62_stock_c1imp";
         String formId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(protectedKey, "P62库存导入C1", null, null);
+            FormDefVO draft = formDefService.createDraft(protectedKey, "P62库存导入C1", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -466,7 +487,7 @@ class P62TxnActionPgBehaviourTest {
                 asTenant(TENANT, USER, () -> importExportService.generateTemplate(protectedKey)),
                 new Object[][]{{"LT02-IMP-A", 10, 0}, {"LT02-IMP-B", 20, 0}});
         var protectedResult = asTenant(TENANT, USER, () ->
-                importExportService.importData(protectedKey, new java.io.ByteArrayInputStream(protectedRows)));
+                importExportService.importData(protectedKey, new ByteArrayInputStream(protectedRows)));
         assertThat(protectedResult.successCount()).as("受保护表单导入整批拒绝：零成功").isZero();
         assertThat(protectedResult.errorCount()).isEqualTo(2);
         assertThat(protectedResult.errors()).hasSize(2);
@@ -480,7 +501,7 @@ class P62TxnActionPgBehaviourTest {
                 asTenant(TENANT, USER, () -> importExportService.generateTemplate(FORM_KEY)),
                 new Object[][]{{"LT02-IMP-A", 10, 0}, {"LT02-IMP-B", 20, 0}});
         var result = asTenant(TENANT, USER, () ->
-                importExportService.importData(FORM_KEY, new java.io.ByteArrayInputStream(plainRows)));
+                importExportService.importData(FORM_KEY, new ByteArrayInputStream(plainRows)));
         assertThat(result.successCount()).isEqualTo(2);
         assertThat(result.errorCount()).isZero();
         assertThat(countStockByMaterial("LT02-IMP-A")).isEqualTo(1L);
@@ -578,7 +599,7 @@ class P62TxnActionPgBehaviourTest {
     void settlementUsesFrozenVersionAndSurvivesDisable() {
         String formKey = "p62_stock_multi";
         String formId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(formKey, "P62多字段库存", null, null);
+            FormDefVO draft = formDefService.createDraft(formKey, "P62多字段库存", null, null);
             formDefService.saveConfig(draft.getId(), multiFieldDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -704,7 +725,7 @@ class P62TxnActionPgBehaviourTest {
         // 单对象证据集：一个表单、一条记录、一笔预占，全程同一身份贯穿
         String formKey = "p62_stock_single";
         String formId = asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(formKey, "P62单对象库存", null, null);
+            FormDefVO draft = formDefService.createDraft(formKey, "P62单对象库存", null, null);
             formDefService.saveConfig(draft.getId(), multiFieldDefinition());
             formDefService.publish(draft.getId());
             return draft.getId();
@@ -718,7 +739,7 @@ class P62TxnActionPgBehaviourTest {
         Long version0 = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(table)
                 + " WHERE " + q("id") + " = ?", Long.class, recordId);
         asTenant(TENANT, USER, () -> {
-            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            FormDataUpdateRequest req = new FormDataUpdateRequest();
             req.setVersion(version0);
             req.setData(data("material", "LT04A-SINGLE", "qty_available", "100", "qty_reserved", "0",
                     "qty_reserved2", "7"));
@@ -757,7 +778,7 @@ class P62TxnActionPgBehaviourTest {
         Long version1 = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(table)
                 + " WHERE " + q("id") + " = ?", Long.class, recordId);
         assertRejected(() -> asTenant(TENANT, USER, () -> {
-            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            FormDataUpdateRequest req = new FormDataUpdateRequest();
             req.setVersion(version1);
             req.setData(data("material", "LT04A-SINGLE", "qty_available", "999", "qty_reserved", "0",
                     "qty_reserved2", "0"));
@@ -831,7 +852,7 @@ class P62TxnActionPgBehaviourTest {
         Long version2 = jdbc.queryForObject("SELECT " + q("version") + " FROM " + q(table)
                 + " WHERE " + q("id") + " = ?", Long.class, recordId);
         assertRejected(() -> asTenant(TENANT, USER, () -> {
-            com.sw.ck.form.api.dto.FormDataUpdateRequest req = new com.sw.ck.form.api.dto.FormDataUpdateRequest();
+            FormDataUpdateRequest req = new FormDataUpdateRequest();
             req.setVersion(version2);
             req.setData(data("material", "LT04A-SINGLE2", "qty_available", "1", "qty_reserved", "0",
                     "qty_reserved2", "0"));
@@ -937,12 +958,12 @@ class P62TxnActionPgBehaviourTest {
 
     private void seedStockForm() {
         asTenant(TENANT, USER, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P62库存表", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P62库存表", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return null;
         });
-        FormDefDTO def = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(FORM_KEY));
+        FormDefVO def = asTenant(TENANT, USER, () -> formDefService.getFormDefByKey(FORM_KEY));
         stockTable = def.getPhysicalTableName();
         assertThat(stockTable).isNotBlank();
     }
@@ -964,14 +985,14 @@ class P62TxnActionPgBehaviourTest {
 
     /** 用真实模板（含签名）填充数据行：列顺序与模板映射行一致，数据行从第 3 行开始。 */
     private byte[] fillTemplate(byte[] template, Object[][] rows) throws Exception {
-        try (org.apache.poi.xssf.usermodel.XSSFWorkbook workbook =
-                     new org.apache.poi.xssf.usermodel.XSSFWorkbook(new java.io.ByteArrayInputStream(template));
-             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
-            org.apache.poi.ss.usermodel.Sheet sheet = workbook.getSheet("模板");
+        try (XSSFWorkbook workbook =
+                     new XSSFWorkbook(new ByteArrayInputStream(template));
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.getSheet("模板");
             for (int r = 0; r < rows.length; r++) {
-                org.apache.poi.ss.usermodel.Row row = sheet.createRow(2 + r);
+                Row row = sheet.createRow(2 + r);
                 for (int c = 0; c < rows[r].length; c++) {
-                    org.apache.poi.ss.usermodel.Cell cell = row.createCell(c);
+                    Cell cell = row.createCell(c);
                     Object value = rows[r][c];
                     if (value instanceof Number number) {
                         cell.setCellValue(number.doubleValue());
@@ -1142,14 +1163,4 @@ class P62TxnActionPgBehaviourTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

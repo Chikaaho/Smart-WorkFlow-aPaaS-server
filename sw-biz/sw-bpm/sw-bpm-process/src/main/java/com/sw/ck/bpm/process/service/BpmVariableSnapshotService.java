@@ -5,18 +5,26 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
+import com.sw.ck.bpm.process.vo.InstanceRelationVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 /**
  * P64 BPM 变量运行快照解析（ADR-P64-001 §2，A02）。
@@ -26,7 +34,7 @@ import java.util.Set;
  * 必填缺失返回 missingRequired（阻止触发）；快照序列化 ≤1MiB 超限判 tooLarge。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class BpmVariableSnapshotService {
 
@@ -36,20 +44,15 @@ public class BpmVariableSnapshotService {
             "processInstanceId", "processDefKey", "businessKey", "formKey",
             "initiatorId", "tenantId", "currentNodeKey", "roundNo");
 
-    private final NodeFormDataService nodeFormDataService;
-    private final FormRecordReadFacade formRecordReadFacade;
-    private final ObjectMapper objectMapper;
-
-    public BpmVariableSnapshotService(NodeFormDataService nodeFormDataService,
-                                      FormRecordReadFacade formRecordReadFacade,
-                                      ObjectMapper objectMapper) {
-        this.nodeFormDataService = nodeFormDataService;
-        this.formRecordReadFacade = formRecordReadFacade;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private NodeFormDataService nodeFormDataService;
+    @Autowired
+    private FormRecordReadFacade formRecordReadFacade;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** BF20261013-022⑦：实例变量读取（脚本 set 过的值优先；可选注入，测试旧装配为 null 时跳过该层）。 */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @Autowired(required = false)
     private transient BpmTaskFacade bpmTaskFacade;
 
     /** 快照构建结果。 */
@@ -231,7 +234,7 @@ public class BpmVariableSnapshotService {
                                        List<Map<String, Object>> submittedRows,
                                        List<String> missing, List<String> errors) {
         String field = def.getSourceFormField();
-        String aggregation = def.getAggregation() == null ? "NONE" : def.getAggregation().toUpperCase();
+        String aggregation = def.getAggregation() == null ? InstanceRelationVO.RELATION_NONE : def.getAggregation().toUpperCase();
         if (submittedRows.isEmpty()) {
             return null;
         }
@@ -316,7 +319,7 @@ public class BpmVariableSnapshotService {
                     return number;
                 }
                 try {
-                    return new java.math.BigDecimal(String.valueOf(raw));
+                    return new BigDecimal(String.valueOf(raw));
                 } catch (Exception e) {
                     return null;
                 }
@@ -354,7 +357,7 @@ public class BpmVariableSnapshotService {
     }
 
     /** USER/DEPT 值形状统一收集（单值数字串 / 数组 / JSON 串）。 */
-    private void collectIds(Object raw, java.util.Collection<String> sink) {
+    private void collectIds(Object raw, Collection<String> sink) {
         if (raw == null) {
             return;
         }
@@ -384,7 +387,7 @@ public class BpmVariableSnapshotService {
 
     private Object normalizeScalar(Object raw) {
         if (raw instanceof Number number) {
-            return new java.math.BigDecimal(String.valueOf(number));
+            return new BigDecimal(String.valueOf(number));
         }
         return raw;
     }
@@ -398,7 +401,7 @@ public class BpmVariableSnapshotService {
             errors.add("快照序列化失败: " + e.getMessage());
         }
         boolean tooLarge = json != null
-                && json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_SNAPSHOT_BYTES;
+                && json.getBytes(StandardCharsets.UTF_8).length > MAX_SNAPSHOT_BYTES;
         if (tooLarge) {
             json = null;
         }

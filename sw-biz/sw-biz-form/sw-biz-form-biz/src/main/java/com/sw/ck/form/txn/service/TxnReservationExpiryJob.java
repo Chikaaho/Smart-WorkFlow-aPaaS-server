@@ -1,6 +1,9 @@
 package com.sw.ck.form.txn.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.form.entity.FormIdGenerator;
@@ -8,8 +11,7 @@ import com.sw.ck.form.txn.entity.TxnReservationEntity;
 import com.sw.ck.form.txn.mapper.TxnReservationMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -18,7 +20,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Supplier;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 预占过期释放扫描（每 60 秒，单轮有界 100 条）。
  * <p>调度线程无登录态：跨租户只读扫描按既有调度任务同口径挂起租户过滤
@@ -27,23 +31,17 @@ import java.util.List;
  * 与人工确认互斥。</p>
  */
 @Component
+@Log4j2
 public class TxnReservationExpiryJob {
-
-    private static final Logger log = LoggerFactory.getLogger(TxnReservationExpiryJob.class);
 
     private static final long MAX_BATCH = 100L;
 
-    private final TxnReservationMapper reservationMapper;
-    private final TxnActionTxOperations txOps;
-    private final FormIdGenerator idGenerator;
-
-    public TxnReservationExpiryJob(TxnReservationMapper reservationMapper,
-                                   TxnActionTxOperations txOps,
-                                   FormIdGenerator idGenerator) {
-        this.reservationMapper = reservationMapper;
-        this.txOps = txOps;
-        this.idGenerator = idGenerator;
-    }
+    @Autowired
+    private TxnReservationMapper reservationMapper;
+    @Autowired
+    private TxnActionTxOperations txOps;
+    @Autowired
+    private FormIdGenerator idGenerator;
 
     @Scheduled(fixedDelay = 60_000, initialDelay = 30_000)
     public void sweep() {
@@ -99,7 +97,7 @@ public class TxnReservationExpiryJob {
      * 调度线程按行还原权威租户建立执行边界（与命令补偿任务同一模式；
      * 不使用租户挂起，避免抹掉多租户约束）。
      */
-    private boolean withSettlementTenant(Long tenantId, java.util.function.Supplier<Boolean> action) {
+    private boolean withSettlementTenant(Long tenantId, Supplier<Boolean> action) {
         LoginUser previous = LoginUserHolder.get();
         LoginUser identity = new LoginUser();
         identity.setTenantId(tenantId == null ? 0L : tenantId);

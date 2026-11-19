@@ -1,12 +1,10 @@
 package com.sw.ck.bpm.process.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
 import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -15,6 +13,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 /**
  * 参与人展示名解析（I1 历史身份不被改写）。
  * <p>
@@ -24,17 +26,13 @@ import java.util.Set;
  * </p>
  */
 @Service
+@Log4j2
 public class ParticipantNameService {
 
-    private static final Logger log = LoggerFactory.getLogger(ParticipantNameService.class);
-
-    private final ParticipantSnapshotMapper snapshotMapper;
-    private final UserQueryFacade userQueryFacade;
-
-    public ParticipantNameService(ParticipantSnapshotMapper snapshotMapper, UserQueryFacade userQueryFacade) {
-        this.snapshotMapper = snapshotMapper;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private ParticipantSnapshotMapper snapshotMapper;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     /**
      * 解析流程实例内参与人的展示名：快照优先，缺失回落实时查询。
@@ -126,7 +124,7 @@ public class ParticipantNameService {
         if ("HANDLED".equalsIgnoreCase(status)) {
             return 3;
         }
-        if ("PENDING".equalsIgnoreCase(status)) {
+        if (BatchItemStatusEnum.PENDING.getCode().equalsIgnoreCase(status)) {
             return 2;
         }
         return 1;

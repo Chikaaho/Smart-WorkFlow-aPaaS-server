@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -8,7 +10,7 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.knowledge.dto.KnowledgeBaseCreateReqDTO;
-import com.sw.ck.knowledge.dto.KnowledgeBaseDTO;
+import com.sw.ck.knowledge.vo.KnowledgeBaseVO;
 import com.sw.ck.knowledge.entity.KnowledgeBase;
 import com.sw.ck.knowledge.entity.KnowledgeDocument;
 import com.sw.ck.knowledge.mapper.KnowledgeBaseMapper;
@@ -30,23 +32,17 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     private static final int MIN_CHUNK_SIZE = 100;
     private static final int MAX_CHUNK_SIZE = 4000;
 
-    private final KnowledgeBaseMapper baseMapper;
-    private final KnowledgeDocumentMapper documentMapper;
-    private final KnowledgeVectorStore vectorStore;
-    private final KnowledgeEmbeddingClient embeddingClient;
-
-    public KnowledgeBaseServiceImpl(KnowledgeBaseMapper baseMapper,
-                                    KnowledgeDocumentMapper documentMapper,
-                                    KnowledgeVectorStore vectorStore,
-                                    KnowledgeEmbeddingClient embeddingClient) {
-        this.baseMapper = baseMapper;
-        this.documentMapper = documentMapper;
-        this.vectorStore = vectorStore;
-        this.embeddingClient = embeddingClient;
-    }
+    @Autowired
+    private KnowledgeBaseMapper baseMapper;
+    @Autowired
+    private KnowledgeDocumentMapper documentMapper;
+    @Autowired
+    private KnowledgeVectorStore vectorStore;
+    @Autowired
+    private KnowledgeEmbeddingClient embeddingClient;
 
     @Override
-    public PageResult<KnowledgeBaseDTO> page(PageParam pageParam, String nameKeyword) {
+    public PageResult<KnowledgeBaseVO> page(PageParam pageParam, String nameKeyword) {
         String keyword = nameKeyword == null || nameKeyword.isBlank() ? null : nameKeyword;
         IPage<KnowledgeBase> page = baseMapper.selectPage(
                 new Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
@@ -57,13 +53,13 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     }
 
     @Override
-    public KnowledgeBaseDTO get(Long id) {
+    public KnowledgeBaseVO get(Long id) {
         return toDTO(require(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public KnowledgeBaseDTO create(KnowledgeBaseCreateReqDTO req) {
+    public KnowledgeBaseVO create(KnowledgeBaseCreateReqDTO req) {
         if (req == null || req.getName() == null || req.getName().isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "知识库名称不能为空");
         }
@@ -118,8 +114,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
         return entity;
     }
 
-    private KnowledgeBaseDTO toDTO(KnowledgeBase entity) {
-        KnowledgeBaseDTO dto = new KnowledgeBaseDTO();
+    private KnowledgeBaseVO toDTO(KnowledgeBase entity) {
+        KnowledgeBaseVO dto = new KnowledgeBaseVO();
         dto.setId(entity.getId());
         dto.setName(entity.getName());
         dto.setDescription(entity.getDescription());

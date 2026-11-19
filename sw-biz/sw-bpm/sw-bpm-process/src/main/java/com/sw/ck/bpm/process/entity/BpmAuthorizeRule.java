@@ -2,9 +2,13 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /** 授权代理规则（I3 §4.6）：带生效期、流程范围、节点/业务条件与授权主体的代理规则。 */
 @Data
@@ -42,11 +46,11 @@ public class BpmAuthorizeRule extends BaseEntity {
 
     /** 生效期起。 */
     @TableField("start_at")
-    private java.time.LocalDateTime startAt;
+    private LocalDateTime startAt;
 
     /** 生效期止。 */
     @TableField("end_at")
-    private java.time.LocalDateTime endAt;
+    private LocalDateTime endAt;
 
     /** 状态：ACTIVE / REVOKED / EXPIRED。 */
     @TableField("status")

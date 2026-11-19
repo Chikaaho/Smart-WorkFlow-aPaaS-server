@@ -2,9 +2,14 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * 流程定义发布版本（I3 §4.3）。
@@ -64,13 +69,13 @@ public class BpmProcessDefVersion extends BaseEntity {
 
     /** 发布时间。 */
     @TableField("published_at")
-    private java.time.LocalDateTime publishedAt;
+    private LocalDateTime publishedAt;
 
     /** 发布人展示名（版本列表回填，非表列）。 */
     @TableField(exist = false)
     private String publisherName;
 
-    @com.fasterxml.jackson.annotation.JsonIgnore
+    @JsonIgnore
     public String getGraphJson() {
         return graphJson;
     }

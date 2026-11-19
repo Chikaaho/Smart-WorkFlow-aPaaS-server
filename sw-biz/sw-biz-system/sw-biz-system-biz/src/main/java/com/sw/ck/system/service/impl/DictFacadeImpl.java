@@ -1,5 +1,7 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.dict.DictItemDTO;
@@ -19,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import com.sw.ck.system.sso.SsoBindingOccupancyEnum;
 
 /**
  * DictFacade 实现。
@@ -36,17 +39,12 @@ import java.util.stream.Collectors;
 @Service
 public class DictFacadeImpl implements DictFacade {
 
-    private final SysDictDataService sysDictDataService;
-    private final SysDictTypeMapper sysDictTypeMapper;
-    private final SysDictDataMapper sysDictDataMapper;
-
-    public DictFacadeImpl(SysDictDataService sysDictDataService,
-                          SysDictTypeMapper sysDictTypeMapper,
-                          SysDictDataMapper sysDictDataMapper) {
-        this.sysDictDataService = sysDictDataService;
-        this.sysDictTypeMapper = sysDictTypeMapper;
-        this.sysDictDataMapper = sysDictDataMapper;
-    }
+    @Autowired
+    private SysDictDataService sysDictDataService;
+    @Autowired
+    private SysDictTypeMapper sysDictTypeMapper;
+    @Autowired
+    private SysDictDataMapper sysDictDataMapper;
 
     @Override
     public Optional<List<DictItemDTO>> listByType(String dictType) {
@@ -123,7 +121,7 @@ public class DictFacadeImpl implements DictFacade {
         // 全局唯一索引 uk_sys_dict_type_code 为 (code, deleted)：任一租户存在活跃行
         // 即不可新建（OCCUPIED）；仅软删除行占用不影响新建（deleted=0 仍空闲）
         Long ownerTenant = sysDictTypeMapper.selectActiveOwnerTenantId(normalized);
-        return Optional.of(ownerTenant != null ? "OCCUPIED" : "MISSING");
+        return Optional.of(ownerTenant != null ? SsoBindingOccupancyEnum.OCCUPIED.getCode() : SsoBindingOccupancyEnum.MISSING.getCode());
     }
 
     @Override

@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Mapper;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 
 /**
  * IoT 设备命令 Mapper。
@@ -31,7 +32,7 @@ public interface IotDeviceCommandMapper extends BaseMapperX<IotDeviceCommand> {
                 .eq(IotDeviceCommand::getDeviceName, deviceName)
                 .eq(IotDeviceCommand::getTenantId, tenantId)
                 .eq(IotDeviceCommand::getDeleted, 0)
-                .in(IotDeviceCommand::getStatus, "QUEUED", "FAILED")
+                .in(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode(), IotCommandStatusEnum.FAILED.getCode())
                 .orderByAsc(IotDeviceCommand::getCreateTime));
     }
 
@@ -46,7 +47,7 @@ public interface IotDeviceCommandMapper extends BaseMapperX<IotDeviceCommand> {
         return selectList(new LambdaQueryWrapper<IotDeviceCommand>()
                 .eq(IotDeviceCommand::getTenantId, tenantId)
                 .eq(IotDeviceCommand::getDeleted, 0)
-                .eq(IotDeviceCommand::getStatus, "QUEUED")
+                .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode())
                 .le(IotDeviceCommand::getExpiryTime, now));
     }
 
@@ -62,7 +63,7 @@ public interface IotDeviceCommandMapper extends BaseMapperX<IotDeviceCommand> {
         return selectList(new LambdaQueryWrapper<IotDeviceCommand>()
                 .eq(tenantId != null, IotDeviceCommand::getTenantId, tenantId)
                 .eq(IotDeviceCommand::getDeleted, 0)
-                .in(IotDeviceCommand::getStatus, "SENT", "DELIVERED", "ACKED")
+                .in(IotDeviceCommand::getStatus, IotCommandStatusEnum.SENT.getCode(), IotCommandStatusEnum.DELIVERED.getCode(), IotCommandStatusEnum.ACKED.getCode())
                 .le(IotDeviceCommand::getExpiryTime, now));
     }
 
@@ -93,7 +94,7 @@ public interface IotDeviceCommandMapper extends BaseMapperX<IotDeviceCommand> {
                 .eq(IotDeviceCommand::getDeviceName, deviceName)
                 .eq(IotDeviceCommand::getTenantId, tenantId)
                 .eq(IotDeviceCommand::getDeleted, 0)
-                .eq(IotDeviceCommand::getStatus, "QUEUED")
+                .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode())
                 .le(IotDeviceCommand::getCreateTime, since));
     }
 }

@@ -1,19 +1,24 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.system.entity.SysAuditLog;
 import com.sw.ck.system.mapper.SysAuditLogMapper;
+
 import jakarta.servlet.http.HttpServletRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 平台审计日志写入与查询（1.0.0 F3）。
  * <p>
@@ -24,15 +29,11 @@ import java.util.List;
  * </p>
  */
 @Service
+@Log4j2
 public class AuditLogService {
 
-    private static final Logger log = LoggerFactory.getLogger(AuditLogService.class);
-
-    private final SysAuditLogMapper auditLogMapper;
-
-    public AuditLogService(SysAuditLogMapper auditLogMapper) {
-        this.auditLogMapper = auditLogMapper;
-    }
+    @Autowired
+    private SysAuditLogMapper auditLogMapper;
 
     /**
      * 写入一条审计日志。租户未知（预登录）传 0；任何内部异常吞掉并记 warn。
@@ -97,7 +98,7 @@ public class AuditLogService {
                 .orderByDesc(SysAuditLog::getCreateTime)
                 .orderByDesc(SysAuditLog::getId);
         var page = auditLogMapper.selectPage(
-                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(
+                new Page<>(
                         pageParam.getPageNum(), pageParam.getPageSize()), wrapper);
         return PageResult.of(page);
     }

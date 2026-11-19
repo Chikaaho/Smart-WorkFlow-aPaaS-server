@@ -6,18 +6,23 @@ import com.sw.ck.iot.api.IotDeviceQueryFacade;
 import com.sw.ck.iot.api.IotFormContractChecker;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.controller.IotEventRuleController;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.aop.framework.Advised;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
+import java.security.CodeSource;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,7 +67,7 @@ class Phase5BootstrapAssemblyTest extends Phase5PgSupport {
                 })
                 .run();
         this.app = context;
-        this.jdbc = context.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        this.jdbc = context.getBean(JdbcTemplate.class);
         seedTenantAndUser(TENANT_A, USER_A, "assembly");
         System.out.println("[P5-G1] production-entry-context=started entry=com.sw.ck.bootstrap.StarterApplication"
                 + " database=" + EVIDENCE_DB + " credentials=redacted");
@@ -114,7 +119,7 @@ class Phase5BootstrapAssemblyTest extends Phase5PgSupport {
         // 该代理由 Objenesis 创建、不调用构造器，因此代理实例上的继承字段为 null。
         // 装配事实在被代理的目标对象上，必须取目标实例再断言。
         Object wiredTarget = controller;
-        if (controller instanceof org.springframework.aop.framework.Advised advised) {
+        if (controller instanceof Advised advised) {
             wiredTarget = advised.getTargetSource().getTarget();
         }
         assertThat(wiredTarget).as("必须能取到被代理的真实目标实例").isNotNull();
@@ -169,7 +174,7 @@ class Phase5BootstrapAssemblyTest extends Phase5PgSupport {
     }
 
     private static String codeSourceOf(Class<?> type) {
-        java.security.CodeSource source = type.getProtectionDomain().getCodeSource();
+        CodeSource source = type.getProtectionDomain().getCodeSource();
         return source == null || source.getLocation() == null ? "" : source.getLocation().getPath();
     }
 
@@ -186,7 +191,7 @@ class Phase5BootstrapAssemblyTest extends Phase5PgSupport {
      * 否则只会看到代理自身的 CGLIB 字段。泛型实参按全限定名比对，避免受类加载器身份影响。</p>
      */
     private static ObjectProvider<?> findFormContractCheckerProvider(Object controller) throws Exception {
-        Class<?> targetClass = org.springframework.aop.support.AopUtils.getTargetClass(controller);
+        Class<?> targetClass = AopUtils.getTargetClass(controller);
         System.out.println("[P5-G1] HELPER enter targetClass=" + targetClass.getName()
                 + " beanClass=" + controller.getClass().getName()
                 + " spi=" + IotFormContractChecker.class.getName()

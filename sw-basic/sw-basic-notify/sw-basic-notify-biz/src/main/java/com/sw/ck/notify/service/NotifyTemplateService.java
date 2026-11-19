@@ -1,7 +1,7 @@
 package com.sw.ck.notify.service;
 
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.notify.dto.NotifyTemplateDTO;
+import com.sw.ck.notify.vo.NotifyTemplateVO;
 import com.sw.ck.notify.dto.NotifyTemplateQuery;
 import com.sw.ck.notify.dto.TemplatePreviewRequest;
 import com.sw.ck.notify.dto.TemplatePreviewResult;
@@ -16,16 +16,16 @@ import java.util.Set;
 public interface NotifyTemplateService {
 
     /** 分页查询（keyword 匹配代码/名称，enabled 过滤） */
-    PageResult<NotifyTemplateDTO> pageTemplates(NotifyTemplateQuery query);
+    PageResult<NotifyTemplateVO> pageTemplates(NotifyTemplateQuery query);
 
     /** 详情 */
-    NotifyTemplateDTO getTemplate(Long id);
+    NotifyTemplateVO getTemplate(Long id);
 
     /** 新建：模板代码同租户唯一；返回新 id */
-    Long createTemplate(NotifyTemplateDTO dto);
+    Long createTemplate(NotifyTemplateVO dto);
 
     /** 编辑：templateCode 不可变更；其余字段整体更新 */
-    void updateTemplate(Long id, NotifyTemplateDTO dto);
+    void updateTemplate(Long id, NotifyTemplateVO dto);
 
     /** 删除（逻辑删除，幂等）；不影响已落库历史通知 */
     void deleteTemplate(Long id);

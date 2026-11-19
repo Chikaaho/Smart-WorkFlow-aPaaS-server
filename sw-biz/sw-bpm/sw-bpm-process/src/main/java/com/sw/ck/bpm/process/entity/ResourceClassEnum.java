@@ -1,5 +1,8 @@
 package com.sw.ck.bpm.process.entity;
 
+import java.util.Optional;
+
+
 /**
  * 资源类别（受理时冻结到命令行）。
  * <p>
@@ -25,15 +28,15 @@ public enum ResourceClassEnum {
     }
 
     /** 由存储值解析；未知值返回 empty（旧数据/未来类别不猜语义）。 */
-    public static java.util.Optional<ResourceClassEnum> of(String code) {
+    public static Optional<ResourceClassEnum> of(String code) {
         if (code == null || code.isBlank()) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         for (ResourceClassEnum value : values()) {
             if (value.code.equals(code)) {
-                return java.util.Optional.of(value);
+                return Optional.of(value);
             }
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 }

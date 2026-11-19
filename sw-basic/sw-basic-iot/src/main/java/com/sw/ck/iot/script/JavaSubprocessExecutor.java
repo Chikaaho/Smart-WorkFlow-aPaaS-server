@@ -1,8 +1,6 @@
 package com.sw.ck.iot.script;
 
 import com.alibaba.fastjson2.JSON;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import javax.tools.Diagnostic;
@@ -28,7 +26,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
+import javax.tools.JavaFileObject.Kind;
+import javax.tools.StandardLocation;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Java 受控脚本执行器（父进程侧）。
  * <p>
@@ -39,9 +43,8 @@ import java.util.regex.Pattern;
  * </p>
  */
 @Component
+@Log4j2
 public class JavaSubprocessExecutor {
-
-    private static final Logger log = LoggerFactory.getLogger(JavaSubprocessExecutor.class);
 
     private static final Pattern CLASS_NAME = Pattern.compile("public\\s+class\\s+(\\w+)");
     private static final long CHILD_XMX_MB = 128;
@@ -126,7 +129,7 @@ public class JavaSubprocessExecutor {
             rpcThread.setDaemon(true);
             rpcThread.start();
             boolean finished = process.waitFor(spec.getTimeoutMs(),
-                    java.util.concurrent.TimeUnit.MILLISECONDS);
+                    TimeUnit.MILLISECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 return ScriptRunResult.timeout("Java 脚本执行超时，子进程已强制终止",
@@ -256,8 +259,8 @@ public class JavaSubprocessExecutor {
             Map<String, Object> request = MiniJson.parseObject(requestJson);
             String fn = String.valueOf(request.get("fn"));
             List<Object> args = (List<Object>) request.get("args");
-            java.lang.reflect.Method method = null;
-            for (java.lang.reflect.Method m : ScriptHostFunctions.class.getDeclaredMethods()) {
+            Method method = null;
+            for (Method m : ScriptHostFunctions.class.getDeclaredMethods()) {
                 if (m.getName().equals(fn)) {
                     method = m;
                     break;
@@ -271,14 +274,14 @@ public class JavaSubprocessExecutor {
             Object result = method.invoke(host, converted);
             return JavaSubprocessRunner.retPrefix() + MiniJson.write(result);
         } catch (Exception e) {
-            Throwable cause = e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null
+            Throwable cause = e instanceof InvocationTargetException && e.getCause() != null
                     ? e.getCause() : e;
             return JavaSubprocessRunner.errPrefix() + MiniJson.write(
                     Map.of("error", cause.getMessage() == null ? cause.getClass().getName() : cause.getMessage()));
         }
     }
 
-    private Object[] convertArgs(java.lang.reflect.Method method, List<Object> args) {
+    private Object[] convertArgs(Method method, List<Object> args) {
         Class<?>[] types = method.getParameterTypes();
         Object[] converted = new Object[types.length];
         for (int i = 0; i < types.length; i++) {
@@ -314,14 +317,14 @@ public class JavaSubprocessExecutor {
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         try (StandardJavaFileManager fileManager =
                      compiler.getStandardFileManager(diagnostics, null, StandardCharsets.UTF_8)) {
-            fileManager.setLocation(javax.tools.StandardLocation.CLASS_OUTPUT,
+            fileManager.setLocation(StandardLocation.CLASS_OUTPUT,
                     List.of(workDir.toFile()));
             // Spring Boot 可执行 JAR 的 API 位于嵌套依赖中，javac 不会从当前
             // java.class.path 解析它们；统一使用已导出到 workDir 的 API 类作为编译 classpath。
             List<String> options = List.of("-encoding", "UTF-8",
                     "-classpath", workDir.toAbsolutePath().toString());
             JavaFileObject source = new SimpleJavaFileObject(
-                    URI.create("string:///" + className + ".java"), javax.tools.JavaFileObject.Kind.SOURCE) {
+                    URI.create("string:///" + className + ".java"), Kind.SOURCE) {
                 @Override
                 public CharSequence getCharContent(boolean ignoreEncodingErrors) {
                     return sourceCode;

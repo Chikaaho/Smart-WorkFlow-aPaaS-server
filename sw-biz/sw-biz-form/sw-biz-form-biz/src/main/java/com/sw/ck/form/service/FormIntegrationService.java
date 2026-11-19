@@ -1,14 +1,17 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.integration.ExternalCapability;
 import com.sw.ck.common.integration.ExternalCapabilityFacade;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dto.FormIntegrationCandidateDTO;
+import com.sw.ck.form.vo.FormIntegrationCandidateVO;
 import com.sw.ck.form.dto.FormIntegrationInvokeReq;
 import com.sw.ck.form.dto.FormIntegrationInvokeResult;
 import com.sw.ck.form.entity.FormIntegrationInvocationEntity;
@@ -18,8 +21,7 @@ import com.sw.ck.form.mapper.FormIntegrationInvocationMapper;
 import com.sw.ck.form.mapper.FormTraceMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -31,9 +33,11 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单运行期受控集成服务。
  * <p>
@@ -47,9 +51,8 @@ import java.util.regex.Pattern;
  * </p>
  */
 @Service
+@Log4j2
 public class FormIntegrationService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormIntegrationService.class);
 
     private static final Pattern CAPABILITY_ID = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]{0,63}$");
     private static final Set<String> PHASES = Set.of("BEFORE_SUBMIT", "AFTER_SUBMIT");
@@ -63,39 +66,30 @@ public class FormIntegrationService {
     private static final String STATUS_SUCCEEDED = "SUCCEEDED";
     private static final String STATUS_FAILED = "FAILED";
 
-    private final FormDefService formDefService;
-    private final FormDataQueryService formDataQueryService;
-    private final ObjectProvider<ExternalCapabilityFacade> capabilityFacade;
-    private final FormIntegrationInvocationMapper invocationMapper;
-    private final FormIdGenerator idGenerator;
-    private final FormTraceMapper formTraceMapper;
-    private final ObjectMapper objectMapper;
-
-    public FormIntegrationService(FormDefService formDefService,
-                                  FormDataQueryService formDataQueryService,
-                                  ObjectProvider<ExternalCapabilityFacade> capabilityFacade,
-                                  FormIntegrationInvocationMapper invocationMapper,
-                                  FormIdGenerator idGenerator,
-                                  FormTraceMapper formTraceMapper,
-                                  ObjectMapper objectMapper) {
-        this.formDefService = formDefService;
-        this.formDataQueryService = formDataQueryService;
-        this.capabilityFacade = capabilityFacade;
-        this.invocationMapper = invocationMapper;
-        this.idGenerator = idGenerator;
-        this.formTraceMapper = formTraceMapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private ObjectProvider<ExternalCapabilityFacade> capabilityFacade;
+    @Autowired
+    private FormIntegrationInvocationMapper invocationMapper;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private FormTraceMapper formTraceMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** 当前租户内可供表单设计者选择的已分类启用能力（不含 URL/方法）。 */
-    public List<FormIntegrationCandidateDTO> listCandidates() {
+    public List<FormIntegrationCandidateVO> listCandidates() {
         LoginUser user = requireLogin();
         ExternalCapabilityFacade facade = capabilityFacade.getIfAvailable();
         if (facade == null) return List.of();
-        List<FormIntegrationCandidateDTO> result = new ArrayList<>();
+        List<FormIntegrationCandidateVO> result = new ArrayList<>();
         for (ExternalCapability capability : facade.listEnabled(user.getTenantId())) {
             if (capability.effectScope() == null) continue;
-            result.add(new FormIntegrationCandidateDTO(capability.name(), capability.description(),
+            result.add(new FormIntegrationCandidateVO(capability.name(), capability.description(),
                     capability.effectScope(), capability.timeoutSeconds()));
         }
         return result;
@@ -111,7 +105,7 @@ public class FormIntegrationService {
         if (!formDefService.isCurrentUserVisible(formKey)) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
         }
-        FormDefDTO def = formDefService.getFormDefByKey(formKey);
+        FormDefVO def = formDefService.getFormDefByKey(formKey);
         if (def == null || def.getId() == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
         }
@@ -339,9 +333,9 @@ public class FormIntegrationService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    private String serializeInput(java.util.Map<String, Object> input) {
+    private String serializeInput(Map<String, Object> input) {
         try {
-            String json = objectMapper.writeValueAsString(input == null ? java.util.Map.of() : input);
+            String json = objectMapper.writeValueAsString(input == null ? Map.of() : input);
             if (json.getBytes(StandardCharsets.UTF_8).length > MAX_INPUT_BYTES) {
                 throw new BaseException(FormErrorCode.INTEGRATION_REQUEST_INVALID,
                         "集成调用输入超过 64KB 上限");

@@ -8,19 +8,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
+import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
-import com.sw.ck.storage.api.StorageFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.storage.api.StorageFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -29,6 +25,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import com.sw.ck.form.dynamic.FieldType;
 /**
  * I2 写路径统一增补/闸门服务：提交与更新共用同一管线（方向 §4.1—§4.6 服务端权威）。
  *
@@ -44,42 +47,29 @@ import java.util.Optional;
  * TABLE 子行内的 USER/DEPT/DATASOURCE 值按同口径逐行处理。
  */
 @Service
+@Log4j2
 public class FormFieldEnrichmentService {
 
-    private static final Logger log = LoggerFactory.getLogger(FormFieldEnrichmentService.class);
-
-    private final FormConfigMapper formConfigMapper;
-    private final ObjectMapper objectMapper;
-    private final FormulaEngine formulaEngine;
-    private final FieldPermissionService fieldPermissionService;
-    private final ObjectProvider<FormExtDataService> extDataService;
-    private final ObjectProvider<UserQueryFacade> userQueryFacade;
-    private final ObjectProvider<DeptQueryFacade> deptQueryFacade;
-    private final FormDefMapper formDefMapper;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectProvider<StorageFacade> storageFacade;
-
-    public FormFieldEnrichmentService(FormConfigMapper formConfigMapper,
-                                      ObjectMapper objectMapper,
-                                      FormulaEngine formulaEngine,
-                                      FieldPermissionService fieldPermissionService,
-                                      ObjectProvider<FormExtDataService> extDataService,
-                                      ObjectProvider<UserQueryFacade> userQueryFacade,
-                                      ObjectProvider<DeptQueryFacade> deptQueryFacade,
-                                      FormDefMapper formDefMapper,
-                                      JdbcTemplate jdbcTemplate,
-                                      ObjectProvider<StorageFacade> storageFacade) {
-        this.formConfigMapper = formConfigMapper;
-        this.objectMapper = objectMapper;
-        this.formulaEngine = formulaEngine;
-        this.fieldPermissionService = fieldPermissionService;
-        this.extDataService = extDataService;
-        this.userQueryFacade = userQueryFacade;
-        this.deptQueryFacade = deptQueryFacade;
-        this.formDefMapper = formDefMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.storageFacade = storageFacade;
-    }
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private FormulaEngine formulaEngine;
+    @Autowired
+    private FieldPermissionService fieldPermissionService;
+    @Autowired
+    private ObjectProvider<FormExtDataService> extDataService;
+    @Autowired
+    private ObjectProvider<UserQueryFacade> userQueryFacade;
+    @Autowired
+    private ObjectProvider<DeptQueryFacade> deptQueryFacade;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectProvider<StorageFacade> storageFacade;
 
     /**
      * 写路径增补入口：就地修改 effectiveData（提交/更新同一口径）。
@@ -120,9 +110,9 @@ public class FormFieldEnrichmentService {
             String name = field.path("name").asText();
             String display = displayOf(field, name);
             switch (type) {
-                case "USER" -> enrichUser(effectiveData, name, display,
+                case FormAppScopeTypes.USER -> enrichUser(effectiveData, name, display,
                         field.path("multiple").asBoolean(false));
-                case "DEPT" -> enrichDept(effectiveData, name, display,
+                case FormAppScopeTypes.DEPT -> enrichDept(effectiveData, name, display,
                         field.path("multiple").asBoolean(false));
                 case "DATASOURCE" -> enrichDatasource(field, effectiveData, name, display);
                 case "TABLE" -> enrichTableRows(field, effectiveData, name, display, liveTargets);
@@ -162,7 +152,7 @@ public class FormFieldEnrichmentService {
     private void collectMainReferenceTargets(JsonNode fields, Map<String, Object> data,
                                              List<DynamicTableSql.LockTarget> sink) {
         for (JsonNode field : fields) {
-            if (!"REFERENCE".equals(field.path("type").asText())) {
+            if (!FieldType.REFERENCE.name().equals(field.path("type").asText())) {
                 continue;
             }
             String name = field.path("name").asText();
@@ -178,7 +168,7 @@ public class FormFieldEnrichmentService {
     private void collectSubRowReferenceTargets(JsonNode fields, Map<String, Object> data,
                                                List<DynamicTableSql.LockTarget> sink) {
         for (JsonNode field : fields) {
-            if (!"TABLE".equals(field.path("type").asText())) {
+            if (!FieldType.TABLE.name().equals(field.path("type").asText())) {
                 continue;
             }
             Object raw = data.get(field.path("name").asText());
@@ -186,7 +176,7 @@ public class FormFieldEnrichmentService {
                 continue;
             }
             for (JsonNode sub : field.path("subFields")) {
-                if (!"REFERENCE".equals(sub.path("type").asText())) {
+                if (!FieldType.REFERENCE.name().equals(sub.path("type").asText())) {
                     continue;
                 }
                 String subName = sub.path("name").asText();
@@ -259,7 +249,7 @@ public class FormFieldEnrichmentService {
      * 保证提示永远有名称可用。</p>
      */
     public static Map<String, String> collectFieldLabels(JsonNode fields) {
-        Map<String, String> labels = new java.util.LinkedHashMap<>();
+        Map<String, String> labels = new LinkedHashMap<>();
         if (fields == null || !fields.isArray()) {
             return labels;
         }
@@ -439,9 +429,9 @@ public class FormFieldEnrichmentService {
                 String subName = sub.path("name").asText();
                 String subDisplay = displayOf(sub, subName);
                 switch (subType) {
-                    case "USER" -> enrichUser(rowMap, subName, subDisplay,
+                    case FormAppScopeTypes.USER -> enrichUser(rowMap, subName, subDisplay,
                             sub.path("multiple").asBoolean(false));
-                    case "DEPT" -> enrichDept(rowMap, subName, subDisplay,
+                    case FormAppScopeTypes.DEPT -> enrichDept(rowMap, subName, subDisplay,
                             sub.path("multiple").asBoolean(false));
                     case "DATASOURCE" -> enrichDatasource(sub, rowMap, subName, subDisplay);
                     case "REFERENCE" -> enrichReference(sub, rowMap, subName, subDisplay, liveTargets);
@@ -530,7 +520,7 @@ public class FormFieldEnrichmentService {
      */
     private void recomputeFormulas(JsonNode fields, Map<String, Object> data) {
         for (JsonNode field : fields) {
-            if (!"FORMULA".equals(field.path("type").asText())) {
+            if (!FieldType.FORMULA.name().equals(field.path("type").asText())) {
                 continue;
             }
             String name = field.path("name").asText();
@@ -559,10 +549,10 @@ public class FormFieldEnrichmentService {
     }
 
     private String loadDefinitionJson(String formId) {
-        LambdaQueryWrapper<com.sw.ck.form.entity.FormConfigEntity> query =
-                Wrappers.lambdaQuery(com.sw.ck.form.entity.FormConfigEntity.class)
-                        .eq(com.sw.ck.form.entity.FormConfigEntity::getFormId, formId)
-                        .isNull(com.sw.ck.form.entity.FormConfigEntity::getParentTable);
+        LambdaQueryWrapper<FormConfigEntity> query =
+                Wrappers.lambdaQuery(FormConfigEntity.class)
+                        .eq(FormConfigEntity::getFormId, formId)
+                        .isNull(FormConfigEntity::getParentTable);
         var configs = formConfigMapper.selectList(query);
         return configs == null || configs.isEmpty() ? null : configs.get(0).getDefinition();
     }

@@ -1,16 +1,20 @@
 package com.sw.ck.bpm.process.queue;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.entity.BpmCommandEffect;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 分级命令对账恢复任务（P62 分级执行与统一命令）。
  * <p>
@@ -26,20 +30,15 @@ import java.util.List;
  * </p>
  */
 @Component
+@Log4j2
 public class TieredCommandReconcileJob {
-
-    private static final Logger log = LoggerFactory.getLogger(TieredCommandReconcileJob.class);
 
     private static final int RECONCILE_LIMIT = 200;
 
-    private final PersistentBpmCommandQueue queue;
-    private final CommandEffectRecorder effectRecorder;
-
-    public TieredCommandReconcileJob(PersistentBpmCommandQueue queue,
-                                     CommandEffectRecorder effectRecorder) {
-        this.queue = queue;
-        this.effectRecorder = effectRecorder;
-    }
+    @Autowired
+    private PersistentBpmCommandQueue queue;
+    @Autowired
+    private CommandEffectRecorder effectRecorder;
 
     @Scheduled(fixedDelayString = "${sw.bpm.command.reconcile-interval-millis:60000}",
             initialDelayString = "${sw.bpm.command.reconcile-initial-delay-millis:30000}")
@@ -63,8 +62,8 @@ public class TieredCommandReconcileJob {
         List<CommandEnvelope> pending = queue.listProcessingWithEffect(RECONCILE_LIMIT);
         for (CommandEnvelope command : pending) {
             BpmCommandEffect effect;
-            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            try (Suspended ignored =
+                         TenantLineSuspension.suspended()) {
                 effect = effectRecorder.findEffect(command.getCommandId());
             }
             if (effect == null) {

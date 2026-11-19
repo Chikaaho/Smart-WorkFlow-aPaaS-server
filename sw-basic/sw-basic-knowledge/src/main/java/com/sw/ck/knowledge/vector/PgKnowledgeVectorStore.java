@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.vector;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.security.LoginContextProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,15 +18,12 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "sw.knowledge", name = "vector-store", havingValue = "pgvector", matchIfMissing = true)
 public class PgKnowledgeVectorStore implements KnowledgeVectorStore {
 
-    private final JdbcTemplate jdbcTemplate;
-    private final LoginContextProvider loginContextProvider;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private LoginContextProvider loginContextProvider;
 
     private volatile boolean vectorColumnChecked;
-
-    public PgKnowledgeVectorStore(JdbcTemplate jdbcTemplate, LoginContextProvider loginContextProvider) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.loginContextProvider = loginContextProvider;
-    }
 
     /** 首次向量写入/检索时校验 pgvector 列；缺失即明确失败，不静默降级。 */
     private void ensureVectorColumn() {

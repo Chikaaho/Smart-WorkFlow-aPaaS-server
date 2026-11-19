@@ -1,7 +1,9 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
-import com.sw.ck.notify.dto.NotifyChannelStatusDTO;
+import com.sw.ck.notify.vo.NotifyChannelStatusVO;
 import com.sw.ck.notify.service.NotifyChannelConfigService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,16 +21,13 @@ import java.util.Map;
 @RequestMapping("/notify/channels")
 public class NotifyChannelController {
 
-    private final NotifyChannelConfigService notifyChannelConfigService;
-
-    public NotifyChannelController(NotifyChannelConfigService notifyChannelConfigService) {
-        this.notifyChannelConfigService = notifyChannelConfigService;
-    }
+    @Autowired
+    private NotifyChannelConfigService notifyChannelConfigService;
 
     /** 渠道状态列表（系统级装配状态 + 租户级启停）。 */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:channel:view')")
-    public R<List<com.sw.ck.notify.dto.NotifyChannelStatusDTO>> list() {
+    public R<List<NotifyChannelStatusVO>> list() {
         return R.ok(notifyChannelConfigService.listChannelStatus());
     }
 
@@ -36,7 +35,7 @@ public class NotifyChannelController {
     @PostMapping("/{channel}")
     @PreAuthorize("@ss.hasPermi('notify:channel:manage')")
     public R<Void> update(@PathVariable String channel,
-                          @RequestBody com.sw.ck.notify.dto.NotifyChannelStatusDTO body) {
+                          @RequestBody NotifyChannelStatusVO body) {
         notifyChannelConfigService.updateTenantChannel(channel,
                 Boolean.TRUE.equals(body.getTenantEnabled()),
                 body.getSenderDisplay(), body.getConfigSummary(), body.getConfigSecret());

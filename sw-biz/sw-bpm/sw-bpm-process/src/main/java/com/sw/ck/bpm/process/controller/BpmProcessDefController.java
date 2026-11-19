@@ -3,37 +3,50 @@ package com.sw.ck.bpm.process.controller;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.api.dto.*;
 import com.sw.ck.bpm.api.node.BpmNodeCapabilityDTO;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.bpm.process.mapper.BpmCategoryMapper;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
+import com.sw.ck.bpm.process.service.ProcessThemeService;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import jakarta.validation.Valid;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.Data;
 import org.springframework.web.bind.annotation.*;
+import com.alibaba.fastjson2.JSON;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.vo.BpmProcessDefVO;
+import com.sw.ck.bpm.process.vo.BpmProcessDefVersionVO;
 /**
  * 流程定义控制器 —— 图设计器后端。
  * <p>
@@ -46,53 +59,27 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/workflow/defs")
+@Log4j2
 public class BpmProcessDefController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmProcessDefController.class);
-
-    private final BpmProcessDefService bpmProcessDefService;
-    private final ObjectMapper objectMapper;
-    private final UserQueryFacade userQueryFacade;
-    private final BpmNodeRegistry nodeRegistry;
-    private final com.sw.ck.bpm.process.service.ProcessThemeService processThemeService;
-    /** 分类/实例数聚合数据源（列表展示字段回填；单元测试经 5 参构造保持 null，回填自动跳过）。 */
-    private final BpmCategoryMapper categoryMapper;
-    private final BpmInstanceMapper instanceMapper;
-    /** Q69（459:14712）租户名回填数据源；单测 5 参构造保持 null，回填自动跳过。 */
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
-
-    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
-                                   ObjectMapper objectMapper,
-                                   UserQueryFacade userQueryFacade) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, null, null, null, null, null);
-    }
-
-    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
-                                   ObjectMapper objectMapper,
-                                   UserQueryFacade userQueryFacade,
-                                   BpmNodeRegistry nodeRegistry,
-                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService) {
-        this(bpmProcessDefService, objectMapper, userQueryFacade, nodeRegistry, processThemeService, null, null, null);
-    }
-
     @Autowired
-    public BpmProcessDefController(BpmProcessDefService bpmProcessDefService,
-                                   ObjectMapper objectMapper,
-                                   UserQueryFacade userQueryFacade,
-                                   BpmNodeRegistry nodeRegistry,
-                                   com.sw.ck.bpm.process.service.ProcessThemeService processThemeService,
-                                   BpmCategoryMapper categoryMapper,
-                                   BpmInstanceMapper instanceMapper,
-                                   org.springframework.jdbc.core.JdbcTemplate jdbcTemplate) {
-        this.bpmProcessDefService = bpmProcessDefService;
-        this.objectMapper = objectMapper;
-        this.userQueryFacade = userQueryFacade;
-        this.nodeRegistry = nodeRegistry;
-        this.processThemeService = processThemeService;
-        this.categoryMapper = categoryMapper;
-        this.instanceMapper = instanceMapper;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private BpmNodeRegistry nodeRegistry;
+    @Autowired
+    private ProcessThemeService processThemeService;
+    /** 分类/实例数聚合数据源（列表展示字段回填；单元测试经 5 参构造保持 null，回填自动跳过）。 */
+    @Autowired
+    private BpmCategoryMapper categoryMapper;
+    @Autowired
+    private BpmInstanceMapper instanceMapper;
+    /** Q69（459:14712）租户名回填数据源；单测 5 参构造保持 null，回填自动跳过。 */
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * 创建流程定义（DRAFT 状态）。
@@ -103,7 +90,7 @@ public class BpmProcessDefController {
      * @param request 创建请求（name + formKey）
      * @return 流程定义 ID + 初始图
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:create')")
     @PostMapping
     public R<CreateProcessDefResponse> create(@Valid @RequestBody CreateProcessDefRequest request) {
@@ -126,7 +113,7 @@ public class BpmProcessDefController {
      * @param request 修改请求
      * @return 更新后的图（含同步后的 name / formKey）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @PutMapping("/{id}")
     public R<ProcessGraph> updateDef(@PathVariable Long id,
@@ -138,7 +125,7 @@ public class BpmProcessDefController {
     }
 
     /** 读取主题生成规则（V012-BUG-010）。 */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @GetMapping("/{id}/theme-rule")
     public R<String> getThemeRule(@PathVariable Long id) {
@@ -174,7 +161,7 @@ public class BpmProcessDefController {
      * @param id    流程定义 ID
      * @param graph 图 JSON（ProcessGraph）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @PutMapping("/{id}/graph")
     public R<Void> saveDraftGraph(@PathVariable Long id,
@@ -251,17 +238,17 @@ public class BpmProcessDefController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping
-    public R<PageResult<BpmProcessDef>> listDefs(PageParam pageParam,
+    public R<PageResult<BpmProcessDefVO>> listDefs(PageParam pageParam,
                                                  @RequestParam(required = false) String formKey,
                                                  @RequestParam(required = false) Long tenantId) {
-        com.sw.ck.security.holder.LoginUser user = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser user = LoginUserHolder.get();
         boolean superAdmin = user != null && user.isSuperAdmin();
         PageResult<BpmProcessDef> result =
                 bpmProcessDefService.listDefs(pageParam, formKey, superAdmin ? tenantId : null);
         fillCreatorNames(result.getRecords());
         fillListDisplayFields(result.getRecords());
         fillTenantNames(result.getRecords());
-        return R.ok(result);
+        return R.ok(PageResult.map(result, BpmProcessDefVO::from));
     }
 
     /** 租户 id→名称映射（复用启用租户选项口径；jdbcTemplate 缺失或读失败为空映射，名称留空）。 */
@@ -278,7 +265,7 @@ public class BpmProcessDefController {
         }
         Map<Long, String> names;
         try {
-            names = new java.util.HashMap<>();
+            names = new HashMap<>();
             for (Map<String, Object> row : jdbcTemplate.queryForList(
                     "SELECT id AS \"id\", name AS \"name\" FROM sys_tenant WHERE deleted = 0")) {
                 Object id = row.get("id");
@@ -397,7 +384,7 @@ public class BpmProcessDefController {
     /**
      * 版本列表回填发布人展示名：优先发布人，缺省回退最近修改人。
      */
-    private void fillPublisherNames(List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions) {
+    private void fillPublisherNames(List<BpmProcessDefVersion> versions) {
         if (versions == null || versions.isEmpty()) {
             return;
         }
@@ -417,7 +404,7 @@ public class BpmProcessDefController {
                 }));
     }
 
-    private Long publisherIdOf(com.sw.ck.bpm.process.entity.BpmProcessDefVersion version) {
+    private Long publisherIdOf(BpmProcessDefVersion version) {
         if (version.getPublishedBy() != null) {
             return version.getPublishedBy();
         }
@@ -434,13 +421,13 @@ public class BpmProcessDefController {
      * @param id 流程定义 ID
      * @return 发布后的流程定义实体
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/publish")
-    public R<BpmProcessDef> publish(@PathVariable Long id) {
+    public R<BpmProcessDefVO> publish(@PathVariable Long id) {
         BpmProcessDef published = bpmProcessDefService.publish(id);
         log.info("流程定义已发布: id={}", id);
-        return R.ok(published);
+        return R.ok(BpmProcessDefVO.from(published));
     }
 
     // ==================== I3 发布版本冻结 ====================
@@ -450,7 +437,7 @@ public class BpmProcessDefController {
     public R<ProcessGraph> getDefByKey(@PathVariable String processKey) {
         BpmProcessDef entity = bpmProcessDefService.findByProcessKey(processKey);
         if (entity == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.NOT_FOUND.getCode(),
+            throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(),
                     "流程定义不存在");
         }
         return R.ok(parseGraph(entity.getGraphJson()));
@@ -459,11 +446,11 @@ public class BpmProcessDefController {
     /** 列出流程定义全部发布版本（不含 graph_json）。 */
     @PreAuthorize("@ss.hasPermi('workflow:def:view')")
     @GetMapping("/{id}/versions")
-    public R<List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion>> listVersions(@PathVariable Long id) {
-        List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> versions =
+    public R<List<BpmProcessDefVersionVO>> listVersions(@PathVariable Long id) {
+        List<BpmProcessDefVersion> versions =
                 bpmProcessDefService.listVersions(id);
         fillPublisherNames(versions);
-        return R.ok(versions);
+        return R.ok(versions == null ? List.of() : versions.stream().map(BpmProcessDefVersionVO::from).toList());
     }
 
     /** 读取指定发布版本的冻结图。 */
@@ -474,7 +461,7 @@ public class BpmProcessDefController {
     }
 
     /** 挂起当前发布版本（仅禁止新实例；既有实例可解释）。 */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:suspend')")
     @PostMapping("/{id}/versions/{version}/suspend")
     public R<Void> suspendVersion(@PathVariable Long id, @PathVariable Integer version) {
@@ -484,7 +471,7 @@ public class BpmProcessDefController {
     }
 
     /** 激活当前发布版本（恢复同一版本发起能力）。 */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:suspend')")
     @PostMapping("/{id}/versions/{version}/activate")
     public R<Void> activateVersion(@PathVariable Long id, @PathVariable Integer version) {
@@ -499,10 +486,10 @@ public class BpmProcessDefController {
      * 服务端强制校验：仅已发布定义可开启；关闭后触发时明确拒绝。
      * </p>
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/iot-access/{flag}")
-    public R<BpmProcessDef> changeIotAccess(@PathVariable Long id, @PathVariable boolean flag) {
+    public R<BpmProcessDefVO> changeIotAccess(@PathVariable Long id, @PathVariable boolean flag) {
         BpmProcessDef def = bpmProcessDefService.findById(id);
         if (def == null) {
             return R.fail(404, "流程定义不存在: id=" + id);
@@ -510,20 +497,20 @@ public class BpmProcessDefController {
         if (flag && !"PUBLISHED".equals(def.getStatus())) {
             return R.fail(400, "仅已发布流程定义可开启 IoT 接入: " + def.getProcessKey());
         }
-        return R.ok(bpmProcessDefService.changeIotAccess(id, flag));
+        return R.ok(BpmProcessDefVO.from(bpmProcessDefService.changeIotAccess(id, flag)));
     }
 
     /**
      * A6 设备动作配置（三类设备来源 + 失败策略）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/iot-device-action")
-    public R<BpmProcessDef> setIotDeviceAction(@PathVariable Long id,
-                                               @RequestBody java.util.Map<String, Object> body) {
+    public R<BpmProcessDefVO> setIotDeviceAction(@PathVariable Long id,
+                                               @RequestBody Map<String, Object> body) {
         String actionJson = body.get("action") == null ? null
-                : com.alibaba.fastjson2.JSON.toJSONString(body.get("action"));
-        return R.ok(bpmProcessDefService.setIotDeviceAction(id, actionJson));
+                : JSON.toJSONString(body.get("action"));
+        return R.ok(BpmProcessDefVO.from(bpmProcessDefService.setIotDeviceAction(id, actionJson)));
     }
 
     /**
@@ -542,12 +529,12 @@ public class BpmProcessDefController {
     public R<List<UserOptionDTO>> approverCandidates(
             @RequestParam(required = false, defaultValue = "") String keyword,
             @RequestParam(required = false) Long deptId) {
-        java.util.Optional<List<UserOptionDTO>> candidates =
+        Optional<List<UserOptionDTO>> candidates =
                 userQueryFacade.searchActiveUsersInDept(keyword, deptId, 50);
         if (candidates.isEmpty()) {
             // empty = 缺少可用租户范围等查询上下文：以空候选列表呈现，
             // 对外响应结构保持不变（不把“无法查询”暴露为 500）
-            return R.ok(java.util.List.<UserOptionDTO>of());
+            return R.ok(List.<UserOptionDTO>of());
         }
         return R.ok(candidates.get());
     }

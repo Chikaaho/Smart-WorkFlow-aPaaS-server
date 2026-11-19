@@ -14,6 +14,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 import java.util.Optional;
@@ -59,7 +60,14 @@ class MqttDownlinkPublisherTest {
         DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
         factory.registerSingleton("iotConnectionService", connectionService);
         ObjectProvider<IotConnectionService> provider = factory.getBeanProvider(IotConnectionService.class);
-        publisher = new MqttDownlinkPublisher(connectionMapper, topicMapper, mqttBrokerManager, provider);
+        // 生产类已统一 @Autowired 字段注入（d53c7fb6）：connectionServiceProvider 是
+        // ObjectProvider 字段，@InjectMocks 无法以 IotConnectionService mock 表达，
+        // 改经反射逐字段装配（provider 沿用本类 DefaultListableBeanFactory 助手构造）。
+        publisher = new MqttDownlinkPublisher();
+        ReflectionTestUtils.setField(publisher, "connectionMapper", connectionMapper);
+        ReflectionTestUtils.setField(publisher, "topicMapper", topicMapper);
+        ReflectionTestUtils.setField(publisher, "mqttBrokerManager", mqttBrokerManager);
+        ReflectionTestUtils.setField(publisher, "connectionServiceProvider", provider);
     }
 
     private IotDevice device() {

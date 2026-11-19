@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
 import com.sw.ck.bpm.process.dto.ApprovalAction;
+import com.sw.ck.bpm.process.vo.BatchActionResultVO;
 import com.sw.ck.common.response.R;
 
 import java.util.List;
@@ -18,7 +19,7 @@ public interface BpmBatchService {
      * 返回逐项成功/失败与稳定任务标识；单项失败不影响其他项的真实结果。
      * </p>
      */
-    List<Map<String, Object>> batchAction(List<BatchItem> items);
+    List<BatchActionResultVO> batchAction(List<BatchItem> items);
 
     /** 单项：任务 ID + 动作 + 意见（复用单任务请求形状）。 */
     record BatchItem(String taskId, ApprovalAction action, String comment,

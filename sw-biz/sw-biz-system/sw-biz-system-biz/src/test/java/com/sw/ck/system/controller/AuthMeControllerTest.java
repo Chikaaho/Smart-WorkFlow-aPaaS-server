@@ -9,12 +9,17 @@ import com.sw.ck.system.service.SysUserService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
@@ -29,11 +34,16 @@ import static org.mockito.Mockito.when;
  * 直接 Mock Service 层，无需装载 Spring 上下文。
  * </p>
  */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class AuthMeControllerTest {
 
-    private final SysUserService sysUserService = mock(SysUserService.class);
-    private final SysMenuService sysMenuService = mock(SysMenuService.class);
-    private final AuthMeController controller = new AuthMeController(sysUserService, sysMenuService);
+    @Mock
+    private SysUserService sysUserService;
+    @Mock
+    private SysMenuService sysMenuService;
+    @InjectMocks
+    private AuthMeController controller;
 
     @AfterEach
     void tearDown() {

@@ -1,11 +1,15 @@
 package com.sw.ck.iot.agentbridge;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent;
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.common.persistence.IdempotentInsert;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotEventRule;
 import com.sw.ck.iot.entity.IotProcessTrigger;
@@ -13,20 +17,29 @@ import com.sw.ck.iot.event.IotProcessTriggerEvent;
 import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.mapper.IotEventRuleMapper;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
+import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyChannel;
+import com.sw.ck.notify.api.NotifyFacade;
+import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.event.EventListener;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotTriggerActionTypeEnum;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
 /**
  * Agent 图执行终态承接（0.2.4，失败即升级）。
  * <p>
@@ -39,30 +52,21 @@ import java.util.Map;
  * </p>
  */
 @Component
+@Log4j2
 public class AgentExecutionOutcomeListener {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentExecutionOutcomeListener.class);
-
-    private final IotProcessTriggerMapper triggerMapper;
-    private final IotEventRuleMapper ruleMapper;
-    private final IotDeviceMapper deviceMapper;
-    private final DomainEventPublisher eventPublisher;
-    private final ObjectProvider<PlatformTransactionManager> transactionManagerProvider;
-    private final ObjectProvider<com.sw.ck.notify.api.NotifyFacade> notifyFacadeProvider;
-
-    public AgentExecutionOutcomeListener(IotProcessTriggerMapper triggerMapper,
-                                         IotEventRuleMapper ruleMapper,
-                                         IotDeviceMapper deviceMapper,
-                                         DomainEventPublisher eventPublisher,
-                                         ObjectProvider<PlatformTransactionManager> transactionManagerProvider,
-                                         ObjectProvider<com.sw.ck.notify.api.NotifyFacade> notifyFacadeProvider) {
-        this.triggerMapper = triggerMapper;
-        this.ruleMapper = ruleMapper;
-        this.deviceMapper = deviceMapper;
-        this.eventPublisher = eventPublisher;
-        this.transactionManagerProvider = transactionManagerProvider;
-        this.notifyFacadeProvider = notifyFacadeProvider;
-    }
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
+    @Autowired
+    private IotEventRuleMapper ruleMapper;
+    @Autowired
+    private IotDeviceMapper deviceMapper;
+    @Autowired
+    private DomainEventPublisher eventPublisher;
+    @Autowired
+    private ObjectProvider<PlatformTransactionManager> transactionManagerProvider;
+    @Autowired
+    private ObjectProvider<NotifyFacade> notifyFacadeProvider;
 
     @EventListener
     public void onTerminal(AgentGraphExecutionTerminalEvent event) {
@@ -74,7 +78,7 @@ public class AgentExecutionOutcomeListener {
                         .eq(IotProcessTrigger::getAgentExecutionId, event.getExecutionId())
                         .eq(IotProcessTrigger::getTenantId, event.getTenantId())
                         .last("LIMIT 1"));
-        if (trigger == null || !"AGENT".equals(trigger.getActionType())) {
+        if (trigger == null || !IotTriggerActionTypeEnum.AGENT.getCode().equals(trigger.getActionType())) {
             // 非桥接触发的执行（页面手动执行等）不承接
             return;
         }
@@ -97,7 +101,7 @@ public class AgentExecutionOutcomeListener {
         switch (event.getStatus() == null ? "" : event.getStatus()) {
             case "SUCCESS" -> markTerminal(trigger, "SUCCESS", null);
             case "FAILED" -> {
-                markTerminal(trigger, "FAILED", event.getErrorCategory()
+                markTerminal(trigger, IotTriggerStatusEnum.FAILED.getCode(), event.getErrorCategory()
                         + (event.getErrorMessage() == null ? "" : ": " + event.getErrorMessage()));
                 escalateIfConfigured(event, trigger);
             }
@@ -115,9 +119,9 @@ public class AgentExecutionOutcomeListener {
         patch.setStatus(status);
         patch.setError(error);
         triggerMapper.update(patch,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
+                Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .eq(IotProcessTrigger::getId, trigger.getId())
-                        .in(IotProcessTrigger::getStatus, "PENDING", "PROCESSING"));
+                        .in(IotProcessTrigger::getStatus, IotTriggerStatusEnum.PENDING.getCode(), IotTriggerStatusEnum.PROCESSING.getCode()));
     }
 
     /**
@@ -129,7 +133,7 @@ public class AgentExecutionOutcomeListener {
      */
     private void escalateIfConfigured(AgentGraphExecutionTerminalEvent event, IotProcessTrigger trigger) {
         IotEventRule rule = ruleMapper.selectById(trigger.getRuleId());
-        com.alibaba.fastjson2.JSONObject failureConfig = parseFailureConfig(rule);
+        JSONObject failureConfig = parseFailureConfig(rule);
         String templateKey = failureConfig == null ? null : failureConfig.getString("templateKey");
         if (templateKey == null || templateKey.isBlank()) {
             templateKey = rule == null ? null : rule.getAgentFailureTemplateKey();
@@ -168,16 +172,16 @@ public class AgentExecutionOutcomeListener {
             escalation.setIdempotentKey(idempotentKey);
             escalation.setStatus("PENDING");
             escalation.setFormSnapshot(JSON.toJSONString(formData));
-            escalation.setTriggerTime(java.time.LocalDateTime.now());
-            escalation.setActionType("FLOW");
+            escalation.setTriggerTime(LocalDateTime.now());
+            escalation.setActionType(IotTriggerActionTypeEnum.FLOW.getCode());
             escalation.setProcessTemplateKey(effectiveTemplateKey);
             escalation.setTriggerSource("AGENT_FAIL");
             escalation.setConfiguredBy(rule.getCreateBy());
             escalation.setRetryCount(0);
             try {
-                com.sw.ck.common.persistence.IdempotentInsert.execute(
+                IdempotentInsert.execute(
                         transactionManager, () -> triggerMapper.insert(escalation));
-            } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+            } catch (DuplicateKeyException duplicate) {
                 log.info("升级触发幂等命中，跳过重复升级: key={}", idempotentKey);
                 return Boolean.FALSE;
             }
@@ -190,7 +194,7 @@ public class AgentExecutionOutcomeListener {
             flowEvent.setIdempotentKey(idempotentKey);
             flowEvent.setTriggerSource("AGENT_FAIL");
             flowEvent.setConfiguredBy(rule.getCreateBy());
-            flowEvent.setActionType("FLOW");
+            flowEvent.setActionType(IotTriggerActionTypeEnum.FLOW.getCode());
             flowEvent.setFormData(formData);
             Map<String, Object> context = new LinkedHashMap<>();
             context.put("ruleName", rule.getName());
@@ -212,7 +216,7 @@ public class AgentExecutionOutcomeListener {
     }
 
     /** 解析失败升级通用配置；非法 JSON 记警告并按未配置处理（不阻断终态回写）。 */
-    private com.alibaba.fastjson2.JSONObject parseFailureConfig(IotEventRule rule) {
+    private JSONObject parseFailureConfig(IotEventRule rule) {
         if (rule == null || rule.getAgentFailureConfigJson() == null
                 || rule.getAgentFailureConfigJson().isBlank()) {
             return null;
@@ -231,20 +235,20 @@ public class AgentExecutionOutcomeListener {
      * 幂等键按 executionId+渠道固定，同一次失败只发一次。
      */
     private void sendFailureNotifications(AgentGraphExecutionTerminalEvent event, IotEventRule rule,
-                                          com.alibaba.fastjson2.JSONObject failureConfig, IotDevice device) {
+                                          JSONObject failureConfig, IotDevice device) {
         if (failureConfig == null) {
             return;
         }
-        com.alibaba.fastjson2.JSONObject notify = failureConfig.getJSONObject("notify");
+        JSONObject notify = failureConfig.getJSONObject("notify");
         if (notify == null) {
             return;
         }
-        com.sw.ck.notify.api.NotifyFacade facade = notifyFacadeProvider.getIfAvailable();
+        NotifyFacade facade = notifyFacadeProvider.getIfAvailable();
         if (facade == null) {
             log.warn("通知门面未装配，失败升级告警跳过: executionId={}", event.getExecutionId());
             return;
         }
-        com.alibaba.fastjson2.JSONArray channels = notify.getJSONArray("channels");
+        JSONArray channels = notify.getJSONArray("channels");
         Long recipientId = notify.getLong("recipientId");
         if (channels == null || channels.isEmpty() || recipientId == null) {
             log.warn("失败升级告警配置缺少 channels 或 recipientId，跳过: ruleId={}", rule.getId());
@@ -263,19 +267,19 @@ public class AgentExecutionOutcomeListener {
         }
         for (int i = 0; i < channels.size(); i++) {
             String channelName = channels.getString(i);
-            com.sw.ck.notify.api.NotifyChannel channel;
+            NotifyChannel channel;
             try {
-                channel = com.sw.ck.notify.api.NotifyChannel.valueOf(channelName);
+                channel = NotifyChannel.valueOf(channelName);
             } catch (IllegalArgumentException unknownChannel) {
                 log.warn("失败升级告警未知渠道: {}", channelName);
                 continue;
             }
             try {
-                facade.send(com.sw.ck.notify.api.NotifySendRequest.builder()
+                facade.send(NotifySendRequest.builder()
                         .recipientId(recipientId)
                         .title(title)
                         .content(content)
-                        .bizType(com.sw.ck.notify.api.NotifyBizType.WF_TODO)
+                        .bizType(NotifyBizType.WF_TODO)
                         .bizId("agent-fail-" + event.getExecutionId())
                         .tenantId(event.getTenantId())
                         .channel(channel)

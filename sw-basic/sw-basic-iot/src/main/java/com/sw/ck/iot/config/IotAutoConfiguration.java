@@ -2,12 +2,11 @@ package com.sw.ck.iot.config;
 
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.provider.TencentCloudProvider;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * IoT 接入自动配置。
  *
@@ -21,9 +20,8 @@ import org.springframework.context.annotation.Bean;
  */
 @AutoConfiguration
 @ConditionalOnProperty(prefix = "sw.iot", name = "enabled", havingValue = "true")
+@Log4j2
 public class IotAutoConfiguration {
-
-    private static final Logger log = LoggerFactory.getLogger(IotAutoConfiguration.class);
 
     @Bean
     @ConditionalOnProperty(prefix = "sw.iot.tencent", name = "provider-mode", havingValue = "tencent")

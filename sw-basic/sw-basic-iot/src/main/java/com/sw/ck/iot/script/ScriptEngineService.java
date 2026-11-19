@@ -2,7 +2,10 @@ package com.sw.ck.iot.script;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.common.event.DomainEventPublisher;
+import com.sw.ck.common.persistence.IdempotentInsert;
+import com.sw.ck.iot.entity.IotProcessTrigger;
 import com.sw.ck.iot.entity.IotScript;
 import com.sw.ck.iot.entity.IotScriptExec;
 import com.sw.ck.iot.entity.IotScriptVersion;
@@ -19,12 +22,18 @@ import com.sw.ck.iot.mapper.IotScriptVersionMapper;
 import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.sw.ck.iot.entity.IotTriggerSourceEnum;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
 
 /**
  * 受控脚本执行编排。
@@ -37,26 +46,16 @@ import java.util.UUID;
 @Service
 public class ScriptEngineService {
 
-    private final GraalJsRunner jsRunner;
-    private final JavaSubprocessExecutor javaExecutor;
-    private final ScriptBeanAccess beans;
+    @Autowired
+    private GraalJsRunner jsRunner;
+    @Autowired
+    private JavaSubprocessExecutor javaExecutor;
+    @Autowired
+    private ScriptBeanAccess beans;
 
     /** 幂等插入的保存点包装所需（可选装配：单元测试可缺省）。 */
-    private org.springframework.transaction.PlatformTransactionManager transactionManager;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setTransactionManager(
-            org.springframework.transaction.PlatformTransactionManager transactionManager) {
-        this.transactionManager = transactionManager;
-    }
-
-    public ScriptEngineService(GraalJsRunner jsRunner,
-                               JavaSubprocessExecutor javaExecutor,
-                               ScriptBeanAccess beans) {
-        this.jsRunner = jsRunner;
-        this.javaExecutor = javaExecutor;
-        this.beans = beans;
-    }
+    @Autowired(required = false)
+    private PlatformTransactionManager transactionManager;
 
     /**
      * 试运行（副作用默认关闭）。
@@ -177,23 +176,23 @@ public class ScriptEngineService {
             return;
         }
         for (ScriptHostFunctions.ProcessStartRequest request : host.getProcessStartRequests()) {
-            com.sw.ck.iot.entity.IotProcessTrigger trigger = new com.sw.ck.iot.entity.IotProcessTrigger();
+            IotProcessTrigger trigger = new IotProcessTrigger();
             trigger.setScriptId(request.scriptId());
             trigger.setDeviceId(request.deviceId());
             trigger.setTenantId(request.tenantId());
             trigger.setIdempotentKey(request.idempotentKey());
             trigger.setProcessTemplateKey(request.processTemplateKey());
-            trigger.setTriggerSource(request.triggerSource() == null ? "SCRIPT" : request.triggerSource());
+            trigger.setTriggerSource(request.triggerSource() == null ? IotTriggerSourceEnum.SCRIPT.getCode() : request.triggerSource());
             trigger.setConfiguredBy(request.configuredBy());
-            trigger.setStatus("PENDING");
+            trigger.setStatus(IotTriggerStatusEnum.PENDING.getCode());
             trigger.setRetryCount(0);
-            trigger.setTriggerTime(java.time.LocalDateTime.now());
+            trigger.setTriggerTime(LocalDateTime.now());
             trigger.setFormSnapshot(JSON.toJSONString(request.formData()));
             try {
                 // 与规则路径同口径：唯一键冲突在保存点内发生，不污染调用方业务事务
-                com.sw.ck.common.persistence.IdempotentInsert.execute(transactionManager,
+                IdempotentInsert.execute(transactionManager,
                         () -> beans.processTriggerMapper.insert(trigger));
-            } catch (org.springframework.dao.DuplicateKeyException duplicate) {
+            } catch (DuplicateKeyException duplicate) {
                 // 幂等：同幂等键已登记，不重复建行
                 continue;
             }

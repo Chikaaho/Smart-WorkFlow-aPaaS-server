@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.facade;
 
-import com.sw.ck.bpm.api.dto.BpmActivityDTO;
+import com.sw.ck.bpm.api.vo.BpmActivityVO;
+
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.Process;
 import org.flowable.bpmn.model.SubProcess;
@@ -12,6 +13,9 @@ import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricActivityInstanceQuery;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.engine.runtime.ProcessInstanceQuery;
+import org.flowable.task.api.history.HistoricTaskInstanceQuery;
+import org.flowable.variable.api.history.HistoricVariableInstance;
+import org.flowable.variable.api.history.HistoricVariableInstanceQuery;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -147,20 +151,20 @@ class BpmRuntimeFacadeImplTest {
             when(query.list()).thenReturn(List.of(ha1, ha2, ha3));
 
             // assignee 兜底链：历史任务表 + 历史变量 approver（本用例 assignee 已有值，不触发）
-            org.flowable.task.api.history.HistoricTaskInstanceQuery taskQuery =
-                    mock(org.flowable.task.api.history.HistoricTaskInstanceQuery.class);
+            HistoricTaskInstanceQuery taskQuery =
+                    mock(HistoricTaskInstanceQuery.class);
             when(historyService.createHistoricTaskInstanceQuery()).thenReturn(taskQuery);
             when(taskQuery.processInstanceId("pi-1")).thenReturn(taskQuery);
             when(taskQuery.list()).thenReturn(List.of());
 
-            org.flowable.variable.api.history.HistoricVariableInstanceQuery varQuery =
-                    mock(org.flowable.variable.api.history.HistoricVariableInstanceQuery.class);
+            HistoricVariableInstanceQuery varQuery =
+                    mock(HistoricVariableInstanceQuery.class);
             when(historyService.createHistoricVariableInstanceQuery()).thenReturn(varQuery);
             when(varQuery.processInstanceId("pi-1")).thenReturn(varQuery);
             when(varQuery.variableName("approver")).thenReturn(varQuery);
             when(varQuery.singleResult()).thenReturn(null);
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-1").orElseThrow();
+            List<BpmActivityVO> results = facade.queryHistoricActivities("pi-1").orElseThrow();
 
             assertThat(results).hasSize(3);
             assertThat(results.get(0).getActivityId()).isEqualTo("Activity_start");
@@ -192,23 +196,23 @@ class BpmRuntimeFacadeImplTest {
                     "Activity_approve", "审批", "userTask", now, now, null, "task-9");
             when(query.list()).thenReturn(List.of(ha1));
 
-            org.flowable.task.api.history.HistoricTaskInstanceQuery taskQuery =
-                    mock(org.flowable.task.api.history.HistoricTaskInstanceQuery.class);
+            HistoricTaskInstanceQuery taskQuery =
+                    mock(HistoricTaskInstanceQuery.class);
             when(historyService.createHistoricTaskInstanceQuery()).thenReturn(taskQuery);
             when(taskQuery.processInstanceId("pi-2")).thenReturn(taskQuery);
             when(taskQuery.list()).thenReturn(List.of());
 
-            org.flowable.variable.api.history.HistoricVariableInstanceQuery varQuery =
-                    mock(org.flowable.variable.api.history.HistoricVariableInstanceQuery.class);
+            HistoricVariableInstanceQuery varQuery =
+                    mock(HistoricVariableInstanceQuery.class);
             when(historyService.createHistoricVariableInstanceQuery()).thenReturn(varQuery);
             when(varQuery.processInstanceId("pi-2")).thenReturn(varQuery);
             when(varQuery.variableName("approver")).thenReturn(varQuery);
-            org.flowable.variable.api.history.HistoricVariableInstance var =
-                    mock(org.flowable.variable.api.history.HistoricVariableInstance.class);
+            HistoricVariableInstance var =
+                    mock(HistoricVariableInstance.class);
             when(var.getValue()).thenReturn("1");
             when(varQuery.singleResult()).thenReturn(var);
 
-            List<BpmActivityDTO> results = facade.queryHistoricActivities("pi-2").orElseThrow();
+            List<BpmActivityVO> results = facade.queryHistoricActivities("pi-2").orElseThrow();
 
             assertThat(results).hasSize(1);
             assertThat(results.get(0).getAssignee()).isEqualTo("1");

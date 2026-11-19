@@ -2,13 +2,17 @@ package com.sw.ck.system.mapper;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.datascope.DataScope;
 import com.sw.ck.common.mapper.BaseMapperX;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.entity.SysUserGroup;
+
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+
+import java.util.List;
 
 /**
  * 用户组 Mapper。
@@ -68,7 +72,7 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
                                         @Param("__scopeType__") String scopeType,
                                         @Param("__userId__") Long userId,
                                         @Param("__deptId__") Long deptId,
-                                        @Param("__customDeptIds__") java.util.List<Long> customDeptIds,
+                                        @Param("__customDeptIds__") List<Long> customDeptIds,
                                         @Param("__tenantId__") Long tenantId);
 
     /** 组成员用户候选分页：仅启用用户 + 数据范围限定（与组列表同一套 EXISTS 语义）。 */
@@ -111,6 +115,6 @@ public interface SysUserGroupMapper extends BaseMapperX<SysUserGroup> {
                                           @Param("__scopeType__") String scopeType,
                                           @Param("__userId__") Long userId,
                                           @Param("__deptId__") Long deptId,
-                                          @Param("__customDeptIds__") java.util.List<Long> customDeptIds,
+                                          @Param("__customDeptIds__") List<Long> customDeptIds,
                                           @Param("__tenantId__") Long tenantId);
 }

@@ -2,6 +2,7 @@ package com.sw.ck.bootstrap.migration;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -105,7 +106,7 @@ class FormKeyConstraintTest {
     @DisplayName("MySQL/MariaDB：uk_sw_form_def_form_key 列顺序为 tenant_id, form_key, deleted")
     void mysqlFinalIndex() throws Exception {
         String url = System.getProperty("formkey.mysql.url");
-        org.junit.jupiter.api.Assumptions.assumeTrue(url != null && !url.isBlank(),
+        Assumptions.assumeTrue(url != null && !url.isBlank(),
                 "未配置 formkey.mysql.url，跳过 MySQL form_key 断言");
         String user = System.getProperty("formkey.mysql.user", "root");
         String password = System.getProperty("formkey.mysql.password", "");
@@ -136,7 +137,7 @@ class FormKeyConstraintTest {
     @DisplayName("Oracle：uk_sw_form_def_form_key 列顺序为 tenant_id, form_key, deleted")
     void oracleFinalIndex() throws Exception {
         String url = System.getProperty("formkey.oracle.url");
-        org.junit.jupiter.api.Assumptions.assumeTrue(url != null && !url.isBlank(),
+        Assumptions.assumeTrue(url != null && !url.isBlank(),
                 "未配置 formkey.oracle.url，跳过 Oracle form_key 断言");
         String user = System.getProperty("formkey.oracle.user", "swmdb");
         String password = System.getProperty("formkey.oracle.password", "");
@@ -167,7 +168,7 @@ class FormKeyConstraintTest {
     @DisplayName("SQL Server：uk_sw_form_def_form_key 列顺序为 tenant_id, form_key, deleted")
     void sqlServerFinalIndex() throws Exception {
         String url = System.getProperty("formkey.sqlserver.url");
-        org.junit.jupiter.api.Assumptions.assumeTrue(url != null && !url.isBlank(),
+        Assumptions.assumeTrue(url != null && !url.isBlank(),
                 "未配置 formkey.sqlserver.url，跳过 SQL Server form_key 断言");
         String user = System.getProperty("formkey.sqlserver.user", "sa");
         String password = System.getProperty("formkey.sqlserver.password", "");

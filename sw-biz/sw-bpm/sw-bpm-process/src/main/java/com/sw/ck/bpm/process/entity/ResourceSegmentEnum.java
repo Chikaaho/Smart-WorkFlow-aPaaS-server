@@ -1,5 +1,6 @@
 package com.sw.ck.bpm.process.entity;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -43,11 +44,11 @@ public enum ResourceSegmentEnum {
      * 按类别给出段占用优先序（段满才尝试下一段）。
      * BULK 只允许 SHARED（不进入任何保留段）。
      */
-    public static java.util.List<ResourceSegmentEnum> preference(ResourceClassEnum resourceClass) {
+    public static List<ResourceSegmentEnum> preference(ResourceClassEnum resourceClass) {
         return switch (resourceClass) {
-            case PROD -> java.util.List.of(SHARED, PROD_RESERVED, OA_RESERVED);
-            case OA -> java.util.List.of(SHARED, OA_RESERVED, PROD_RESERVED);
-            case BULK -> java.util.List.of(SHARED);
+            case PROD -> List.of(SHARED, PROD_RESERVED, OA_RESERVED);
+            case OA -> List.of(SHARED, OA_RESERVED, PROD_RESERVED);
+            case BULK -> List.of(SHARED);
         };
     }
 

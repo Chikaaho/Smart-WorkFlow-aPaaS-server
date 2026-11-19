@@ -2,7 +2,7 @@ package com.sw.ck.bpm.process.mapper;
 
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.sw.ck.bpm.process.dto.CopyItemDTO;
+import com.sw.ck.bpm.process.vo.CopyItemVO;
 import com.sw.ck.bpm.process.entity.CopyRecord;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -51,7 +51,7 @@ public interface CopyRecordMapper extends BaseMapper<CopyRecord> {
             + "ORDER BY c.create_time DESC, c.id DESC "
             + "LIMIT #{limit} OFFSET #{offset}"
             + "</script>")
-    List<CopyItemDTO> selectMyCopies(@Param("tenantId") Long tenantId,
+    List<CopyItemVO> selectMyCopies(@Param("tenantId") Long tenantId,
                                      @Param("recipientId") String recipientId,
                                      @Param("processInstanceId") String processInstanceId,
                                      @Param("keyword") String keyword,

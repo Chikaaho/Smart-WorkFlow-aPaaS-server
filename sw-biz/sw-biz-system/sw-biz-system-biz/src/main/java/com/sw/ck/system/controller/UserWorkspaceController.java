@@ -1,6 +1,9 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
+import com.sw.ck.system.vo.WorkspaceLayoutVO;
 import com.sw.ck.system.service.UserWorkspaceService;
 import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.service.WorkspaceCardTypeService;
@@ -16,6 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.sw.ck.common.value.DynamicData;
+import com.sw.ck.system.vo.SysWorkspaceCardTypeVO;
 
 /**
  * 工作台布局控制器（v0.0.2 OA，P54）。
@@ -28,19 +33,21 @@ import java.util.Map;
 @RequestMapping({"/system/workspace", "/workspace"})
 public class UserWorkspaceController {
 
-    private final UserWorkspaceService workspaceService;
-    private final WorkspaceCardTypeService cardTypeService;
-
-    public UserWorkspaceController(UserWorkspaceService workspaceService,
-                                   WorkspaceCardTypeService cardTypeService) {
-        this.workspaceService = workspaceService;
-        this.cardTypeService = cardTypeService;
-    }
+    @Autowired
+    private UserWorkspaceService workspaceService;
+    @Autowired
+    private WorkspaceCardTypeService cardTypeService;
 
     /** 当前用户布局（custom=false 表示默认布局）。 */
+    @SuppressWarnings("unchecked")
     @GetMapping("/layout")
-    public R<Map<String, Object>> layout() {
-        return R.ok(workspaceService.getLayout());
+    public R<WorkspaceLayoutVO> layout() {
+        Map<String, Object> source = workspaceService.getLayout();
+        WorkspaceLayoutVO result = new WorkspaceLayoutVO();
+        result.setCustom(Boolean.TRUE.equals(source.get("custom")));
+        result.setCardTypes((List<SysWorkspaceCardType>) source.get("cardTypes"));
+        result.setLayout(DynamicData.of(source.get("layout")));
+        return R.ok(result);
     }
 
     /** 保存当前用户布局。 */
@@ -59,15 +66,15 @@ public class UserWorkspaceController {
 
     /** 当前租户启用的卡片类型，供工作台安全注册表消费。 */
     @GetMapping("/card-types")
-    public R<List<SysWorkspaceCardType>> cardTypes() {
-        return R.ok(cardTypeService.listAvailable());
+    public R<List<SysWorkspaceCardTypeVO>> cardTypes() {
+        return R.ok(cardTypeService.listAvailable().stream().map(SysWorkspaceCardTypeVO::from).toList());
     }
 
     /** 后台卡片类型维护列表。 */
     @GetMapping("/card-types/manage")
     @PreAuthorize("@ss.hasPermi('workflow:workspace:manage')")
-    public R<List<SysWorkspaceCardType>> manageList() {
-        return R.ok(cardTypeService.listAll());
+    public R<List<SysWorkspaceCardTypeVO>> manageList() {
+        return R.ok(cardTypeService.listAll().stream().map(SysWorkspaceCardTypeVO::from).toList());
     }
 
     @PostMapping("/card-types")

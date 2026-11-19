@@ -1,6 +1,12 @@
 package com.sw.ck.system.config;
 
+import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.spi.UserDetailsProvider;
+import com.sw.ck.system.api.tenant.TenantValidityFacade;
+import com.sw.ck.system.mapper.SsoAuditRecordMapper;
+import com.sw.ck.system.mapper.SsoAuthStateMapper;
+import com.sw.ck.system.mapper.SsoProviderConfigMapper;
+import com.sw.ck.system.mapper.SsoUserBindingMapper;
 import com.sw.ck.system.mapper.SysMenuMapper;
 import com.sw.ck.system.mapper.SysRoleDeptMapper;
 import com.sw.ck.system.mapper.SysRoleMapper;
@@ -8,12 +14,27 @@ import com.sw.ck.system.mapper.SysRoleMenuMapper;
 import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.system.security.UserDetailsProviderImpl;
+import com.sw.ck.system.service.RefreshTokenService;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.TenantValidityService;
+import com.sw.ck.system.sso.DingtalkSsoProviderClient;
+import com.sw.ck.system.sso.FeishuSsoProviderClient;
+import com.sw.ck.system.sso.SsoAuthService;
+import com.sw.ck.system.sso.SsoCallbackPolicy;
+import com.sw.ck.system.sso.SsoCredentialCipher;
+import com.sw.ck.system.sso.WecomSsoProviderClient;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.PlatformTransactionManager;
+
+import java.util.List;
+import java.util.Optional;
 
 /**
  * 系统管理模块自动配置。
@@ -40,10 +61,10 @@ public class SystemAutoConfiguration {
                                                    SysRoleMenuMapper sysRoleMenuMapper,
                                                    SysMenuMapper sysMenuMapper,
                                                    SysRoleDeptMapper sysRoleDeptMapper,
-                                                   SysTenantMapper sysTenantMapper) {
+                                                   TenantValidityService tenantValidityService) {
         return new UserDetailsProviderImpl(sysUserService, sysUserRoleMapper, sysRoleMapper,
                 sysRoleMenuMapper, sysMenuMapper, sysRoleDeptMapper,
-                new com.sw.ck.system.service.TenantValidityService(sysTenantMapper));
+                tenantValidityService);
     }
 
     /**
@@ -54,9 +75,9 @@ public class SystemAutoConfiguration {
      * </p>
      */
     @Bean
-    public com.sw.ck.system.api.tenant.TenantValidityFacade tenantValidityFacade(
-            com.sw.ck.system.service.TenantValidityService tenantValidityService) {
-        return tenantId -> java.util.Optional.of(tenantValidityService.isValid(tenantId));
+    public TenantValidityFacade tenantValidityFacade(
+            TenantValidityService tenantValidityService) {
+        return tenantId -> Optional.of(tenantValidityService.isValid(tenantId));
     }
 
     /**
@@ -80,29 +101,23 @@ public class SystemAutoConfiguration {
      * </p>
      */
     @Bean
-    public com.sw.ck.system.sso.SsoAuthService ssoAuthService(
-            com.sw.ck.system.mapper.SsoProviderConfigMapper configMapper,
-            com.sw.ck.system.mapper.SsoUserBindingMapper bindingMapper,
-            com.sw.ck.system.mapper.SsoAuthStateMapper stateMapper,
-            com.sw.ck.system.mapper.SsoAuditRecordMapper auditMapper,
-            com.sw.ck.system.service.SysUserService sysUserService,
-            @org.springframework.beans.factory.annotation.Value("${sw.security.sso.cipher-key:}") String ssoCipherKey,
-            com.sw.ck.system.sso.SsoCallbackPolicy ssoCallbackPolicy,
-            com.sw.ck.system.service.TenantValidityService tenantValidityService,
-            com.sw.ck.system.mapper.SysTenantMapper tenantMapper,
-            org.springframework.transaction.PlatformTransactionManager transactionManager,
-            @org.springframework.beans.factory.annotation.Autowired(required = false)
-            com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService,
-            @org.springframework.beans.factory.annotation.Autowired(required = false)
-            com.sw.ck.system.service.RefreshTokenService refreshTokenService) {
-        return new com.sw.ck.system.sso.SsoAuthService(configMapper, bindingMapper, stateMapper,
-                auditMapper, sysUserService,
-                java.util.List.of(
-                        new com.sw.ck.system.sso.WecomSsoProviderClient(),
-                        new com.sw.ck.system.sso.FeishuSsoProviderClient(),
-                        new com.sw.ck.system.sso.DingtalkSsoProviderClient()),
-                new com.sw.ck.system.sso.SsoCredentialCipher(ssoCipherKey),
-                ssoCallbackPolicy, tenantValidityService, tenantMapper, transactionManager,
-                loginUserCacheService, refreshTokenService);
+    public SsoCredentialCipher ssoCredentialCipher(
+            @Value("${sw.security.sso.cipher-key:}") String ssoCipherKey) {
+        return new SsoCredentialCipher(ssoCipherKey);
+    }
+
+    @Bean
+    public WecomSsoProviderClient wecomSsoProviderClient() {
+        return new WecomSsoProviderClient();
+    }
+
+    @Bean
+    public FeishuSsoProviderClient feishuSsoProviderClient() {
+        return new FeishuSsoProviderClient();
+    }
+
+    @Bean
+    public DingtalkSsoProviderClient dingtalkSsoProviderClient() {
+        return new DingtalkSsoProviderClient();
     }
 }

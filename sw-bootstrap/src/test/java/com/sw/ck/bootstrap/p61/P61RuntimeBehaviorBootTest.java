@@ -1,20 +1,28 @@
 package com.sw.ck.bootstrap.p61;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class P61RuntimeBehaviorBootTest {
 
-    private static io.zonky.test.db.postgres.embedded.EmbeddedPostgres pg;
+    private static EmbeddedPostgres pg;
     private ConfigurableApplicationContext app;
     private String base;
     private String livePgUrl;
@@ -51,7 +59,7 @@ class P61RuntimeBehaviorBootTest {
     @BeforeAll
     void bootProd() {
         try {
-            pg = io.zonky.test.db.postgres.embedded.EmbeddedPostgres.builder().start();
+            pg = EmbeddedPostgres.builder().start();
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -62,21 +70,21 @@ class P61RuntimeBehaviorBootTest {
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p61-runtime-test", props));
+                            new MapPropertySource("p61-runtime-test", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
                     // 与 I5 prod 测试同口径：允许 security 的 LoginContextProvider 覆盖 common 兜底 bean
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p61RuntimeTestLoginContextProvider", provider);
                 })
                 .run("--spring.profiles.active=prod");
         String port = app.getEnvironment().getProperty("local.server.port");
         base = "http://127.0.0.1:" + port + "/api";
-        org.assertj.core.api.Assertions.assertThat(app.isActive()).isTrue();
+        Assertions.assertThat(app.isActive()).isTrue();
     }
 
     @AfterAll
@@ -103,27 +111,17 @@ class P61RuntimeBehaviorBootTest {
         props.put("spring.data.redis.password", System.getenv().getOrDefault("REDIS_PASSWORD", ""));
         // prod fail-fast 门禁：登录链密钥必须显式提供（进程内测试密钥，不落仓库、不进日志正文）
         props.put("sw.security.jwt.secret", "p61-runtime-test-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p61-runtime-test-digest-secret");
         props.put("sw.security.sso.cipher-key",
-                java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+                Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.external-datasource.cipher-key",
-                java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+                Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         return props;
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator g = java.security.KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(g.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     /** 发起真实请求；{@code acceptLanguage} 为 null 时不带 Accept-Language 头。 */
     private HttpResponse<String> get(String path, String acceptLanguage, String requestId) throws Exception {

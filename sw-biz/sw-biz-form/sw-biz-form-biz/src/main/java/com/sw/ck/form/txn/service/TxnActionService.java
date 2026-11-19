@@ -1,7 +1,10 @@
 package com.sw.ck.form.txn.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.entity.FormDefEntity;
@@ -15,26 +18,29 @@ import com.sw.ck.form.txn.model.TxnActionConfig;
 import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.model.TxnActionView;
 import com.sw.ck.form.txn.model.TxnPublishError;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.form.dynamic.FieldType;
 /**
  * 事务动作管理：草稿/发布校验/版本冻结/启停。
  * <p>发布校验产出结构化错误（字段路径 + 可读原因），非法配置被拒绝；合法配置发布后冻结为不可变版本。</p>
  */
 @Service
+@Log4j2
 public class TxnActionService {
-
-    private static final Logger log = LoggerFactory.getLogger(TxnActionService.class);
 
     public static final String TYPE_RESERVE = "RESERVE";
     public static final String TYPE_CONFIRM = "CONFIRM";
@@ -52,23 +58,16 @@ public class TxnActionService {
     /** 预占有效期上限：30 天。 */
     private static final long MAX_EXPIRES_IN_SECONDS = 30L * 24 * 3600;
 
-    private final TxnActionMapper actionMapper;
-    private final TxnActionVersionMapper versionMapper;
-    private final TxnFormBinding binding;
-    private final FormIdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
-
-    public TxnActionService(TxnActionMapper actionMapper,
-                            TxnActionVersionMapper versionMapper,
-                            TxnFormBinding binding,
-                            FormIdGenerator idGenerator,
-                            ObjectMapper objectMapper) {
-        this.actionMapper = actionMapper;
-        this.versionMapper = versionMapper;
-        this.binding = binding;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private TxnActionMapper actionMapper;
+    @Autowired
+    private TxnActionVersionMapper versionMapper;
+    @Autowired
+    private TxnFormBinding binding;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 查询 ====================
 
@@ -367,7 +366,7 @@ public class TxnActionService {
         }
         List<String> keys = cfg.getKeyFields();
         if (keys != null) {
-            Set<String> seen = new java.util.HashSet<>();
+            Set<String> seen = new HashSet<>();
             for (int i = 0; i < keys.size(); i++) {
                 String k = keys.get(i);
                 String path = "config.keyFields[" + i + "]";
@@ -382,7 +381,7 @@ public class TxnActionService {
                 if (def == null) {
                     errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                             "业务键字段不在表单定义中：" + k));
-                } else if ("TABLE".equalsIgnoreCase(def.type())) {
+                } else if (FieldType.TABLE.name().equalsIgnoreCase(def.type())) {
                     errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                             "业务键不能为表格类型：" + k));
                 }
@@ -401,7 +400,7 @@ public class TxnActionService {
         if (def == null) {
             errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                     "字段不在表单定义中：" + field));
-        } else if (!"NUMBER".equalsIgnoreCase(def.type())) {
+        } else if (!FieldType.NUMBER.name().equalsIgnoreCase(def.type())) {
             errors.add(TxnPublishError.of(FormErrorCode.ACTION_FIELD_BINDING_INVALID, path,
                     "字段必须为数字类型：" + field));
         }
@@ -427,7 +426,7 @@ public class TxnActionService {
     }
 
     private Long currentUserId() {
-        com.sw.ck.security.holder.LoginUser user = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser user = LoginUserHolder.get();
         return user == null ? null : user.getUserId();
     }
 

@@ -128,7 +128,7 @@ class AuditLogPurgeIntegrationTest {
 
         @Bean
         public AuditLogService auditLogService(SysAuditLogMapper mapper) {
-            return new AuditLogService(mapper);
+            return new AuditLogService();
         }
     }
 }

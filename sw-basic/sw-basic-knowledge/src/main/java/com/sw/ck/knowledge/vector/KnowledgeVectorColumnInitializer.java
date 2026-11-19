@@ -1,15 +1,16 @@
 package com.sw.ck.knowledge.vector;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.jdbc.DatabaseVendor;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * pgvector 向量列补建（D022-07，F1S3-G3）。
  * <p>
@@ -22,15 +23,11 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @ConditionalOnProperty(prefix = "sw.knowledge", name = "vector-store", havingValue = "pgvector", matchIfMissing = true)
+@Log4j2
 public class KnowledgeVectorColumnInitializer implements ApplicationRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(KnowledgeVectorColumnInitializer.class);
-
-    private final JdbcTemplate jdbcTemplate;
-
-    public KnowledgeVectorColumnInitializer(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Override
     public void run(ApplicationArguments args) {

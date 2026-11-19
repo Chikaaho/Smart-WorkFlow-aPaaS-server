@@ -1,11 +1,15 @@
 package com.sw.ck.iot.job;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.constant.CommonConstants;
 import com.sw.ck.iot.config.TencentCloudProperties;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.util.DeferredControlUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -13,6 +17,8 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * 命令补偿定时任务。
  * <p>
@@ -20,9 +26,8 @@ import java.util.List;
  * </p>
  */
 @Component
+@Log4j2
 public class CommandCompensationJob {
-
-    private static final Logger log = LoggerFactory.getLogger(CommandCompensationJob.class);
 
     /** 单轮最多补发的命令条数（有界，避免单轮长时间占用调度线程）。 */
     private static final int MAX_RETRY_BATCH = 50;
@@ -30,19 +35,14 @@ public class CommandCompensationJob {
     /** 滞留判据：QUEUED 且超过该分钟数仍未更新。 */
     private static final int STUCK_MINUTES = 5;
 
-    private final CommandQueueService commandQueueService;
-    private final TencentCloudProperties tencentCloudProperties;
+    @Autowired
+    private CommandQueueService commandQueueService;
+    @Autowired
+    private TencentCloudProperties tencentCloudProperties;
 
     /** 唯一生产发送路径（sw.iot.enabled=true 时才装配）；缺失时补偿只做过期处理并显式告警。 */
-    private final ObjectProvider<DeferredControlUtil> deferredControlUtil;
-
-    public CommandCompensationJob(CommandQueueService commandQueueService,
-                                  TencentCloudProperties tencentCloudProperties,
-                                  ObjectProvider<DeferredControlUtil> deferredControlUtil) {
-        this.commandQueueService = commandQueueService;
-        this.tencentCloudProperties = tencentCloudProperties;
-        this.deferredControlUtil = deferredControlUtil;
-    }
+    @Autowired
+    private ObjectProvider<DeferredControlUtil> deferredControlUtil;
 
     /**
      * 每 5 分钟执行一次补偿任务。
@@ -179,19 +179,19 @@ public class CommandCompensationJob {
      * 与命令调度器从受理记录还原身份的做法一致。</p>
      */
     private void withCommandTenant(IotDeviceCommand command, Runnable action) {
-        com.sw.ck.security.holder.LoginUser previous = com.sw.ck.security.holder.LoginUserHolder.get();
-        com.sw.ck.security.holder.LoginUser identity = new com.sw.ck.security.holder.LoginUser();
+        LoginUser previous = LoginUserHolder.get();
+        LoginUser identity = new LoginUser();
         identity.setTenantId(command.getTenantId() == null ? 0L : command.getTenantId());
-        identity.setUserId(com.sw.ck.common.constant.CommonConstants.SYSTEM_OPERATOR_ID);
+        identity.setUserId(CommonConstants.SYSTEM_OPERATOR_ID);
         identity.setUsername("iot-command-compensation");
         try {
-            com.sw.ck.security.holder.LoginUserHolder.set(identity);
+            LoginUserHolder.set(identity);
             action.run();
         } finally {
             if (previous == null) {
-                com.sw.ck.security.holder.LoginUserHolder.clear();
+                LoginUserHolder.clear();
             } else {
-                com.sw.ck.security.holder.LoginUserHolder.set(previous);
+                LoginUserHolder.set(previous);
             }
         }
     }
@@ -219,7 +219,7 @@ public class CommandCompensationJob {
             log.warn("发送通道未装配，命令回退为可重试失败: id={}", command.getId());
             return false;
         }
-        command.setStatus("SENDING");
+        command.setStatus(IotCommandStatusEnum.SENDING.getCode());
         sender.sendClaimedCommand(command);
         return true;
     }

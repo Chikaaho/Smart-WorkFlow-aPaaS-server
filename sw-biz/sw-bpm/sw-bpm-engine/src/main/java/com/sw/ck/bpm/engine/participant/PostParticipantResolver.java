@@ -7,7 +7,9 @@ import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.api.delegate.PositionDelegateFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
@@ -28,20 +30,11 @@ import java.util.Optional;
 @Component
 public class PostParticipantResolver implements NodeParticipantResolver {
 
-    private final UserQueryFacade userQueryFacade;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
     /** 可选委托解析门面（engine 独立测试未装配时保持 P63 原义）。 */
-    private final ObjectProvider<PositionDelegateFacade> delegateFacade;
-
-    public PostParticipantResolver(UserQueryFacade userQueryFacade) {
-        this(userQueryFacade, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public PostParticipantResolver(UserQueryFacade userQueryFacade,
-                                   ObjectProvider<PositionDelegateFacade> delegateFacade) {
-        this.userQueryFacade = userQueryFacade;
-        this.delegateFacade = delegateFacade;
-    }
+    @Autowired
+    private ObjectProvider<PositionDelegateFacade> delegateFacade;
 
     @Override
     public Optional<String> strategy() {

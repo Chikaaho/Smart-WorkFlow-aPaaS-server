@@ -4,8 +4,6 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -13,6 +11,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 企业微信 SSO Provider 实现（I5）。
  * <p>
@@ -22,9 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * secret 仅在服务端出站换票时使用，不进入 URL 查询参数之外的任何输出。
  * </p>
  */
+@Log4j2
 public class WecomSsoProviderClient implements SsoProviderClient {
-
-    private static final Logger log = LoggerFactory.getLogger(WecomSsoProviderClient.class);
 
     private static final String AUTHORIZE_URL = "https://login.work.weixin.qq.com/wwopen/sso/qrConnect";
     private static final String TOKEN_URL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken";

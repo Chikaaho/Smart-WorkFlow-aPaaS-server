@@ -1,12 +1,14 @@
 package com.sw.ck.common.i18n;
 
 import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.context.MessageSource;
 import org.springframework.context.NoSuchMessageException;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.text.MessageFormat;
 import java.util.List;
 import java.util.Locale;
 
@@ -37,13 +39,13 @@ public final class LocalizedMessages {
      * {@code P61MessageSourceAutoConfiguration} 在装配消息源时安装到这里。
      * 未安装（如纯单元测试）时一律回退调用方给定的缺省文案。</p>
      */
-    private static volatile org.springframework.context.MessageSource sharedSource;
+    private static volatile MessageSource sharedSource;
 
     private LocalizedMessages() {
     }
 
     /** 由消息源装配方在启动期调用一次；传 {@code null} 可卸载（测试用）。 */
-    public static void install(org.springframework.context.MessageSource messageSource) {
+    public static void install(MessageSource messageSource) {
         sharedSource = messageSource;
     }
 
@@ -160,6 +162,6 @@ public final class LocalizedMessages {
         if (template == null || args == null || args.length == 0) {
             return template;
         }
-        return java.text.MessageFormat.format(template.replace("'", "''"), args);
+        return MessageFormat.format(template.replace("'", "''"), args);
     }
 }

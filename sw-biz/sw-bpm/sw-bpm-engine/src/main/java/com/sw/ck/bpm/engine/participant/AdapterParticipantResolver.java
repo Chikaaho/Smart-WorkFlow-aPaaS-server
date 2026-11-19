@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.participant;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.api.participant.NodeParticipantResolver;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
@@ -13,11 +15,9 @@ import java.util.Optional;
 @Component
 public class AdapterParticipantResolver implements NodeParticipantResolver {
 
-    private final ParticipantResolverRegistry registry;
-
-    public AdapterParticipantResolver(@Lazy ParticipantResolverRegistry registry) {
-        this.registry = registry;
-    }
+    @Autowired
+    @Lazy
+    private ParticipantResolverRegistry registry;
 
     @Override
     public Optional<String> strategy() {

@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -8,6 +10,7 @@ import com.sw.ck.system.service.SysPostService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import com.sw.ck.system.vo.SysPostVO;
 
 /**
  * 岗位管理控制器。
@@ -16,24 +19,21 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/system/post")
 public class PostController {
 
-    private final SysPostService sysPostService;
-
-    public PostController(SysPostService sysPostService) {
-        this.sysPostService = sysPostService;
-    }
+    @Autowired
+    private SysPostService sysPostService;
 
     /**
      * 分页查询岗位。
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:post:list')")
-    public R<PageResult<SysPost>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysPostVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                         @RequestParam(defaultValue = "10") long pageSize,
                                         @RequestBody(required = false) SysPost query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysPostService.page(pageParam, query));
+        return R.ok(PageResult.map(sysPostService.page(pageParam, query), SysPostVO::from));
     }
 
     /**
@@ -41,8 +41,8 @@ public class PostController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:post:list')")
-    public R<SysPost> get(@PathVariable Long id) {
-        return R.ok(sysPostService.getById(id));
+    public R<SysPostVO> get(@PathVariable Long id) {
+        return R.ok(SysPostVO.from(sysPostService.getById(id)));
     }
 
     /**

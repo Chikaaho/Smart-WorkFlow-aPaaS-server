@@ -1,5 +1,7 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotScript;
 import com.sw.ck.iot.entity.IotScriptExec;
@@ -12,6 +14,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 
 import java.util.List;
 import java.util.Map;
+import com.sw.ck.iot.vo.IotScriptVO;
+import com.sw.ck.iot.vo.IotScriptExecVO;
+import com.sw.ck.iot.vo.IotScriptVersionVO;
 
 /**
  * 受控脚本控制器：编辑、校验、试运行、发布、版本、停用、执行日志。
@@ -21,29 +26,26 @@ import java.util.Map;
 @RequestMapping("/iot/scripts")
 public class IotScriptController {
 
-    private final IotScriptService scriptService;
-
-    public IotScriptController(IotScriptService scriptService) {
-        this.scriptService = scriptService;
-    }
+    @Autowired
+    private IotScriptService scriptService;
 
     @GetMapping
-    public R<List<IotScript>> list() {
-        return R.ok(scriptService.list());
+    public R<List<IotScriptVO>> list() {
+        return R.ok(scriptService.list() == null ? List.of() : scriptService.list().stream().map(IotScriptVO::from).toList());
     }
 
     @GetMapping("/{id}")
-    public R<IotScript> detail(@PathVariable Long id) {
-        return R.ok(scriptService.getById(id));
+    public R<IotScriptVO> detail(@PathVariable Long id) {
+        return R.ok(IotScriptVO.from(scriptService.getById(id)));
     }
 
     @GetMapping("/{id}/versions")
-    public R<List<IotScriptVersion>> versions(@PathVariable Long id) {
-        return R.ok(scriptService.versions(id));
+    public R<List<IotScriptVersionVO>> versions(@PathVariable Long id) {
+        return R.ok(scriptService.versions(id) == null ? List.of() : scriptService.versions(id).stream().map(IotScriptVersionVO::from).toList());
     }
 
     @PostMapping
-    public R<IotScript> create(@RequestBody ScriptRequest request) {
+    public R<IotScriptVO> create(@RequestBody ScriptRequest request) {
         IotScript script = new IotScript();
         script.setCode(request.getCode());
         script.setName(request.getName());
@@ -53,11 +55,11 @@ public class IotScriptController {
         script.setInputSchema(request.getInputSchema());
         script.setOutputSchema(request.getOutputSchema());
         script.setTimeoutMs(request.getTimeoutMs() == null ? 5000 : request.getTimeoutMs());
-        return R.ok(scriptService.create(script, request.getSourceCode()));
+        return R.ok(IotScriptVO.from(scriptService.create(script, request.getSourceCode())));
     }
 
     @PutMapping("/{id}")
-    public R<IotScript> updateDraft(@PathVariable Long id, @RequestBody ScriptRequest request) {
+    public R<IotScriptVO> updateDraft(@PathVariable Long id, @RequestBody ScriptRequest request) {
         IotScript patch = new IotScript();
         patch.setName(request.getName());
         patch.setTriggerType(request.getTriggerType());
@@ -65,7 +67,7 @@ public class IotScriptController {
         patch.setInputSchema(request.getInputSchema());
         patch.setOutputSchema(request.getOutputSchema());
         patch.setTimeoutMs(request.getTimeoutMs());
-        return R.ok(scriptService.updateDraft(id, patch, request.getSourceCode()));
+        return R.ok(IotScriptVO.from(scriptService.updateDraft(id, patch, request.getSourceCode())));
     }
 
     /**
@@ -80,15 +82,15 @@ public class IotScriptController {
      * 试运行（默认不产生真实副作用）。
      */
     @PostMapping("/{id}/dry-run")
-    public R<IotScriptExec> dryRun(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> input) {
-        return R.ok(scriptService.dryRun(id,
+    public R<IotScriptExecVO> dryRun(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> input) {
+        return R.ok(IotScriptExecVO.from(scriptService.dryRun(id,
                 LoginUserHolder.get().getTenantId(), LoginUserHolder.get().getUserId(),
-                input));
+                input)));
     }
 
     @PostMapping("/{id}/publish")
-    public R<IotScript> publish(@PathVariable Long id) {
-        return R.ok(scriptService.publish(id));
+    public R<IotScriptVO> publish(@PathVariable Long id) {
+        return R.ok(IotScriptVO.from(scriptService.publish(id)));
     }
 
     @PostMapping("/{id}/disable")
@@ -98,8 +100,8 @@ public class IotScriptController {
     }
 
     @GetMapping("/{id}/execs")
-    public R<List<IotScriptExec>> execs(@PathVariable Long id) {
-        return R.ok(scriptService.listExecs(id));
+    public R<List<IotScriptExecVO>> execs(@PathVariable Long id) {
+        return R.ok(scriptService.listExecs(id) == null ? List.of() : scriptService.listExecs(id).stream().map(IotScriptExecVO::from).toList());
     }
 
     public static class ScriptRequest {

@@ -1,9 +1,11 @@
 package com.sw.ck.agent.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.dto.AgentGraphSnapshotDTO;
+import com.sw.ck.agent.vo.AgentGraphSnapshotVO;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphSnapshot;
@@ -22,14 +24,10 @@ import java.util.List;
 @Service
 public class AgentGraphSnapshotServiceImpl {
 
-    private final AgentGraphSnapshotMapper snapshotMapper;
-    private final ObjectMapper objectMapper;
-
-    public AgentGraphSnapshotServiceImpl(AgentGraphSnapshotMapper snapshotMapper,
-                                         ObjectMapper objectMapper) {
-        this.snapshotMapper = snapshotMapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private AgentGraphSnapshotMapper snapshotMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** 发布时固化当前 graph_json（调用方已完成 defVersion 递增与状态回写）。 */
     public AgentGraphSnapshot createSnapshot(AgentGraphDef def) {
@@ -93,7 +91,7 @@ public class AgentGraphSnapshotServiceImpl {
     }
 
     /** 版本列表（新版本在前，不含 graph_json）。 */
-    public List<AgentGraphSnapshotDTO> listVersions(Long graphDefId) {
+    public List<AgentGraphSnapshotVO> listVersions(Long graphDefId) {
         return snapshotMapper.selectList(
                         Wrappers.<AgentGraphSnapshot>lambdaQuery()
                                 .eq(AgentGraphSnapshot::getGraphDefId, graphDefId)
@@ -101,8 +99,8 @@ public class AgentGraphSnapshotServiceImpl {
                 .stream().map(this::toDTO).toList();
     }
 
-    private AgentGraphSnapshotDTO toDTO(AgentGraphSnapshot snapshot) {
-        AgentGraphSnapshotDTO dto = new AgentGraphSnapshotDTO();
+    private AgentGraphSnapshotVO toDTO(AgentGraphSnapshot snapshot) {
+        AgentGraphSnapshotVO dto = new AgentGraphSnapshotVO();
         dto.setDefVersion(snapshot.getDefVersion());
         dto.setGraphKey(snapshot.getGraphKey());
         dto.setName(snapshot.getName());

@@ -15,7 +15,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -46,7 +46,7 @@ import java.util.List;
  * 在此 catch 并由过滤器直接渲染 503（附根因消息）——不能放任其向容器传播后经 /error
  * 重入安全链被入口点改写为 401「未认证」，那会把 Redis 未就绪伪装成账号/权限问题。
  */
-@Slf4j
+@Log4j2
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 

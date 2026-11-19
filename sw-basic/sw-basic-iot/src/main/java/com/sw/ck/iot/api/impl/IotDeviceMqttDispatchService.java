@@ -12,14 +12,19 @@ import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
 import com.sw.ck.iot.service.IotAuditService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.stereotype.Service;
+import com.sw.ck.iot.service.IotConnectionService;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
+import com.sw.ck.iot.entity.IotDirectionEnum;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
 /**
  * A6 统一命令下发（MQTT 路径）：运行时重校验 + 单命令 + 全链同关联标识。
  * <p>
@@ -28,30 +33,22 @@ import java.util.UUID;
  * </p>
  */
 @Service
+@Log4j2
 public class IotDeviceMqttDispatchService {
 
-    private static final Logger log = LoggerFactory.getLogger(IotDeviceMqttDispatchService.class);
-
-    private final IotDeviceMapper deviceMapper;
-    private final IotConnectionMapper connectionMapper;
-    private final IotTopicMapper topicMapper;
-    private final IotCommandMapper commandMapper;
-    private final MqttBrokerManager mqttBrokerManager;
-    private final IotAuditService auditService;
-
-    public IotDeviceMqttDispatchService(IotDeviceMapper deviceMapper,
-                                        IotConnectionMapper connectionMapper,
-                                        IotTopicMapper topicMapper,
-                                        IotCommandMapper commandMapper,
-                                        @Lazy MqttBrokerManager mqttBrokerManager,
-                                        IotAuditService auditService) {
-        this.deviceMapper = deviceMapper;
-        this.connectionMapper = connectionMapper;
-        this.topicMapper = topicMapper;
-        this.commandMapper = commandMapper;
-        this.mqttBrokerManager = mqttBrokerManager;
-        this.auditService = auditService;
-    }
+    @Autowired
+    private IotDeviceMapper deviceMapper;
+    @Autowired
+    private IotConnectionMapper connectionMapper;
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired
+    private IotCommandMapper commandMapper;
+    @Autowired
+    @Lazy
+    private MqttBrokerManager mqttBrokerManager;
+    @Autowired
+    private IotAuditService auditService;
 
     /**
      * @return 命令记录 ID；设备/连接不合格返回 null（不伪造受理成功）
@@ -71,7 +68,7 @@ public class IotDeviceMqttDispatchService {
                 .last("limit 1"));
         // 运行时重校验：不能仅信任流程里已保存的配置
         if (device == null || !device.getTenantId().equals(tenantId)
-                || !"PUBLISHED".equals(device.getManageStatus())
+                || !IotPublishStatusEnum.PUBLISHED.getCode().equals(device.getManageStatus())
                 || device.getProcessAccessEnabled() == null || device.getProcessAccessEnabled() != 1) {
             log.warn("A6 运行时校验拒绝: deviceKey={}, 存在={}, 状态={}", deviceKey, device != null,
                     device == null ? null : device.getManageStatus());
@@ -87,7 +84,7 @@ public class IotDeviceMqttDispatchService {
         // 下行主题：产品绑定的 DOWN/BOTH Topic（取第一条）
         IotTopic downTopic = topicMapper.selectOne(new LambdaQueryWrapper<IotTopic>()
                 .eq(IotTopic::getConnId, conn.getId())
-                .in(IotTopic::getDirection, "DOWN", "BOTH")
+                .in(IotTopic::getDirection, IotDirectionEnum.DOWN.getCode(), IotDirectionEnum.BOTH.getCode())
                 .eq(IotTopic::getEnabled, 1)
                 .last("limit 1"));
         if (downTopic == null) {
@@ -100,11 +97,11 @@ public class IotDeviceMqttDispatchService {
         IotCommand command = new IotCommand();
         command.setDeviceId(device.getId());
         command.setConnId(conn.getId());
-        command.setProvider("MQTT");
+        command.setProvider(IotConnectionService.TYPE_MQTT);
         command.setCapabilityType("INVOKE_ACTION");
         command.setCapabilityId(commandKey);
         command.setParamsJson(payload);
-        command.setStatus("PENDING");
+        command.setStatus(IotCommandStatusEnum.PENDING.getCode());
         command.setSourceType("FLOW");
         command.setSourceRef("flow:" + approvalBizId + (sourceTag == null ? "" : ":" + sourceTag));
         command.setFlowInstanceId(approvalBizId);

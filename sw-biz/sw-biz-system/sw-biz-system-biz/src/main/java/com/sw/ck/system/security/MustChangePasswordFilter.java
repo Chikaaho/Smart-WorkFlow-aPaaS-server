@@ -10,13 +10,12 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 首次登录强制改密的服务端拦截（1.0.0 F1-4）。
  * <p>
@@ -31,9 +30,8 @@ import java.util.List;
  * </p>
  */
 @Component
+@Log4j2
 public class MustChangePasswordFilter extends OncePerRequestFilter {
-
-    private static final Logger log = LoggerFactory.getLogger(MustChangePasswordFilter.class);
 
     /** 改密闭环放行端点（不含 context-path；/auth/me、/auth/menus 仅自身只读信息）。 */
     private static final List<String> ALLOWED_PATHS = List.of(

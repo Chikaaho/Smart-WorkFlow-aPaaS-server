@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.participant;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
@@ -30,14 +32,10 @@ import java.util.Set;
 @Component
 public class AggregateNodeFormParticipantResolver implements NodeParticipantResolver {
 
-    private final ObjectProvider<NodeFormPersonAggregatePort> aggregatePort;
-    private final UserQueryFacade userQueryFacade;
-
-    public AggregateNodeFormParticipantResolver(ObjectProvider<NodeFormPersonAggregatePort> aggregatePort,
-                                                UserQueryFacade userQueryFacade) {
-        this.aggregatePort = aggregatePort;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private ObjectProvider<NodeFormPersonAggregatePort> aggregatePort;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     @Override
     public Optional<String> strategy() {

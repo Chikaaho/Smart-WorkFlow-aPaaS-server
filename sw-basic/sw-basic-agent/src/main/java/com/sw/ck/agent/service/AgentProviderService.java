@@ -1,6 +1,6 @@
 package com.sw.ck.agent.service;
 
-import com.sw.ck.agent.dto.AgentProviderDTO;
+import com.sw.ck.agent.vo.AgentProviderVO;
 import com.sw.ck.agent.dto.AgentProviderSaveReqDTO;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
@@ -13,13 +13,13 @@ import java.util.List;
 public interface AgentProviderService {
 
     /** 分页查询（密钥脱敏） */
-    PageResult<AgentProviderDTO> pageProviders(PageParam pageParam, String nameKeyword);
+    PageResult<AgentProviderVO> pageProviders(PageParam pageParam, String nameKeyword);
 
     /** 全量列表（模型编辑下拉用，密钥脱敏） */
-    List<AgentProviderDTO> listEnabled();
+    List<AgentProviderVO> listEnabled();
 
     /** 详情（密钥脱敏） */
-    AgentProviderDTO getById(Long id);
+    AgentProviderVO getById(Long id);
 
     /** 新增（apiKey 明文入参，Service 层加密落库） */
     Long create(AgentProviderSaveReqDTO req);

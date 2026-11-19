@@ -4,7 +4,7 @@ import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.config.StorageProperties;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -24,7 +24,7 @@ import java.util.UUID;
  * 将文件存储到本地文件系统，按日期分目录：{basePath}/yyyy/MM/dd/{uuid}.{ext}。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 @RequiredArgsConstructor
 public class LocalStorageProvider implements StorageProvider {

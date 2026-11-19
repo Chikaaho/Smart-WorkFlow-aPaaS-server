@@ -1,11 +1,10 @@
 package com.sw.ck.bpm.process.config;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.env.Environment;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * BPM 业务处理层自动配置。
  * <p>
@@ -16,9 +15,8 @@ import org.springframework.core.env.Environment;
  */
 @AutoConfiguration
 @ConditionalOnProperty(prefix = "sw.bpm", name = "enabled", havingValue = "true")
+@Log4j2
 public class BpmProcessAutoConfiguration {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmProcessAutoConfiguration.class);
 
     public BpmProcessAutoConfiguration(Environment environment) {
         log.info("BPM process auto-configuration started (business processing layer)");

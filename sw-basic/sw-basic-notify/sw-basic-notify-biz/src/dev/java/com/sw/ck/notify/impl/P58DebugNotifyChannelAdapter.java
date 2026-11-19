@@ -4,20 +4,20 @@ import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyChannelAdapter;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 /** P58 开发验收用独立渠道适配器；生产 profile 不装配，不伪造真实第三方投递。 */
 @Component
 @Profile("dev")
+@Log4j2
 public class P58DebugNotifyChannelAdapter implements NotifyChannelAdapter {
 
-    private static final Logger log = LoggerFactory.getLogger(P58DebugNotifyChannelAdapter.class);
     private static final AtomicInteger INVOCATION_COUNT = new AtomicInteger();
     private static final NotifyChannel CHANNEL = NotifyChannel.SMS;
 
@@ -35,11 +35,11 @@ public class P58DebugNotifyChannelAdapter implements NotifyChannelAdapter {
             result = NotifySendResult.builder().channel(CHANNEL).status("TIMEOUT")
                     .failureReason("P58 adapter timeout").build();
         } else if (marker.contains("FAILURE")) {
-            result = NotifySendResult.builder().channel(CHANNEL).status("FAILED")
+            result = NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("P58 adapter failure").build();
         } else {
             String externalId = "p58_ext_" + Integer.toHexString(String.valueOf(request.getIdempotencyKey()).hashCode());
-            result = NotifySendResult.builder().channel(CHANNEL).status("SUCCESS")
+            result = NotifySendResult.builder().channel(CHANNEL).status(NotifySendStatusEnum.SUCCESS.getCode())
                     .externalMessageId(externalId).build();
         }
         int callNo = INVOCATION_COUNT.incrementAndGet();

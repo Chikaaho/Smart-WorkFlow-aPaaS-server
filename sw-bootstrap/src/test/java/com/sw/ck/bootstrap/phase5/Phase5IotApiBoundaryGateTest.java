@@ -1,15 +1,23 @@
 package com.sw.ck.bootstrap.phase5;
 
 import com.sw.ck.bootstrap.architecture.ApiOptionalContractGate;
+
+import com.alibaba.fastjson2.JSON;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -88,7 +96,8 @@ class Phase5IotApiBoundaryGateTest {
         assertThat(interfaces).as("契约接口数量").isEqualTo(5L); // P63 新增预约门面（机械更新，P62 先例）
         assertThat(events).as("契约事件数量").isEqualTo(1L);
 
-        // 用户可见的契约方法总数固定为 7：既不多拆也不合并接口
+        // 契约 Optional 方法总数固定为 13：IotDeviceFacade 6 + 预约门面 4
+        // + Query 1 + FormChecker 1 + ProcessTrigger 1；不因 import 写法变化漏计。
         int openMethods = CONTRACT_FQCNS.stream()
                 .filter(fqcn -> !fqcn.endsWith("Event"))
                 .mapToInt(fqcn -> {
@@ -100,7 +109,7 @@ class Phase5IotApiBoundaryGateTest {
                     }
                 })
                 .sum();
-        assertThat(openMethods).as("契约开放方法总数").isEqualTo(12); // IotDeviceFacade 8（P63 +resolveDeviceTarget）+ 预约门面 4
+        assertThat(openMethods).as("契约开放方法总数").isEqualTo(13);
 
         // 编译依赖扫描：只允许 java.* / javax.* 与 JDK 类型
         for (Path source : sources) {
@@ -138,7 +147,7 @@ class Phase5IotApiBoundaryGateTest {
             for (Class<?> itf : type.getInterfaces()) {
                 assertJdkOnly(type, itf, "interface");
             }
-            for (java.lang.reflect.Method method : type.getDeclaredMethods()) {
+            for (Method method : type.getDeclaredMethods()) {
                 assertJdkOnly(type, method.getReturnType(), method.getName() + " 返回类型");
                 for (Class<?> parameter : method.getParameterTypes()) {
                     assertJdkOnly(type, parameter, method.getName() + " 参数类型");
@@ -147,7 +156,7 @@ class Phase5IotApiBoundaryGateTest {
                     assertJdkOnly(type, exception, method.getName() + " 异常类型");
                 }
             }
-            for (java.lang.reflect.Field field : type.getDeclaredFields()) {
+            for (Field field : type.getDeclaredFields()) {
                 assertJdkOnly(type, field.getType(), field.getName() + " 字段类型");
             }
         }
@@ -174,7 +183,7 @@ class Phase5IotApiBoundaryGateTest {
     private static List<Class<?>> contractTypes() {
         return Set.copyOf(ApiOptionalContractGate.scanApiModuleTypes()).stream()
                 .filter(type -> type.getName().startsWith("com.sw.ck.iot."))
-                .sorted(java.util.Comparator.comparing(Class::getName))
+                .sorted(Comparator.comparing(Class::getName))
                 .toList();
     }
 
@@ -186,7 +195,7 @@ class Phase5IotApiBoundaryGateTest {
         Set<Class<?>> apiTypes = ApiOptionalContractGate.scanApiModuleTypes();
         Set<Class<?>> iotTypes = apiTypes.stream()
                 .filter(type -> type.getName().startsWith("com.sw.ck.iot."))
-                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+                .collect(Collectors.toCollection(LinkedHashSet::new));
 
         assertThat(iotTypes.stream().map(Class::getSimpleName).toList())
                 .as("IoT 契约类型必须被 Phase 1 守门扫描到（无白名单豁免）")
@@ -231,7 +240,7 @@ class Phase5IotApiBoundaryGateTest {
         assertThat(bomManagedVersion("fastjson2"))
                 .as("sw-dependencies 中 fastjson2 的管理版本")
                 .isEqualTo("2.0.53");
-        assertThat(resolvedArtifactFileName(com.alibaba.fastjson2.JSON.class))
+        assertThat(resolvedArtifactFileName(JSON.class))
                 .as("运行期实际解析到的 fastjson2 构件")
                 .isEqualTo("fastjson2-2.0.53.jar");
         System.out.println("[P5-GATE] gate3 bpm-process declares iot-api + fastjson2(BOM 2.0.53), iot-impl absent");
@@ -310,7 +319,7 @@ class Phase5IotApiBoundaryGateTest {
     @Test
     @DisplayName("门禁8：无新 Flyway 迁移、契约模块零 HTTP 路由、IoT 路由快照不变")
     void noMigrationOrHttpContractChange() throws IOException {
-        Set<String> actualMigrations = new java.util.LinkedHashSet<>();
+        Set<String> actualMigrations = new LinkedHashSet<>();
         Path iotMigrationRoot = repoRoot().resolve("sw-basic/sw-basic-iot/src/main/resources/db/migration");
         try (var walk = Files.walk(iotMigrationRoot)) {
             walk.filter(path -> path.toString().endsWith(".sql"))
@@ -332,11 +341,11 @@ class Phase5IotApiBoundaryGateTest {
         }
 
         Path controllerRoot = repoRoot().resolve("sw-basic/sw-basic-iot/src/main/java");
-        Set<String> routes = new java.util.LinkedHashSet<>();
+        Set<String> routes = new LinkedHashSet<>();
         try (var walk = Files.walk(controllerRoot)) {
             for (Path file : walk.filter(path -> path.toString().endsWith(".java")).toList()) {
                 // 路由字面量必须从原始源码提取：注释/字面量剥离会把 "/iot/..." 抹掉
-                java.util.regex.Matcher matcher = Pattern
+                Matcher matcher = Pattern
                         .compile("@RequestMapping\\(\"([^\"]+)\"\\)")
                         .matcher(read(file));
                 while (matcher.find()) {
@@ -352,9 +361,10 @@ class Phase5IotApiBoundaryGateTest {
     // ==================== 夹具 ====================
 
     private static int countInterfaceMethods(String code) {
-        // 契约方法声明：4 空格缩进且以 Optional< 开头（声明可跨多行，故不要求同一行以 ; 结束）
+        // 契约方法声明以 Optional< 开头（声明可跨多行，故不要求同一行以 ; 结束；
+        // 缩进量不作为口径，避免 import 写法变化导致漏计）。
         return (int) code.lines()
-                .filter(line -> line.matches("^    Optional<.*"))
+                .filter(line -> line.matches("^\\s*Optional<.*"))
                 .count();
     }
 
@@ -362,8 +372,8 @@ class Phase5IotApiBoundaryGateTest {
         String relative = fqcn.replace('.', '/') + ".java";
         try (var walk = Files.walk(repoRoot())) {
             List<Path> matches = walk
-                    .filter(path -> path.toString().replace(java.io.File.separatorChar, '/').endsWith("/src/main/java/" + relative))
-                    .filter(path -> !path.toString().replace(java.io.File.separatorChar, '/').contains("/target/"))
+                    .filter(path -> path.toString().replace(File.separatorChar, '/').endsWith("/src/main/java/" + relative))
+                    .filter(path -> !path.toString().replace(File.separatorChar, '/').contains("/target/"))
                     .toList();
             assertThat(matches).as("FQCN 唯一定位: " + fqcn).hasSize(1);
             return matches.get(0);

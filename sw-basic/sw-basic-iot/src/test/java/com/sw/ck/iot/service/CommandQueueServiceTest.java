@@ -2,9 +2,12 @@ package com.sw.ck.iot.service;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+
+import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.impl.CommandQueueServiceImpl;
+
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
+import java.util.function.IntSupplier;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -26,7 +30,7 @@ class CommandQueueServiceTest {
     private IotDeviceCommandMapper commandMapper;
 
     @Mock
-    private com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @InjectMocks
     private CommandQueueServiceImpl commandQueueService;
@@ -70,7 +74,7 @@ class CommandQueueServiceTest {
     void testMarkSending_Success() {
         when(commandMapper.selectById(1L)).thenReturn(testCommand);
         when(tenantWorkAdmission.claim(eq(41L), any())).thenAnswer(call ->
-                call.<java.util.function.IntSupplier>getArgument(1).getAsInt());
+                call.<IntSupplier>getArgument(1).getAsInt());
         when(commandMapper.update(isNull(), any())).thenReturn(1);
 
         IotDeviceCommand result = commandQueueService.markSending(1L);
@@ -110,7 +114,7 @@ class CommandQueueServiceTest {
     void testMarkFailed_Success() {
         when(commandMapper.selectById(1L)).thenReturn(testCommand);
         when(tenantWorkAdmission.claim(eq(41L), any())).thenAnswer(call ->
-                call.<java.util.function.IntSupplier>getArgument(1).getAsInt());
+                call.<IntSupplier>getArgument(1).getAsInt());
         when(commandMapper.update(isNull(), any())).thenReturn(1);
 
         IotDeviceCommand result = commandQueueService.markFailed(1L, "设备离线");

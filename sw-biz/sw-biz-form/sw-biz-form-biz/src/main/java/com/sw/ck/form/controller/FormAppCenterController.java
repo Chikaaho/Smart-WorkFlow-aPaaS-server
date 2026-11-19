@@ -1,8 +1,10 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
-import com.sw.ck.form.api.dto.FormAppContentDTO;
-import com.sw.ck.form.api.dto.FormAppDTO;
+import com.sw.ck.form.api.vo.FormAppContentVO;
+import com.sw.ck.form.api.vo.FormAppVO;
 import com.sw.ck.form.service.FormAppService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,21 +26,18 @@ import java.util.List;
 @RequestMapping("/form/app/center")
 public class FormAppCenterController {
 
-    private final FormAppService formAppService;
-
-    public FormAppCenterController(FormAppService formAppService) {
-        this.formAppService = formAppService;
-    }
+    @Autowired
+    private FormAppService formAppService;
 
     /** 当前用户可见的应用（启用 + 可见范围命中），计数只含当前用户可用表单。 */
     @GetMapping("/apps")
-    public R<List<FormAppDTO>> apps() {
+    public R<List<FormAppVO>> apps() {
         return R.ok(formAppService.listVisibleAppsForCurrentUser());
     }
 
     /** 可见应用内容：目录（二级分类）与可用表单；未发布/停用/不可见表单不下发。 */
     @GetMapping("/apps/{id}")
-    public R<FormAppContentDTO> content(@PathVariable("id") String id) {
+    public R<FormAppContentVO> content(@PathVariable("id") String id) {
         return R.ok(formAppService.getVisibleAppContent(id));
     }
 }

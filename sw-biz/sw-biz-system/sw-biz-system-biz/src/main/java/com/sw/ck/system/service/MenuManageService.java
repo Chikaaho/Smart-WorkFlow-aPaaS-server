@@ -1,5 +1,7 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.system.controller.MenuManageVO;
@@ -22,11 +24,8 @@ import java.util.List;
 @Service
 public class MenuManageService {
 
-    private final SysMenuMapper sysMenuMapper;
-
-    public MenuManageService(SysMenuMapper sysMenuMapper) {
-        this.sysMenuMapper = sysMenuMapper;
-    }
+    @Autowired
+    private SysMenuMapper sysMenuMapper;
 
     /** 全量目录/菜单条目（不含按钮），按 parentId + sort 排序，前端组树。 */
     public List<MenuManageVO> manageItems() {

@@ -1,12 +1,15 @@
 package com.sw.ck.system.notify;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.notify.api.NotifyTargetResolution;
 import com.sw.ck.notify.api.NotifyTargetResolver;
+import com.sw.ck.system.entity.NotifySubjectBinding;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.mapper.NotifySubjectBindingMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +17,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Optional;
+import com.sw.ck.notify.api.NotifyTargetSourceEnum;
+import com.sw.ck.notify.api.NotifyTargetStatusEnum;
+import com.sw.ck.system.sso.SsoBindStatusEnum;
 
 /**
  * NotifyTargetResolver SPI 实现（I6：从同租户有效用户权威解析联系方式）。
@@ -79,10 +85,10 @@ public class NotifyTargetResolverImpl implements NotifyTargetResolver {
                 .eq(SysUser::getTenantId, tenantId)
                 .eq(SysUser::getStatus, STATUS_ACTIVE));
         if (user == null) {
-            return Optional.of(NotifyTargetResolution.of("USER_NOT_FOUND", "SYS_USER", null));
+            return Optional.of(NotifyTargetResolution.of(NotifyTargetStatusEnum.USER_NOT_FOUND.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null));
         }
         if (user.getPhone() == null || user.getPhone().isBlank()) {
-            return Optional.of(NotifyTargetResolution.of("MISSING", "SYS_USER", null));
+            return Optional.of(NotifyTargetResolution.of(NotifyTargetStatusEnum.MISSING.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null));
         }
         String normalized = user.getPhone().trim();
         Long count = sysUserMapper.selectCount(Wrappers.<SysUser>lambdaQuery()
@@ -90,9 +96,9 @@ public class NotifyTargetResolverImpl implements NotifyTargetResolver {
                 .eq(SysUser::getStatus, STATUS_ACTIVE)
                 .eq(SysUser::getPhone, normalized));
         if (count == null || count != 1L) {
-            return Optional.of(NotifyTargetResolution.of("AMBIGUOUS", "SYS_USER", null));
+            return Optional.of(NotifyTargetResolution.of(NotifyTargetStatusEnum.AMBIGUOUS.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null));
         }
-        return Optional.of(NotifyTargetResolution.of("RESOLVED", "SYS_USER", digest(normalized)));
+        return Optional.of(NotifyTargetResolution.of(NotifyTargetStatusEnum.RESOLVED.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), digest(normalized)));
     }
 
     @Override
@@ -104,9 +110,9 @@ public class NotifyTargetResolverImpl implements NotifyTargetResolver {
             return Optional.empty();
         }
         // 异步投递线程无 LoginUserHolder：租户由投递请求权威携带（显式 tenant_id 条件）
-        com.sw.ck.system.entity.NotifySubjectBinding binding =
+        NotifySubjectBinding binding =
                 subjectBindingMapper.selectActive(tenantId, userId, provider.trim().toUpperCase());
-        if (binding == null || !"ACTIVE".equals(binding.getBindStatus())) {
+        if (binding == null || !SsoBindStatusEnum.ACTIVE.getCode().equals(binding.getBindStatus())) {
             return Optional.empty();
         }
         try {

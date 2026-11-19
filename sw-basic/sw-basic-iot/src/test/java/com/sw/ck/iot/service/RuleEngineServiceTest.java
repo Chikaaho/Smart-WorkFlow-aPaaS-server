@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
@@ -39,6 +40,10 @@ class RuleEngineServiceTest {
     @Mock
     private DomainEventPublisher eventPublisher;
 
+    // 生产类已统一 @Autowired 字段注入（d53c7fb6）：改 @InjectMocks 按类型/字段名自动装配，
+    // 等价原构造注入。auditService 为 null 守卫字段、transactionManager 可缺省
+    // （IdempotentInsert 对 null 直接裸插），两字段保持 null 与原构造行为一致。
+    @InjectMocks
     private RuleEngineService service;
 
     private IotDevice device;
@@ -46,7 +51,6 @@ class RuleEngineServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new RuleEngineService(ruleMapper, triggerMapper, propertyRecordMapper, eventPublisher);
         device = new IotDevice();
         device.setId(7L);
         device.setDeviceKey("dev-001");

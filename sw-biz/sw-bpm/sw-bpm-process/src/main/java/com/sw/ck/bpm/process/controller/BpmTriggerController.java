@@ -1,12 +1,18 @@
 package com.sw.ck.bpm.process.controller;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
+import com.sw.ck.bpm.process.vo.ActionRefVO;
+import com.sw.ck.bpm.process.vo.ChildBatchVO;
+import com.sw.ck.bpm.process.vo.RetryResultVO;
+import com.sw.ck.bpm.process.vo.TriggerExecVO;
+import com.sw.ck.bpm.process.vo.TriggerPreviewVO;
 import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTriggerExec;
@@ -23,7 +29,11 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUserHolder;
-import lombok.extern.slf4j.Slf4j;
+import com.sw.ck.bpm.api.script.ScriptFunctionContext;
+
+import lombok.extern.log4j.Log4j2;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,9 +42,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.LinkedHashMap;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import com.sw.ck.bpm.process.entity.ActionRefStatusEnum;
+import com.sw.ck.common.value.DynamicData;
 
 /**
  * P64 触发器与动作回查控制器（A03/A04/A11）。
@@ -44,62 +56,36 @@ import java.util.Map;
  * （requeueFailed 复用同键命令）。
  * </p>
  */
-@Slf4j
+@Log4j2
 @RestController
 @RequestMapping("/workflow")
 public class BpmTriggerController {
 
     /** BF20261019-03：判断脚本执行超时毫秒（可配置；缺省沿用主方向 §3.5 的 5000ms）。 */
-    @org.springframework.beans.factory.annotation.Value("${sw.bpm.script.timeout-ms:5000}")
+    @Value("${sw.bpm.script.timeout-ms:5000}")
     private long scriptTimeoutMs = BpmScriptEvaluatePort.DEFAULT_TIMEOUT_MS;
 
-    private final BpmTaskFacade bpmTaskFacade;
-    private final BpmInstanceService bpmInstanceService;
-    private final NodeFormDataService nodeFormDataService;
-    private final BpmVariableSnapshotService variableSnapshotService;
-    private final BpmScriptEvaluatePort scriptRunner;
-    private final BpmTriggerExecMapper triggerExecMapper;
-    private final BpmActionRefMapper actionRefMapper;
-    private final ActionRefRecoveryService actionRefRecoveryService;
-    private final ChildOrchestrationService childOrchestrationService;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private NodeFormDataService nodeFormDataService;
+    @Autowired
+    private BpmVariableSnapshotService variableSnapshotService;
+    @Autowired
+    private BpmScriptEvaluatePort scriptRunner;
+    @Autowired
+    private BpmTriggerExecMapper triggerExecMapper;
+    @Autowired
+    private BpmActionRefMapper actionRefMapper;
+    @Autowired
+    private ActionRefRecoveryService actionRefRecoveryService;
+    @Autowired
+    private ChildOrchestrationService childOrchestrationService;
     /** BF20261013-021 脚本函数上下文工厂（可为 null：预览退化为空上下文）。 */
-    private final BpmScriptFunctionContextFactory scriptFunctionContextFactory;
-
-    /** 兼容既有控制器单测构造（无子流程编排时相关端点显式 501 语义拒绝）。 */
-    public BpmTriggerController(BpmTaskFacade bpmTaskFacade,
-                                BpmInstanceService bpmInstanceService,
-                                NodeFormDataService nodeFormDataService,
-                                BpmVariableSnapshotService variableSnapshotService,
-                                BpmScriptEvaluatePort scriptRunner,
-                                BpmTriggerExecMapper triggerExecMapper,
-                                BpmActionRefMapper actionRefMapper,
-                                ActionRefRecoveryService actionRefRecoveryService) {
-        this(bpmTaskFacade, bpmInstanceService, nodeFormDataService, variableSnapshotService,
-                scriptRunner, triggerExecMapper, actionRefMapper, actionRefRecoveryService, null, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public BpmTriggerController(BpmTaskFacade bpmTaskFacade,
-                                BpmInstanceService bpmInstanceService,
-                                NodeFormDataService nodeFormDataService,
-                                BpmVariableSnapshotService variableSnapshotService,
-                                BpmScriptEvaluatePort scriptRunner,
-                                BpmTriggerExecMapper triggerExecMapper,
-                                BpmActionRefMapper actionRefMapper,
-                                ActionRefRecoveryService actionRefRecoveryService,
-                                ChildOrchestrationService childOrchestrationService,
-                                BpmScriptFunctionContextFactory scriptFunctionContextFactory) {
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.bpmInstanceService = bpmInstanceService;
-        this.nodeFormDataService = nodeFormDataService;
-        this.variableSnapshotService = variableSnapshotService;
-        this.scriptRunner = scriptRunner;
-        this.triggerExecMapper = triggerExecMapper;
-        this.actionRefMapper = actionRefMapper;
-        this.actionRefRecoveryService = actionRefRecoveryService;
-        this.childOrchestrationService = childOrchestrationService;
-        this.scriptFunctionContextFactory = scriptFunctionContextFactory;
-    }
+    @Autowired
+    private BpmScriptFunctionContextFactory scriptFunctionContextFactory;
 
     // ==================== 预览（只读，无副作用） ====================
 
@@ -107,7 +93,7 @@ public class BpmTriggerController {
      * 受控预览：按真实实例上下文解析快照并评估脚本+匹配，不落任何行、不登记命令。
      */
     @PostMapping("/triggers/preview")
-    public R<Map<String, Object>> preview(@RequestBody Map<String, Object> request) {
+    public R<TriggerPreviewVO> preview(@RequestBody Map<String, Object> request) {
         String instanceId = str(request.get("instanceId"));
         String triggerId = str(request.get("triggerId"));
         if (instanceId == null || triggerId == null) {
@@ -128,42 +114,44 @@ public class BpmTriggerController {
             throw new BaseException(BpmErrorCode.TRIGGER_INVALID.getCode(),
                     "触发器在实例冻结版本中不存在: " + triggerId);
         }
-        Map<String, Object> result = new LinkedHashMap<>();
+        TriggerPreviewVO result = new TriggerPreviewVO();
         BpmVariableSnapshotService.SnapshotResult snapshot = variableSnapshotService.buildSnapshot(
                 tenantId, instance, graph.getVariables(), trigger.getVariables(),
                 trigger.getNodeKey(), nodeFormDataService.currentRound(instanceId));
-        result.put("variables", snapshot.values());
-        result.put("tooLarge", snapshot.tooLarge());
-        result.put("missingRequired", snapshot.missingRequired());
-        result.put("errors", snapshot.errors());
+        result.setVariables(DynamicData.of(snapshot.values()));
+        result.setTooLarge(snapshot.tooLarge());
+        result.setMissingRequired(snapshot.missingRequired());
+        result.setErrors(snapshot.errors());
         if (snapshot.failed()) {
-            result.put("kind", "SNAPSHOT_FAILED");
+            result.setKind("SNAPSHOT_FAILED");
             return R.ok(result);
         }
-        com.sw.ck.bpm.api.script.ScriptFunctionContext functionContext =
+        ScriptFunctionContext functionContext =
                 scriptFunctionContextFactory == null
-                        ? com.sw.ck.bpm.api.script.ScriptFunctionContext.EMPTY
+                        ? ScriptFunctionContext.EMPTY
                         : scriptFunctionContextFactory.build(trigger.getScript(), instanceId, tenantId);
         BpmScriptEvaluatePort.ScriptOutcome run = scriptRunner
                 .run(trigger.getScript(), snapshot.values(), scriptTimeoutMs,
                         functionContext)
                 .orElseThrow(() -> new IllegalStateException(
                         "BpmScriptEvaluatePort#run 契约恒 present，empty 属契约违约"));
-        result.put("kind", run.kind());
-        result.put("value", run.value());
-        result.put("resultType", run.typeName());
-        result.put("errorMessage", run.errorMessage());
-        result.put("durationMs", run.durationMs());
+        result.setKind(run.kind());
+        result.setValue(DynamicData.of(run.value()));
+        result.setResultType(run.typeName());
+        result.setErrorMessage(run.errorMessage());
+        result.setDurationMs(run.durationMs());
         // BF20261013-021：预览展示脚本会写入的变量（只读展示，不落库）
-        result.put("variableWrites", run.variableWrites() == null ? Map.of() : run.variableWrites());
+        result.setVariableWrites(DynamicData.of(
+                run.variableWrites() == null ? Map.of() : run.variableWrites()));
         if (run.ok() && run.value() != null) {
             TriggerConfig.TriggerBranch matched = matchPreview(trigger, run.typeName(), run.value());
-            result.put("matchedBranchId", matched == null ? null : matched.getBranchId());
-            result.put("matchedActions", matched == null || matched.getActions() == null ? List.of()
+            result.setMatchedBranchId(matched == null ? null : matched.getBranchId());
+            result.setMatchedActions(matched == null || matched.getActions() == null ? List.of()
                     : matched.getActions().stream()
-                            .map(action -> Map.of("actionId", nullSafe(action.getActionId()),
-                                    "type", nullSafe(action.getType()),
-                                    "targetDefKey", nullSafe(action.getTargetProcessDefKey())))
+                            .map(action -> new TriggerPreviewVO.MatchedActionVO(
+                                    nullSafe(action.getActionId()),
+                                    nullSafe(action.getType()),
+                                    nullSafe(action.getTargetProcessDefKey())))
                             .toList());
         }
         return R.ok(result);
@@ -189,7 +177,7 @@ public class BpmTriggerController {
     }
 
     @GetMapping("/instances/{instanceId}/trigger-execs")
-    public R<List<Map<String, Object>>> listTriggerExecs(@PathVariable String instanceId) {
+    public R<List<TriggerExecVO>> listTriggerExecs(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
         String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         List<BpmTriggerExec> rows = triggerExecMapper.selectList(
@@ -201,7 +189,7 @@ public class BpmTriggerController {
     }
 
     @GetMapping("/instances/{instanceId}/action-refs")
-    public R<List<Map<String, Object>>> listActionRefs(@PathVariable String instanceId) {
+    public R<List<ActionRefVO>> listActionRefs(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
         String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         List<BpmActionRef> rows = actionRefMapper.selectList(
@@ -219,22 +207,22 @@ public class BpmTriggerController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:instance:view')")
     @PostMapping("/action-refs/{refId}/retry")
-    public R<Map<String, Object>> retryActionRef(@PathVariable Long refId) {
+    public R<RetryResultVO> retryActionRef(@PathVariable Long refId) {
         Long tenantId = requireTenantId();
         BpmActionRef ref = actionRefMapper.selectById(refId);
         if (ref == null || !tenantId.equals(ref.getTenantId())) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "动作意图不存在");
         }
         // 重试门槛按持久事实：目标实例已存在=已成功启动，拒绝恢复
-        if ("STARTED".equals(ref.getStatus()) || resolveTargetInstanceId(ref) != null) {
+        if (ActionRefStatusEnum.STARTED.getCode().equals(ref.getStatus()) || resolveTargetInstanceId(ref) != null) {
             throw new BaseException(BpmErrorCode.ACTION_INVALID.getCode(),
                     "动作意图已成功启动，无需重试");
         }
         ActionRefRecoveryService.RetryOutcome outcome = actionRefRecoveryService.retry(ref);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("commandId", outcome.commandId());
-        result.put("status", outcome.status());
-        result.put("message", outcome.message());
+        RetryResultVO result = new RetryResultVO();
+        result.setCommandId(outcome.commandId());
+        result.setStatus(outcome.status());
+        result.setMessage(outcome.message());
         return R.ok(result);
     }
 
@@ -244,7 +232,7 @@ public class BpmTriggerController {
      * 实例的子流程派发批次/批次项/回写与等待结果回查（父子单据、来源行、等待原因可追溯）。
      */
     @GetMapping("/instances/{instanceId}/child-batches")
-    public R<List<Map<String, Object>>> listChildBatches(@PathVariable String instanceId) {
+    public R<List<ChildBatchVO>> listChildBatches(@PathVariable String instanceId) {
         Long tenantId = requireTenantId();
         if (childOrchestrationService == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "子流程编排能力未装配");
@@ -252,22 +240,22 @@ public class BpmTriggerController {
         String processInstanceId = resolveProcessInstanceId(tenantId, instanceId);
         return R.ok(childOrchestrationService.listBatches(tenantId, processInstanceId).stream()
                 .map(batch -> {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("id", batch.id());
-                    item.put("batchKey", batch.batchKey());
-                    item.put("parentInstanceId", batch.parentInstanceId());
-                    item.put("triggerId", batch.triggerId());
-                    item.put("actionId", batch.actionId());
-                    item.put("roundNo", batch.roundNo());
-                    item.put("waitPolicy", batch.waitPolicy());
-                    item.put("waitCount", batch.waitCount());
-                    item.put("expectedCount", batch.expectedCount());
-                    item.put("settledCount", batch.settledCount());
-                    item.put("status", batch.status());
-                    item.put("blockReason", batch.blockReason());
-                    item.put("settledAt", batch.settledAt());
-                    item.put("parentDepth", batch.parentDepth());
-                    item.put("items", batch.items());
+                    ChildBatchVO item = new ChildBatchVO();
+                    item.setId(batch.id());
+                    item.setBatchKey(batch.batchKey());
+                    item.setParentInstanceId(batch.parentInstanceId());
+                    item.setTriggerId(batch.triggerId());
+                    item.setActionId(batch.actionId());
+                    item.setRoundNo(batch.roundNo());
+                    item.setWaitPolicy(batch.waitPolicy());
+                    item.setWaitCount(batch.waitCount());
+                    item.setExpectedCount(batch.expectedCount());
+                    item.setSettledCount(batch.settledCount());
+                    item.setStatus(batch.status());
+                    item.setBlockReason(batch.blockReason());
+                    item.setSettledAt(batch.settledAt());
+                    item.setParentDepth(batch.parentDepth());
+                    item.setItems(batch.items());
                     return item;
                 })
                 .toList());
@@ -279,7 +267,7 @@ public class BpmTriggerController {
      */
     @PreAuthorize("@ss.hasPermi('workflow:instance:view')")
     @PostMapping("/child-items/{itemId}/retry-writeback")
-    public R<Map<String, Object>> retryChildWriteback(@PathVariable Long itemId) {
+    public R<RetryResultVO> retryChildWriteback(@PathVariable Long itemId) {
         Long tenantId = requireTenantId();
         if (childOrchestrationService == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "子流程编排能力未装配");
@@ -287,9 +275,9 @@ public class BpmTriggerController {
         Long actorId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
         ChildOrchestrationService.WritebackRetryOutcome outcome =
                 childOrchestrationService.retryWriteback(tenantId, itemId, actorId);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("status", outcome.status());
-        result.put("message", outcome.message());
+        RetryResultVO result = new RetryResultVO();
+        result.setStatus(outcome.status());
+        result.setMessage(outcome.message());
         return R.ok(result);
     }
 
@@ -306,8 +294,8 @@ public class BpmTriggerController {
             }
             try {
                 boolean matched = switch (branchType) {
-                    case "NUMBER" -> new java.math.BigDecimal(String.valueOf(value))
-                            .compareTo(new java.math.BigDecimal(branch.getMatchValue())) == 0;
+                    case "NUMBER" -> new BigDecimal(String.valueOf(value))
+                            .compareTo(new BigDecimal(branch.getMatchValue())) == 0;
                     case "BOOLEAN" -> Boolean.parseBoolean(branch.getMatchValue()) == (Boolean) value;
                     case "STRING" -> branch.getMatchValue().equals(String.valueOf(value));
                     default -> false;
@@ -322,47 +310,46 @@ public class BpmTriggerController {
         return null;
     }
 
-    private Map<String, Object> toExecView(BpmTriggerExec row) {
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("id", row.getId());
-        item.put("processInstanceId", row.getProcessInstanceId());
-        item.put("triggerId", row.getTriggerId());
-        item.put("eventType", row.getEventType());
-        item.put("nodeKey", row.getNodeKey());
-        item.put("roundNo", row.getRoundNo());
-        item.put("execKey", row.getExecKey());
-        item.put("status", row.getStatus());
-        item.put("resultType", row.getResultType());
-        item.put("resultValue", row.getResultValue());
-        item.put("matchedBranchId", row.getMatchedBranchId());
-        item.put("disposition", row.getDisposition());
-        item.put("errorText", row.getErrorText());
-        item.put("snapshot", nodeFormDataService == null ? null
-                : row.getSnapshotText());
-        item.put("durationMs", row.getDurationMs());
-        item.put("createTime", row.getCreateTime());
+    private TriggerExecVO toExecView(BpmTriggerExec row) {
+        TriggerExecVO item = new TriggerExecVO();
+        item.setId(row.getId());
+        item.setProcessInstanceId(row.getProcessInstanceId());
+        item.setTriggerId(row.getTriggerId());
+        item.setEventType(row.getEventType());
+        item.setNodeKey(row.getNodeKey());
+        item.setRoundNo(row.getRoundNo());
+        item.setExecKey(row.getExecKey());
+        item.setStatus(row.getStatus());
+        item.setResultType(row.getResultType());
+        item.setResultValue(row.getResultValue());
+        item.setMatchedBranchId(row.getMatchedBranchId());
+        item.setDisposition(row.getDisposition());
+        item.setErrorText(row.getErrorText());
+        item.setSnapshot(nodeFormDataService == null ? null : row.getSnapshotText());
+        item.setDurationMs(row.getDurationMs());
+        item.setCreateTime(row.getCreateTime());
         return item;
     }
 
-    private Map<String, Object> toRefView(BpmActionRef row) {
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("id", row.getId());
-        item.put("execId", row.getExecId());
-        item.put("processInstanceId", row.getProcessInstanceId());
-        item.put("triggerId", row.getTriggerId());
-        item.put("actionId", row.getActionId());
-        item.put("actionType", row.getActionType());
-        item.put("itemKey", row.getItemKey());
-        item.put("itemSummary", row.getItemSummary());
-        item.put("commandKey", row.getCommandKey());
-        item.put("commandId", row.getCommandId());
-        item.put("targetDefKey", row.getTargetDefKey());
-        item.put("targetFormKey", row.getTargetFormKey());
-        item.put("targetRecordId", row.getTargetRecordId());
-        item.put("targetInstanceId", resolveTargetInstanceId(row));
-        item.put("status", resolveDisplayStatus(row));
-        item.put("errorText", row.getErrorText());
-        item.put("createTime", row.getCreateTime());
+    private ActionRefVO toRefView(BpmActionRef row) {
+        ActionRefVO item = new ActionRefVO();
+        item.setId(row.getId());
+        item.setExecId(row.getExecId());
+        item.setProcessInstanceId(row.getProcessInstanceId());
+        item.setTriggerId(row.getTriggerId());
+        item.setActionId(row.getActionId());
+        item.setActionType(row.getActionType());
+        item.setItemKey(row.getItemKey());
+        item.setItemSummary(row.getItemSummary());
+        item.setCommandKey(row.getCommandKey());
+        item.setCommandId(row.getCommandId());
+        item.setTargetDefKey(row.getTargetDefKey());
+        item.setTargetFormKey(row.getTargetFormKey());
+        item.setTargetRecordId(row.getTargetRecordId());
+        item.setTargetInstanceId(resolveTargetInstanceId(row));
+        item.setStatus(resolveDisplayStatus(row));
+        item.setErrorText(row.getErrorText());
+        item.setCreateTime(row.getCreateTime());
         return item;
     }
 

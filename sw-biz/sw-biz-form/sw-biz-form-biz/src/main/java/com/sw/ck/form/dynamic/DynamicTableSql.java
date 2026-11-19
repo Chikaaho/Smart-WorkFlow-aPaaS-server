@@ -4,8 +4,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.jdbc.DatabaseVendor;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.SqlTypeValue;
 import org.springframework.jdbc.core.StatementCreatorUtils;
@@ -15,16 +14,20 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 动态宽表受控 SQL 入口（Phase 3 §5.A：统一入口 + 机械可守门）。
  *
@@ -62,9 +65,8 @@ import java.util.regex.Pattern;
  *       （只读校验路径）退化为一次存在性检查，不持有锁。</li>
  * </ul>
  */
+@Log4j2
 public final class DynamicTableSql {
-
-    private static final Logger log = LoggerFactory.getLogger(DynamicTableSql.class);
 
     // ==================== 标识符规则（唯一来源） ====================
 
@@ -251,7 +253,7 @@ public final class DynamicTableSql {
         if (sql == null || sql.isBlank()) {
             throw contractViolation("DDL 语句为空");
         }
-        String normalized = sql.toUpperCase(java.util.Locale.ROOT);
+        String normalized = sql.toUpperCase(Locale.ROOT);
         if (!normalized.startsWith("CREATE TABLE ") && !normalized.startsWith("ALTER TABLE ")) {
             throw contractViolation("受控 DDL 仅允许 CREATE TABLE / ALTER TABLE: " + firstLine(sql));
         }
@@ -262,7 +264,7 @@ public final class DynamicTableSql {
         if (!table.equals(target)) {
             throw contractViolation("DDL 未引用声明表 " + table + "（实际 " + target + "）");
         }
-        java.util.regex.Matcher referenced = DYNAMIC_TABLE_TOKEN.matcher(sql);
+        Matcher referenced = DYNAMIC_TABLE_TOKEN.matcher(sql);
         while (referenced.find()) {
             if (!table.equals(referenced.group())) {
                 throw contractViolation("DDL 禁止引用其它动态宽表（声明 " + table
@@ -375,7 +377,7 @@ public final class DynamicTableSql {
             return live;
         }
         List<LockTarget> ordered = new ArrayList<>(targets);
-        java.util.Collections.sort(ordered);
+        Collections.sort(ordered);
         for (LockTarget target : ordered) {
             if (live.containsKey(target)) {
                 continue;
@@ -509,7 +511,7 @@ public final class DynamicTableSql {
                 throw contractViolation("SQL 未引用声明表 " + table + ": " + firstLine(sql));
             }
             // 单表约束：语句中出现的每个动态宽表都必须等于声明表，禁止借其它动态表旁路谓词校验
-            java.util.regex.Matcher referenced = DYNAMIC_TABLE_TOKEN.matcher(sql);
+            Matcher referenced = DYNAMIC_TABLE_TOKEN.matcher(sql);
             while (referenced.find()) {
                 if (!table.equals(referenced.group())) {
                     throw contractViolation("受控入口禁止跨动态宽表访问（声明 " + table

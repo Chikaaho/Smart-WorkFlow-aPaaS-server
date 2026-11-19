@@ -27,8 +27,10 @@ class WorkspaceCardTypeServiceImplTest {
     @BeforeEach
     void setUp() {
         mapper = mock(SysWorkspaceCardTypeMapper.class);
-        service = new WorkspaceCardTypeServiceImpl(new ObjectMapper());
+        service = new WorkspaceCardTypeServiceImpl();
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
+        // objectMapper 缺注入时 readTree 抛 NPE 会被兜底 catch 误报「格式无效」，须一并注入
+        ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
         when(mapper.selectCount(any())).thenReturn(0L);
     }
 

@@ -1,9 +1,12 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
-import com.sw.ck.form.api.dto.FormAppContentDTO;
-import com.sw.ck.form.api.dto.FormAppDTO;
-import com.sw.ck.form.api.dto.FormAppDirDTO;
+import com.sw.ck.common.value.IdNameProperty;
+import com.sw.ck.form.api.vo.FormAppContentVO;
+import com.sw.ck.form.api.vo.FormAppVO;
+import com.sw.ck.form.api.vo.FormAppDirVO;
 import com.sw.ck.form.api.dto.FormAppDirSaveReq;
 import com.sw.ck.form.api.dto.FormAppMembershipReq;
 import com.sw.ck.form.api.dto.FormAppSaveReq;
@@ -11,8 +14,7 @@ import com.sw.ck.form.dynamic.FixedTableSql;
 import com.sw.ck.form.service.FormAppService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,9 +27,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 应用管理（后台）：应用 / 目录 / 表单归属维护。
  * <p>
@@ -38,17 +43,13 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/form/app/manage")
+@Log4j2
 public class FormAppManageController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormAppManageController.class);
-
-    private final FormAppService formAppService;
-    private final JdbcTemplate jdbcTemplate;
-
-    public FormAppManageController(FormAppService formAppService, JdbcTemplate jdbcTemplate) {
-        this.formAppService = formAppService;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    @Autowired
+    private FormAppService formAppService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * 应用列表（含停用与承接应用），keyword 对名称模糊过滤。
@@ -57,13 +58,13 @@ public class FormAppManageController {
      */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
     @GetMapping("/list")
-    public R<List<FormAppDTO>> list(@RequestParam(required = false) String keyword,
+    public R<List<FormAppVO>> list(@RequestParam(required = false) String keyword,
                                     @RequestParam(required = false) Long tenantId) {
         LoginUser user = LoginUserHolder.get();
         boolean superAdmin = user != null && user.isSuperAdmin();
-        List<FormAppDTO> apps = formAppService.listApps(keyword, superAdmin ? tenantId : null);
+        List<FormAppVO> apps = formAppService.listApps(keyword, superAdmin ? tenantId : null);
         Map<Long, String> tenantNames = tenantNameMap();
-        for (FormAppDTO app : apps) {
+        for (FormAppVO app : apps) {
             if (app.getTenantId() != null) {
                 app.setTenantName(tenantNames.get(app.getTenantId()));
             }
@@ -74,7 +75,7 @@ public class FormAppManageController {
     /** 租户 id→名称映射（复用既有启用租户选项来源；读失败为空映射，名称留空）。 */
     private Map<Long, String> tenantNameMap() {
         try {
-            Map<Long, String> names = new java.util.HashMap<>();
+            Map<Long, String> names = new HashMap<>();
             for (Map<String, Object> row : FixedTableSql.listEnabledTenantOptions(jdbcTemplate)) {
                 Object id = row.get("id");
                 Object name = row.get("name");
@@ -91,7 +92,7 @@ public class FormAppManageController {
     /** 新建应用（名称/图标/颜色/排序/可见范围）。 */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
     @PostMapping
-    public R<FormAppDTO> create(@RequestBody FormAppSaveReq req) {
+    public R<FormAppVO> create(@RequestBody FormAppSaveReq req) {
         log.info("Creating form app: name={}", req == null ? null : req.getName());
         return R.ok(formAppService.createApp(req));
     }
@@ -99,7 +100,7 @@ public class FormAppManageController {
     /** 更新应用（可见范围集合整体重配）。 */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
     @PutMapping("/{id}")
-    public R<FormAppDTO> update(@PathVariable("id") String id, @RequestBody FormAppSaveReq req) {
+    public R<FormAppVO> update(@PathVariable("id") String id, @RequestBody FormAppSaveReq req) {
         log.info("Updating form app: id={}", id);
         return R.ok(formAppService.updateApp(id, req));
     }
@@ -107,7 +108,7 @@ public class FormAppManageController {
     /** 应用详情（含计数与指定用户集合）。 */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
     @GetMapping("/{id}")
-    public R<FormAppDTO> get(@PathVariable("id") String id) {
+    public R<FormAppVO> get(@PathVariable("id") String id) {
         return R.ok(formAppService.getApp(id));
     }
 
@@ -145,23 +146,31 @@ public class FormAppManageController {
      * 只回 id 与名称，供选择器展示；读失败返回空列表（选择器呈现为空但可保存其它维度）。
      */
     @GetMapping("/tenants")
-    public R<List<Map<String, Object>>> listTenantOptions() {
+    public R<List<IdNameProperty>> listTenantOptions() {
         try {
-            return R.ok(FixedTableSql.listEnabledTenantOptions(jdbcTemplate));
+            List<IdNameProperty> options = new ArrayList<>();
+            for (Map<String, Object> row : FixedTableSql.listEnabledTenantOptions(jdbcTemplate)) {
+                Object id = row.get("id");
+                Object name = row.get("name");
+                options.add(IdNameProperty.of(
+                        id instanceof Number number ? String.valueOf(number.longValue()) : null,
+                        name == null ? null : String.valueOf(name)));
+            }
+            return R.ok(options);
         } catch (Exception e) {
             return R.ok(List.of());
         }
     }
 
     @GetMapping("/{id}/content")
-    public R<FormAppContentDTO> content(@PathVariable("id") String id) {
+    public R<FormAppContentVO> content(@PathVariable("id") String id) {
         return R.ok(formAppService.getAppContent(id));
     }
 
     /** 新建目录（应用内二级分类）。 */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
     @PostMapping("/{id}/dirs")
-    public R<FormAppDirDTO> createDir(@PathVariable("id") String id,
+    public R<FormAppDirVO> createDir(@PathVariable("id") String id,
                                       @RequestBody FormAppDirSaveReq req) {
         log.info("Creating app dir: appId={}, name={}", id, req == null ? null : req.getName());
         return R.ok(formAppService.createDir(id, req));
@@ -170,7 +179,7 @@ public class FormAppManageController {
     /** 更新目录名称/排序。 */
     @PreAuthorize("@ss.hasPermi('form:app:manage')")
     @PutMapping("/dirs/{dirId}")
-    public R<FormAppDirDTO> updateDir(@PathVariable("dirId") String dirId,
+    public R<FormAppDirVO> updateDir(@PathVariable("dirId") String dirId,
                                       @RequestBody FormAppDirSaveReq req) {
         log.info("Updating app dir: id={}", dirId);
         return R.ok(formAppService.updateDir(dirId, req));

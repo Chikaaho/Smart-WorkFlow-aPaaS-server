@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
@@ -12,7 +13,7 @@ import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
@@ -21,14 +22,20 @@ import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
@@ -38,6 +45,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -92,24 +100,24 @@ class P62OverlapEffectsPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p62-overlap-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-overlap-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.txn-batch.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-overlap", props));
+                            new MapPropertySource("p62-overlap", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62OverlapLoginContextProvider", provider);
                 })
                 .run();
@@ -176,7 +184,7 @@ class P62OverlapEffectsPgTest {
                 .formKey("p62_overlap_flow").version(1).elements(elements).build();
         asOperator(() -> {
             processDefService.saveDraftGraph(def.getId(),
-                    app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+                    app.getBean(ObjectMapper.class)
                             .writeValueAsString(graph));
             return null;
         });
@@ -424,7 +432,7 @@ class P62OverlapEffectsPgTest {
         if (formDefService.getFormDefByKey(formKey) != null) {
             return;
         }
-        FormDefDTO draft = formDefService.createDraft(formKey, "重叠演练表单", null, null);
+        FormDefVO draft = formDefService.createDraft(formKey, "重叠演练表单", null, null);
         formDefService.saveConfig(draft.getId(), stockDefinition());
         formDefService.publish(draft.getId());
     }
@@ -499,14 +507,4 @@ class P62OverlapEffectsPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

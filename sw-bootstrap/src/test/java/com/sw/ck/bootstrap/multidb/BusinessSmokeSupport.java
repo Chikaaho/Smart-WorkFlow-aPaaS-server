@@ -2,19 +2,27 @@ package com.sw.ck.bootstrap.multidb;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
 import com.sw.ck.agent.service.AgentToolConfigService;
 import com.sw.ck.common.page.PageResult;
+import com.sw.ck.form.dynamic.DynamicTableSql;
+import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import org.flowable.engine.RepositoryService;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
 import org.quartz.Job;
 import org.quartz.JobBuilder;
 import org.quartz.JobExecutionContext;
 import org.quartz.Scheduler;
 import org.quartz.TriggerBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.crypto.Cipher;
 import java.net.URI;
@@ -33,6 +41,8 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.crypto.spec.OAEPParameterSpec;
+import javax.crypto.spec.PSource.PSpecified;
 
 /**
  * S3：MySQL / Oracle 共用主流程业务冒烟（管理员登录、菜单、表单发布、审批到终态、定时任务触发）。
@@ -51,8 +61,8 @@ final class BusinessSmokeSupport {
                 new X509EncodedKeySpec(Base64.getDecoder().decode(challenge.path("publicKey").asText())));
         Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
         cipher.init(Cipher.ENCRYPT_MODE, publicKey,
-                new javax.crypto.spec.OAEPParameterSpec("SHA-256", "MGF1",
-                        MGF1ParameterSpec.SHA256, javax.crypto.spec.PSource.PSpecified.DEFAULT));
+                new OAEPParameterSpec("SHA-256", "MGF1",
+                        MGF1ParameterSpec.SHA256, PSpecified.DEFAULT));
         String encrypted = Base64.getEncoder().encodeToString(
                 cipher.doFinal(password.getBytes(StandardCharsets.UTF_8)));
         String body = MAPPER.writeValueAsString(Map.of(
@@ -137,23 +147,23 @@ final class BusinessSmokeSupport {
         loginUser.setTenantId(tenantId);
         LoginUserHolder.set(loginUser);
         try {
-            String table = app.getBean(com.sw.ck.form.mapper.FormDefMapper.class)
+            String table = app.getBean(FormDefMapper.class)
                     .selectById(formId).getPhysicalTableName();
-            org.springframework.jdbc.core.JdbcTemplate jdbc =
-                    app.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+            JdbcTemplate jdbc =
+                    app.getBean(JdbcTemplate.class);
             String recordId = UUID.randomUUID().toString();
-            com.sw.ck.form.dynamic.DynamicTableSql.update(jdbc, table,
+            DynamicTableSql.update(jdbc, table,
                     "INSERT INTO \"" + table + "\" (\"id\", \"tenant_id\", \"deleted\", \"create_time\", "
                             + "\"create_by\", \"update_time\", \"update_by\", \"version\", \"reason\") "
                             + "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, ?, ?, ?)",
                     recordId, tenantId, 0, 1L, 1L, 0L, "冒烟事由");
-            List<Map<String, Object>> rows = com.sw.ck.form.dynamic.DynamicTableSql.query(jdbc, table,
+            List<Map<String, Object>> rows = DynamicTableSql.query(jdbc, table,
                     "SELECT \"id\", \"reason\" FROM \"" + table + "\" WHERE \"id\" = ? AND \"deleted\" = 0 "
                             + "AND \"tenant_id\" = ?", recordId, tenantId);
             if (rows.size() != 1 || !"冒烟事由".equals(rows.get(0).get("reason"))) {
                 throw new IllegalStateException("动态宽表读写不一致: " + rows);
             }
-            int updated = com.sw.ck.form.dynamic.DynamicTableSql.update(jdbc, table,
+            int updated = DynamicTableSql.update(jdbc, table,
                     "UPDATE \"" + table + "\" SET \"deleted\" = 1, \"update_time\" = CURRENT_TIMESTAMP "
                             + "WHERE \"id\" = ? AND \"deleted\" = 0 AND \"tenant_id\" = ?",
                     recordId, tenantId);
@@ -181,13 +191,13 @@ final class BusinessSmokeSupport {
                   </process>
                 </definitions>
                 """.formatted(processKey);
-        var repositoryService = app.getBean(org.flowable.engine.RepositoryService.class);
+        var repositoryService = app.getBean(RepositoryService.class);
         repositoryService.createDeployment()
                 .tenantId("0")
                 .addString(processKey + ".bpmn20.xml", bpmn)
                 .deploy();
-        var runtimeService = app.getBean(org.flowable.engine.RuntimeService.class);
-        var taskService = app.getBean(org.flowable.engine.TaskService.class);
+        var runtimeService = app.getBean(RuntimeService.class);
+        var taskService = app.getBean(TaskService.class);
         var instance = runtimeService.startProcessInstanceByKeyAndTenantId(processKey, "0");
         var task = taskService.createTaskQuery().processInstanceId(instance.getProcessInstanceId()).singleResult();
         if (task == null) {

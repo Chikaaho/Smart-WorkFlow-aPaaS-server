@@ -1,8 +1,8 @@
 package com.sw.ck.agent.service;
 
-import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolExternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
-import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolInternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
@@ -22,13 +22,13 @@ public interface AgentToolConfigService {
 
     // ==================== 内部工具 ====================
 
-    PageResult<AgentToolInternalConfigDTO> pageInternalTools(AgentToolInternalConfigQuery query);
+    PageResult<AgentToolInternalConfigVO> pageInternalTools(AgentToolInternalConfigQuery query);
 
-    AgentToolInternalConfigDTO getInternalTool(Long id);
+    AgentToolInternalConfigVO getInternalTool(Long id);
 
-    Long createInternalTool(AgentToolInternalConfigDTO dto);
+    Long createInternalTool(AgentToolInternalConfigVO dto);
 
-    void updateInternalTool(Long id, AgentToolInternalConfigDTO dto);
+    void updateInternalTool(Long id, AgentToolInternalConfigVO dto);
 
     void deleteInternalTool(Long id);
 
@@ -38,13 +38,13 @@ public interface AgentToolConfigService {
 
     // ==================== 外部工具 ====================
 
-    PageResult<AgentToolExternalConfigDTO> pageExternalTools(AgentToolExternalConfigQuery query);
+    PageResult<AgentToolExternalConfigVO> pageExternalTools(AgentToolExternalConfigQuery query);
 
-    AgentToolExternalConfigDTO getExternalTool(Long id);
+    AgentToolExternalConfigVO getExternalTool(Long id);
 
-    Long createExternalTool(AgentToolExternalConfigDTO dto);
+    Long createExternalTool(AgentToolExternalConfigVO dto);
 
-    void updateExternalTool(Long id, AgentToolExternalConfigDTO dto);
+    void updateExternalTool(Long id, AgentToolExternalConfigVO dto);
 
     void deleteExternalTool(Long id);
 

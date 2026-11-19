@@ -1,14 +1,19 @@
 package com.sw.ck.agent.controller;
 
-import com.sw.ck.agent.dto.AgentGraphExecutionDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionDetailDTO;
-import com.sw.ck.agent.dto.AgentGraphExecutionNodeDTO;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.agent.vo.AgentGraphExecutionVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionDetailVO;
+import com.sw.ck.agent.vo.AgentGraphExecutionNodeVO;
 import com.sw.ck.agent.dto.AgentNodeRunReqDTO;
-import com.sw.ck.agent.dto.AgentNodeRunRespDTO;
+import com.sw.ck.agent.vo.AgentNodeRunRespVO;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,16 +36,13 @@ import java.util.List;
 @RequestMapping("/agent/graph-executions")
 public class AgentGraphExecutionController {
 
-    private final AgentGraphExecutionService agentGraphExecutionService;
-
-    public AgentGraphExecutionController(AgentGraphExecutionService agentGraphExecutionService) {
-        this.agentGraphExecutionService = agentGraphExecutionService;
-    }
+    @Autowired
+    private AgentGraphExecutionService agentGraphExecutionService;
 
     /** 执行历史列表（分页，create_time 倒序；可按图定义 id 过滤；不含 input/output 大字段） */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<PageResult<AgentGraphExecutionDTO>> page(PageParam pageParam,
+    public R<PageResult<AgentGraphExecutionVO>> page(PageParam pageParam,
                                                       @RequestParam(required = false) Long graphDefId) {
         return R.ok(agentGraphExecutionService.pageExecutions(pageParam, graphDefId));
     }
@@ -48,14 +50,14 @@ public class AgentGraphExecutionController {
     /** 执行详情（含 input/output 大字段；执行记录不存在/跨租户 → 404 语义） */
     @GetMapping("/{executionId}")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<AgentGraphExecutionDetailDTO> detail(@PathVariable Long executionId) {
+    public R<AgentGraphExecutionDetailVO> detail(@PathVariable Long executionId) {
         return R.ok(agentGraphExecutionService.getExecution(executionId));
     }
 
     /** 节点执行明细（nodeSeq 升序；执行记录不存在/跨租户 → 404 语义） */
     @GetMapping("/{executionId}/nodes")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<AgentGraphExecutionNodeDTO>> nodes(@PathVariable Long executionId) {
+    public R<List<AgentGraphExecutionNodeVO>> nodes(@PathVariable Long executionId) {
         return R.ok(agentGraphExecutionService.listExecutionNodes(executionId));
     }
 
@@ -65,11 +67,11 @@ public class AgentGraphExecutionController {
      */
     @PostMapping("/node-run")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<AgentNodeRunRespDTO> runNode(@RequestBody AgentNodeRunReqDTO request) {
+    public R<AgentNodeRunRespVO> runNode(@RequestBody AgentNodeRunReqDTO request) {
         Long graphDefId = request.getGraphDefId();
         if (graphDefId == null) {
-            throw new com.sw.ck.common.exception.BaseException(
-                    com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "graphDefId 不能为空");
+            throw new BaseException(
+                    CommonErrorCode.PARAM_ERROR, "graphDefId 不能为空");
         }
         return R.ok(agentGraphExecutionService.runNode(graphDefId, request.getNodeId(),
                 request.getInputs()));

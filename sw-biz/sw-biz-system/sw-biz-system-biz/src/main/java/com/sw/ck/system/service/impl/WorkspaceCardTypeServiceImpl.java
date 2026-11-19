@@ -1,5 +1,7 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
@@ -31,11 +33,8 @@ public class WorkspaceCardTypeServiceImpl extends BaseServiceImpl<SysWorkspaceCa
             "stats", "todo", "favorites", "activity", "efficiency", "drafts", "messages");
     private static final int MAX_METADATA_BYTES = 32 * 1024;
 
-    private final ObjectMapper objectMapper;
-
-    public WorkspaceCardTypeServiceImpl(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public List<SysWorkspaceCardType> listAvailable() {

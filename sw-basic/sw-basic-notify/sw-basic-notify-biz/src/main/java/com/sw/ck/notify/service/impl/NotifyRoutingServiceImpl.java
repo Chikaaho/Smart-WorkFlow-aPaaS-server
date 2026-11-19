@@ -10,6 +10,9 @@ import com.sw.ck.notify.api.NotifyTemplateSelection;
 import com.sw.ck.notify.service.NotifyChannelConfigService;
 import com.sw.ck.notify.api.NotifyRoutingService;
 import com.sw.ck.notify.service.NotifySubscriptionService;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -27,27 +30,14 @@ import java.util.Set;
 @Service
 public class NotifyRoutingServiceImpl implements NotifyRoutingService {
 
-    private final NotifyRuleMapper ruleMapper;
-    private final NotifyChannelConfigService channelConfigService;
-    private final NotifySubscriptionService subscriptionService;
-    private final NotifyTemplateVersionMapper templateVersionMapper;
-
-    public NotifyRoutingServiceImpl(NotifyRuleMapper ruleMapper,
-                                    NotifyChannelConfigService channelConfigService,
-                                    NotifySubscriptionService subscriptionService) {
-        this(ruleMapper, channelConfigService, subscriptionService, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public NotifyRoutingServiceImpl(NotifyRuleMapper ruleMapper,
-                                    NotifyChannelConfigService channelConfigService,
-                                    NotifySubscriptionService subscriptionService,
-                                    NotifyTemplateVersionMapper templateVersionMapper) {
-        this.ruleMapper = ruleMapper;
-        this.channelConfigService = channelConfigService;
-        this.subscriptionService = subscriptionService;
-        this.templateVersionMapper = templateVersionMapper;
-    }
+    @Autowired
+    private NotifyRuleMapper ruleMapper;
+    @Autowired
+    private NotifyChannelConfigService channelConfigService;
+    @Autowired
+    private NotifySubscriptionService subscriptionService;
+    @Autowired
+    private NotifyTemplateVersionMapper templateVersionMapper;
 
     @Override
     public Optional<List<NotifyChannel>> channelsFor(String eventType, Long recipientId) {
@@ -57,7 +47,7 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
         List<NotifyRule> rules = enabledRules(eventType);
         Set<String> tokens = new LinkedHashSet<>();
         if (rules.isEmpty()) {
-            tokens.add("IN_APP");
+            tokens.add(NotifyChannel.IN_APP.name());
         } else {
             for (NotifyRule rule : rules) {
                 if (rule.getChannelPriority() == null || rule.getChannelPriority().isBlank()) {
@@ -114,7 +104,7 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
             return Optional.empty();
         }
         NotifyTemplateVersion snapshot = templateVersionMapper.selectOne(
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<NotifyTemplateVersion>lambdaQuery()
+                Wrappers.<NotifyTemplateVersion>lambdaQuery()
                         .eq(NotifyTemplateVersion::getTenantId, tenantId)
                         .eq(NotifyTemplateVersion::getEventType, eventType)
                         .eq(NotifyTemplateVersion::getChannel, channel.name())
@@ -135,7 +125,7 @@ public class NotifyRoutingServiceImpl implements NotifyRoutingService {
     // ==================== 内部 ====================
 
     private List<NotifyRule> enabledRules(String eventType) {
-        return ruleMapper.selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers
+        return ruleMapper.selectList(Wrappers
                 .<NotifyRule>lambdaQuery()
                 .eq(NotifyRule::getEventType, eventType)
                 .eq(NotifyRule::getEnabled, true));

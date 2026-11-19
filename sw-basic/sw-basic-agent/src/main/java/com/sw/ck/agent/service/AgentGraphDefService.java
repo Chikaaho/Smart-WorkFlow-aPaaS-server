@@ -1,9 +1,13 @@
 package com.sw.ck.agent.service;
 
-import com.sw.ck.agent.dto.AgentGraphDefDTO;
+import com.sw.ck.agent.vo.AgentGraphDefVO;
+import com.sw.ck.agent.vo.AgentGraphSnapshotVO;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
+
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Agent 图定义 Service（CRUD + 草稿保存 + 发布，M07-F02 Step7）。
@@ -48,7 +52,7 @@ public interface AgentGraphDefService {
      * @param pageParam 分页参数
      * @return 分页结果
      */
-    PageResult<AgentGraphDefDTO> pageDefs(PageParam pageParam);
+    PageResult<AgentGraphDefVO> pageDefs(PageParam pageParam);
 
     /**
      * 逻辑删除图定义（@TableLogic，幂等）。
@@ -68,7 +72,7 @@ public interface AgentGraphDefService {
      * @param id 图定义 ID
      * @return 发布后的元数据 DTO（含新版本号与状态）
      */
-    AgentGraphDefDTO publish(Long id);
+    AgentGraphDefVO publish(Long id);
 
     /**
      * 历史发布版本列表（新版本在前，不含 graph_json）。
@@ -76,7 +80,7 @@ public interface AgentGraphDefService {
      * @param id 图定义 ID
      * @return 版本快照摘要列表
      */
-    java.util.List<com.sw.ck.agent.dto.AgentGraphSnapshotDTO> listVersions(Long id);
+    List<AgentGraphSnapshotVO> listVersions(Long id);
 
     /**
      * 更新图级设置（当前支持执行超时秒数）。
@@ -85,7 +89,7 @@ public interface AgentGraphDefService {
      * @param executionTimeoutSecs 执行超时（秒，1–3600）
      * @return 更新后的图元数据
      */
-    AgentGraphDefDTO updateSettings(Long id, Integer executionTimeoutSecs);
+    AgentGraphDefVO updateSettings(Long id, Integer executionTimeoutSecs);
 
     /**
      * 按图 key 解析当前租户已发布图定义 id（IoT 规则 Agent 联动等跨模块触发用）。
@@ -94,5 +98,5 @@ public interface AgentGraphDefService {
      * @param graphKey 图 key（agent_ 前缀，发布时冻结）
      * @return present = 已发布图定义 id；empty = 不存在或未发布
      */
-    java.util.Optional<Long> resolvePublishedGraphId(String graphKey);
+    Optional<Long> resolvePublishedGraphId(String graphKey);
 }

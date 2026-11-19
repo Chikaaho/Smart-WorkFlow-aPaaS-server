@@ -4,12 +4,14 @@ import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SysAuditLog;
 import com.sw.ck.system.service.AuditLogService;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -19,6 +21,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,12 +44,12 @@ class AuditOperationFilterTest {
     @Mock
     private AuditLogService auditLogService;
 
+    @InjectMocks
     private AuditOperationFilter filter;
 
     @BeforeEach
     void setUp() {
         when(provider.getObject()).thenReturn(auditLogService);
-        filter = new AuditOperationFilter(provider);
         LoginUser user = new LoginUser();
         user.setUserId(1L);
         user.setTenantId(0L);
@@ -158,8 +161,8 @@ class AuditOperationFilterTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         response.setCharacterEncoding("UTF-8");
         FilterChain chain = (req, res) -> {
-            jakarta.servlet.http.HttpServletResponse httpResponse =
-                    (jakarta.servlet.http.HttpServletResponse) res;
+            HttpServletResponse httpResponse =
+                    (HttpServletResponse) res;
             // 模拟 MVC 读取请求体，触发 ContentCachingRequestWrapper 缓存
             req.getInputStream().readAllBytes();
             httpResponse.setStatus(status);

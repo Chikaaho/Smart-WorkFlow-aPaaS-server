@@ -1,6 +1,9 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.system.entity.SysUserWorkspace;
@@ -8,11 +11,11 @@ import com.sw.ck.system.mapper.SysUserWorkspaceMapper;
 import com.sw.ck.system.service.UserWorkspaceService;
 import com.sw.ck.system.entity.SysWorkspaceCardType;
 import com.sw.ck.system.service.WorkspaceCardTypeService;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,12 +26,15 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.regex.Pattern;
 
+import lombok.extern.log4j.Log4j2;
 /** 用户工作台布局服务实现。 */
 @Service
+@Log4j2
 public class UserWorkspaceServiceImpl implements UserWorkspaceService {
-
-    private static final Logger log = LoggerFactory.getLogger(UserWorkspaceServiceImpl.class);
 
     private static final int MAX_LAYOUT_BYTES = 256 * 1024;
     private static final int MAX_FAVORITES = 20;
@@ -41,20 +47,15 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
             "chart_gauge", "chart_heatmap"
     );
 
-    private static final java.util.regex.Pattern INSTANCE_ID =
-            java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,64}");
+    private static final Pattern INSTANCE_ID =
+            Pattern.compile("[A-Za-z0-9_-]{1,64}");
 
-    private final SysUserWorkspaceMapper workspaceMapper;
-    private final ObjectMapper objectMapper;
-    private final WorkspaceCardTypeService cardTypeService;
-
-    public UserWorkspaceServiceImpl(SysUserWorkspaceMapper workspaceMapper,
-                                    ObjectMapper objectMapper,
-                                    WorkspaceCardTypeService cardTypeService) {
-        this.workspaceMapper = workspaceMapper;
-        this.objectMapper = objectMapper;
-        this.cardTypeService = cardTypeService;
-    }
+    @Autowired
+    private SysUserWorkspaceMapper workspaceMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private WorkspaceCardTypeService cardTypeService;
 
     @Override
     public Map<String, Object> getLayout() {
@@ -78,7 +79,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void saveLayout(Map<String, Object> layout) {
         Long userId = currentUserId();
         List<SysWorkspaceCardType> cardTypes = cardTypeService.listAvailable();
@@ -89,7 +90,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
         } catch (JsonProcessingException e) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "布局序列化失败");
         }
-        if (json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_LAYOUT_BYTES) {
+        if (json.getBytes(StandardCharsets.UTF_8).length > MAX_LAYOUT_BYTES) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "布局配置超过 64KB 上限");
         }
         SysUserWorkspace row = workspaceMapper.selectOne(Wrappers.lambdaQuery(SysUserWorkspace.class)
@@ -112,7 +113,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void resetLayout() {
         Long userId = currentUserId();
         // layoutJson 需显式置空：updateById 默认忽略 null 字段
@@ -130,14 +131,14 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "布局不能为空");
         }
         Object cards = layout.get("cards");
-        if (!(cards instanceof java.util.List<?>)) {
+        if (!(cards instanceof List<?>)) {
             // 兼容 0.0.2 已保存的 components 形状，落盘时仍保留原请求，读取时统一转 cards。
             cards = layout.get("components");
-            if (!(cards instanceof java.util.List<?>)) {
+            if (!(cards instanceof List<?>)) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "布局缺少 cards");
             }
         }
-        java.util.List<?> list = (java.util.List<?>) cards;
+        List<?> list = (List<?>) cards;
         Set<String> availableCodes = new HashSet<>();
         cardTypes.stream().map(SysWorkspaceCardType::getTypeCode).forEach(availableCodes::add);
         availableCodes.addAll(BUILTIN_COMPONENT_TYPES);
@@ -204,7 +205,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
         }
         Object favorites = layout.get("favoriteItemKeys");
         if (favorites != null) {
-            if (!(favorites instanceof java.util.List<?> favList)
+            if (!(favorites instanceof List<?> favList)
                     || favList.stream().anyMatch(f -> !(f instanceof String))) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "常用事项必须为字符串列表");
             }
@@ -224,7 +225,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
         Set<String> availableCodes = new HashSet<>();
         cardTypes.stream().map(SysWorkspaceCardType::getTypeCode).forEach(availableCodes::add);
         availableCodes.addAll(BUILTIN_COMPONENT_TYPES);
-        List<Map<String, Object>> cards = new java.util.ArrayList<>();
+        List<Map<String, Object>> cards = new ArrayList<>();
         if (rawCards instanceof List<?> list) {
             for (Object item : list) {
                 if (!(item instanceof Map<?, ?> raw)) {
@@ -267,7 +268,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
     }
 
     private Map<String, Object> defaultLayout(List<SysWorkspaceCardType> cardTypes) {
-        List<Map<String, Object>> cards = new java.util.ArrayList<>();
+        List<Map<String, Object>> cards = new ArrayList<>();
         for (SysWorkspaceCardType type : cardTypes) {
             Map<String, Object> card = new LinkedHashMap<>();
             card.put("typeCode", type.getTypeCode());
@@ -279,12 +280,12 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
         }
         Map<String, Object> layout = new LinkedHashMap<>();
         layout.put("cards", cards);
-        layout.put("favoriteItemKeys", java.util.List.of());
+        layout.put("favoriteItemKeys", List.of());
         return layout;
     }
 
     private Long currentUserId() {
-        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        var loginUser = LoginUserHolder.get();
         if (loginUser == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED.getCode(), "未登录");
         }

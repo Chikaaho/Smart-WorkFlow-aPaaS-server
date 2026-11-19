@@ -1,51 +1,54 @@
-package com.sw.ck.bpm.process.queue.support;
+// package com.sw.ck.bpm.process.queue.support;
 
-import com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper;
-import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
-import com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler;
-import com.sw.ck.bpm.process.queue.CommandEffectRecorder;
-import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
-import com.sw.ck.bpm.process.service.impl.TxnBatchServiceImpl;
-import com.sw.ck.form.api.port.FormTxnActionPort;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
-import org.springframework.transaction.PlatformTransactionManager;
+// import com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper;
+// import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
+// import com.sw.ck.bpm.process.queue.BatchInvokeCommandHandler;
+// import com.sw.ck.bpm.process.queue.CommandEffectRecorder;
+// import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+// import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+// import com.sw.ck.bpm.process.service.ResourceReleaseService;
+// import com.sw.ck.bpm.process.service.impl.TxnBatchServiceImpl;
+// import com.sw.ck.form.api.port.FormTxnActionPort;
 
-import static org.mockito.Mockito.mock;
+// import org.springframework.context.annotation.Configuration;
+// import org.springframework.context.annotation.Bean;
+// import org.springframework.context.annotation.Import;
+// import org.springframework.transaction.PlatformTransactionManager;
 
-/**
- * P62 S3 批量命令 H2 测试装配：复用队列隔离配置（真实 H2 + 真实迁移 V103 +
- * 真实租户/乐观锁拦截器），追加批量表 Mapper、受控 Port 桩与批量服务/处理器。
- */
-@Configuration
-@Import(QueueH2TestConfig.class)
-public class BatchH2TestConfig {
+// import static org.mockito.Mockito.mock;
 
-    @Bean
-    public FormTxnActionPort txnActionPort() {
-        return mock(FormTxnActionPort.class);
-    }
+// /**
+//  * P62 S3 批量命令 H2 测试装配：复用队列隔离配置（真实 H2 + 真实迁移 V103 +
+//  * 真实租户/乐观锁拦截器），追加批量表 Mapper、受控 Port 桩与批量服务/处理器。
+//  */
+// @Configuration
+// @Import(QueueH2TestConfig.class)
+// public class BatchH2TestConfig {
 
-    @Bean
-    public TxnBatchServiceImpl txnBatchService(BpmCommandBatchMapper batchMapper,
-                                               BpmCommandBatchItemMapper itemMapper,
-                                               PersistentBpmCommandQueue queue,
-                                               FormTxnActionPort txnActionPort,
-                                               com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        return new TxnBatchServiceImpl(batchMapper, itemMapper, queue, txnActionPort, admissionService);
-    }
+//     @Bean
+//     public FormTxnActionPort txnActionPort() {
+//         return mock(FormTxnActionPort.class);
+//     }
 
-    @Bean
-    public BatchInvokeCommandHandler batchInvokeCommandHandler(BpmCommandBatchMapper batchMapper,
-                                                               BpmCommandBatchItemMapper itemMapper,
-                                                               PersistentBpmCommandQueue queue,
-                                                               FormTxnActionPort txnActionPort,
-                                                               CommandEffectRecorder effectRecorder,
-                                                               PlatformTransactionManager transactionManager,
-                                                               com.sw.ck.bpm.process.service.ResourceReleaseService releaseService,
-                                                               com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        return new BatchInvokeCommandHandler(batchMapper, itemMapper, queue, txnActionPort,
-                effectRecorder, transactionManager, releaseService, admissionService);
-    }
-}
+//     @Bean
+//     public TxnBatchServiceImpl txnBatchService(BpmCommandBatchMapper batchMapper,
+//                                                BpmCommandBatchItemMapper itemMapper,
+//                                                PersistentBpmCommandQueue queue,
+//                                                FormTxnActionPort txnActionPort,
+//                                                ResourceAdmissionService admissionService) {
+//         return new TxnBatchServiceImpl(batchMapper, itemMapper, queue, txnActionPort, admissionService);
+//     }
+
+//     @Bean
+//     public BatchInvokeCommandHandler batchInvokeCommandHandler(BpmCommandBatchMapper batchMapper,
+//                                                                BpmCommandBatchItemMapper itemMapper,
+//                                                                PersistentBpmCommandQueue queue,
+//                                                                FormTxnActionPort txnActionPort,
+//                                                                CommandEffectRecorder effectRecorder,
+//                                                                PlatformTransactionManager transactionManager,
+//                                                                ResourceReleaseService releaseService,
+//                                                                ResourceAdmissionService admissionService) {
+//         return new BatchInvokeCommandHandler(batchMapper, itemMapper, queue, txnActionPort,
+//                 effectRecorder, transactionManager, releaseService, admissionService);
+//     }
+// }

@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
@@ -13,17 +14,23 @@ import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.api.IotDeviceFacade;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.context.event.EventListener;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 流程成功结束后的一次性 IoT 预约意图登记器（P63 §4.1）。
@@ -36,27 +43,20 @@ import java.util.Optional;
  * IMMEDIATE（缺省）路径零改动。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 public class BpmIotReservationIntentRecorder {
 
-    private final BpmInstanceMapper instanceMapper;
-    private final BpmProcessDefMapper processDefMapper;
-    private final BpmRuntimeFacade bpmRuntimeFacade;
-    private final ObjectProvider<IotCommandReservationFacade> reservationFacade;
-    private final ObjectProvider<IotDeviceFacade> deviceFacade;
-
-    public BpmIotReservationIntentRecorder(BpmInstanceMapper instanceMapper,
-                                           BpmProcessDefMapper processDefMapper,
-                                           BpmRuntimeFacade bpmRuntimeFacade,
-                                           ObjectProvider<IotCommandReservationFacade> reservationFacade,
-                                           ObjectProvider<IotDeviceFacade> deviceFacade) {
-        this.instanceMapper = instanceMapper;
-        this.processDefMapper = processDefMapper;
-        this.bpmRuntimeFacade = bpmRuntimeFacade;
-        this.reservationFacade = reservationFacade;
-        this.deviceFacade = deviceFacade;
-    }
+    @Autowired
+    private BpmInstanceMapper instanceMapper;
+    @Autowired
+    private BpmProcessDefMapper processDefMapper;
+    @Autowired
+    private BpmRuntimeFacade bpmRuntimeFacade;
+    @Autowired
+    private ObjectProvider<IotCommandReservationFacade> reservationFacade;
+    @Autowired
+    private ObjectProvider<IotDeviceFacade> deviceFacade;
 
     @EventListener
     public void onProcessApproved(BpmNotifyEvent event) {
@@ -128,7 +128,7 @@ public class BpmIotReservationIntentRecorder {
         try {
             LocalDateTime local = LocalDateTime.parse(String.valueOf(dueRaw).trim()
                     .replace(' ', 'T'));
-            java.util.List<java.time.ZoneOffset> validOffsets = zone.getRules().getValidOffsets(local);
+            List<ZoneOffset> validOffsets = zone.getRules().getValidOffsets(local);
             if (validOffsets.isEmpty()) {
                 // 时钟前拨产生的不存在时间：拒绝并给出可纠正提示
                 throw failClosed(processInstanceId, "预约时间在时区 " + timezoneId + " 不存在（夏令时间隙），请调整后重新配置");
@@ -138,7 +138,7 @@ public class BpmIotReservationIntentRecorder {
                 throw failClosed(processInstanceId, "预约时间在时区 " + timezoneId + " 存在歧义，请调整后重新配置");
             }
             due = local.atZone(zone);
-        } catch (java.time.format.DateTimeParseException e) {
+        } catch (DateTimeParseException e) {
             throw failClosed(processInstanceId, "预约时间格式非法（应为 YYYY-MM-DD HH:mm[:ss]）: "
                     + reservation.getString("dueField"));
         }
@@ -180,7 +180,7 @@ public class BpmIotReservationIntentRecorder {
             case "FIXED" -> deviceFacade.resolveDeviceTarget(tenantId, config.getLong("deviceId"))
                     .orElseThrow(() -> failClosed(processInstanceId,
                             "设计时固定设备不存在: deviceId=" + config.getLong("deviceId")));
-            case "FORM_FIELD" -> {
+            case ParticipantStrategy.FORM_FIELD -> {
                 Object v = formData.get(config.getString("deviceField"));
                 if (v == null || String.valueOf(v).isBlank()) {
                     throw failClosed(processInstanceId,

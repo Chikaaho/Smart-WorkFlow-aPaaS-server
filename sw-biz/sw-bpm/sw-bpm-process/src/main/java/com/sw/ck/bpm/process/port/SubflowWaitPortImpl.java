@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.port;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.orchestration.SubflowWaitPort;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.service.ChildOrchestrationService;
@@ -13,11 +15,8 @@ import java.util.Optional;
 @Component
 public class SubflowWaitPortImpl implements SubflowWaitPort {
 
-    private final ChildOrchestrationService childOrchestrationService;
-
-    public SubflowWaitPortImpl(ChildOrchestrationService childOrchestrationService) {
-        this.childOrchestrationService = childOrchestrationService;
-    }
+    @Autowired
+    private ChildOrchestrationService childOrchestrationService;
 
     @Override
     public Optional<MutationOutcome> onWaitNodeArrival(Long tenantId, String processInstanceId,

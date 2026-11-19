@@ -1,36 +1,44 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.BpmCommandBatch;
 import com.sw.ck.bpm.process.entity.BpmCommandBatchItem;
-import com.sw.ck.bpm.process.entity.BatchItemStatusEnum;
-import com.sw.ck.bpm.process.entity.BatchStatusEnum;
+import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.entity.ResourceClassEnum;
 import com.sw.ck.bpm.process.mapper.BpmCommandBatchItemMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandBatchMapper;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
-import com.sw.ck.bpm.process.entity.CommandChannelEnum;
-import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import org.springframework.beans.factory.annotation.Value;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.function.Predicate;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.bpm.api.node.ProcessDefStatusEnum;
 /**
  * 后台批量受控动作调用服务实现（P62 分级执行 S3）。
  * <p>
@@ -40,9 +48,8 @@ import java.util.Set;
  * </p>
  */
 @Service
+@Log4j2
 public class TxnBatchServiceImpl implements TxnBatchService {
-
-    private static final Logger log = LoggerFactory.getLogger(TxnBatchServiceImpl.class);
 
     /** 方向合同：每批 1—500 项。 */
     public static final int MIN_ITEMS = 1;
@@ -64,23 +71,16 @@ public class TxnBatchServiceImpl implements TxnBatchService {
     @Value("${sw.bpm.txn-batch.enabled:false}")
     private boolean txnBatchEnabled;
 
-    private final BpmCommandBatchMapper batchMapper;
-    private final BpmCommandBatchItemMapper itemMapper;
-    private final BpmCommandQueue commandQueue;
-    private final FormTxnActionPort txnActionPort;
-    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
-
-    public TxnBatchServiceImpl(BpmCommandBatchMapper batchMapper,
-                               BpmCommandBatchItemMapper itemMapper,
-                               BpmCommandQueue commandQueue,
-                               FormTxnActionPort txnActionPort,
-                               com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService) {
-        this.batchMapper = batchMapper;
-        this.itemMapper = itemMapper;
-        this.commandQueue = commandQueue;
-        this.txnActionPort = txnActionPort;
-        this.admissionService = admissionService;
-    }
+    @Autowired
+    private BpmCommandBatchMapper batchMapper;
+    @Autowired
+    private BpmCommandBatchItemMapper itemMapper;
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private FormTxnActionPort txnActionPort;
+    @Autowired
+    private ResourceAdmissionService admissionService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -118,7 +118,7 @@ public class TxnBatchServiceImpl implements TxnBatchService {
         FormTxnActionPort.TxnActionDescriptor descriptor = txnActionPort.describe(request.getActionId())
                 .orElseThrow(() -> new BaseException(BpmErrorCode.BATCH_NOT_FOUND.getCode(),
                         "绑定动作不存在、跨租户不可达或未发布: " + request.getActionId()));
-        if (!"PUBLISHED".equals(descriptor.status())) {
+        if (!ProcessDefStatusEnum.PUBLISHED.getCode().equals(descriptor.status())) {
             throw new BaseException(BpmErrorCode.BATCH_NOT_FOUND.getCode(),
                     "绑定动作未发布（当前状态 " + descriptor.status() + "）");
         }
@@ -154,7 +154,7 @@ public class TxnBatchServiceImpl implements TxnBatchService {
         envelope.setLogicalCommandId("BATCH:" + request.getBatchKey());
         envelope.setTenantId(operator.getTenantId());
         envelope.setInitiatorId(operator.getUserId());
-        envelope.setTier("BULK");
+        envelope.setTier(ResourceClassEnum.BULK.getCode());
         envelope.setCompletionPoint("BATCH_SETTLED");
         envelope.setPayload("{\"batchId\":" + batch.getId()
                 + ",\"batchKey\":\"" + escape(request.getBatchKey()) + "\""
@@ -164,12 +164,12 @@ public class TxnBatchServiceImpl implements TxnBatchService {
         // 资源准入（P62 资源保障）：批量按实际项数占额（每项 1 单位，整笔裁决；
         // 不能以一批 500 项只占一个名额规避），置于 enqueue 后断唯一索引等待环；
         // 拒绝即整笔受理失败（异常回滚批次/项/命令行）
-        com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
+        AdmissionTicket ticket =
                 admissionService.admit(operator.getTenantId(),
-                        com.sw.ck.bpm.process.entity.ResourceClassEnum.BULK,
+                        ResourceClassEnum.BULK,
                         request.getItems().size(), "BATCH:" + request.getBatchKey());
         if (ticket != null) {
-            envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.BULK.getCode());
+            envelope.setResourceClass(ResourceClassEnum.BULK.getCode());
             envelope.setResourceUnits(request.getItems().size());
             envelope.setResourceSegment(ticket.segment());
             envelope.setPolicyVersion(ticket.policyVersion());
@@ -237,11 +237,11 @@ public class TxnBatchServiceImpl implements TxnBatchService {
         if (stored == null || incoming == null || stored.size() != incoming.size()) {
             return false;
         }
-        java.util.Map<String, String> storedMap = new java.util.TreeMap<>();
+        Map<String, String> storedMap = new TreeMap<>();
         for (BpmCommandBatchItem item : stored) {
             storedMap.put(item.getItemKey(), item.getRecordId() + "|" + item.getQuantity());
         }
-        java.util.Map<String, String> incomingMap = new java.util.TreeMap<>();
+        Map<String, String> incomingMap = new TreeMap<>();
         for (TxnBatchSubmitRequest.Item item : incoming) {
             incomingMap.put(item.getItemKey(), item.getRecordId() + "|" + item.getQuantity());
         }
@@ -286,13 +286,13 @@ public class TxnBatchServiceImpl implements TxnBatchService {
         return requireAuthorizedOperator(permissions -> permissions.contains(INVOKE_PERMISSION));
     }
 
-    private LoginUser requireAuthorizedOperator(java.util.function.Predicate<java.util.Set<String>> permissionCheck) {
+    private LoginUser requireAuthorizedOperator(Predicate<Set<String>> permissionCheck) {
         LoginUser user = LoginUserHolder.get();
         if (user == null || user.getUserId() == null) {
             throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
-        java.util.Set<String> permissions = user.getPermissions() == null
-                ? java.util.Set.of() : new java.util.HashSet<>(user.getPermissions());
+        Set<String> permissions = user.getPermissions() == null
+                ? Set.of() : new HashSet<>(user.getPermissions());
         boolean allowed = user.isSuperAdmin() || permissionCheck.test(permissions);
         if (!allowed) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(),

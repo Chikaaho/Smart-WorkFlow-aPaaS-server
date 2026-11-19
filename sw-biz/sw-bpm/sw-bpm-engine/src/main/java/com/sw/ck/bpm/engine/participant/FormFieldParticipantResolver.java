@@ -6,10 +6,10 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.api.participant.NodeParticipantResolver;
 import com.sw.ck.bpm.api.participant.ParticipantStrategy;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -17,6 +17,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import com.sw.ck.bpm.api.participant.ParticipantScopeEnum;
 
 /**
  * 表单字段参与人策略（P63）：从实例表单数据解析人员/部门稳定对象 ID。
@@ -32,17 +36,12 @@ import java.util.Set;
 @Component
 public class FormFieldParticipantResolver implements NodeParticipantResolver {
 
-    private final FormRecordReadFacade formRecordReadFacade;
-    private final UserQueryFacade userQueryFacade;
-    private final ObjectMapper objectMapper;
-
-    public FormFieldParticipantResolver(FormRecordReadFacade formRecordReadFacade,
-                                        UserQueryFacade userQueryFacade,
-                                        ObjectMapper objectMapper) {
-        this.formRecordReadFacade = formRecordReadFacade;
-        this.userQueryFacade = userQueryFacade;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormRecordReadFacade formRecordReadFacade;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public Optional<String> strategy() {
@@ -52,8 +51,8 @@ public class FormFieldParticipantResolver implements NodeParticipantResolver {
     @Override
     public Optional<List<String>> resolve(NodeParticipantContext context) {
         Map<String, Object> binding = bindingOf(context.getStrategyValue());
-        boolean user = "USER".equalsIgnoreCase(text(binding.get("objectType")));
-        boolean tableScope = "TABLE".equalsIgnoreCase(text(binding.get("scope")));
+        boolean user = SubjectTypeEnum.USER.getCode().equalsIgnoreCase(text(binding.get("objectType")));
+        boolean tableScope = ParticipantScopeEnum.TABLE.getCode().equalsIgnoreCase(text(binding.get("scope")));
         Long tenantId = context.getTenantId();
         String formKey = context.getFormKey();
         String recordId = context.getBusinessKey();

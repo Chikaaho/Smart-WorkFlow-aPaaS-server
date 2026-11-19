@@ -1,5 +1,6 @@
 package com.sw.ck.form.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,12 +11,16 @@ import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.system.api.dict.DictFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.time.temporal.Temporal;
 import java.util.*;
+import java.util.Date;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 /**
  * 表单字段校验共享工具。
  * <p>
@@ -32,18 +37,13 @@ import java.util.*;
  * </ul>
  */
 @Component
+@Log4j2
 public class FormFieldValidator {
 
-    private static final Logger log = LoggerFactory.getLogger(FormFieldValidator.class);
-
-    private final FormConfigMapper formConfigMapper;
-    private final ObjectMapper objectMapper;
-
-    public FormFieldValidator(FormConfigMapper formConfigMapper,
-                              ObjectMapper objectMapper) {
-        this.formConfigMapper = formConfigMapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 字段定义加载 ====================
 
@@ -57,7 +57,7 @@ public class FormFieldValidator {
     public Map<String, FieldDef> loadAndParseFieldDefs(String formId, Map<String, Object> submittedData) {
         // 从 sw_form_config 加载主表 definition JSON（parent_table IS NULL）
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );
@@ -83,7 +83,7 @@ public class FormFieldValidator {
                 if (nameNode == null || nameNode.asText().isBlank()) continue;
 
                 String name = nameNode.asText();
-                String type = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
+                String type = fieldNode.has("type") ? fieldNode.get("type").asText() : FieldType.TEXT.name();
                 boolean required = fieldNode.has("required") && fieldNode.get("required").asBoolean();
                 Integer length = integerValue(fieldNode.get("length"));
                 Integer minLength = integerValue(fieldNode.get("minLength"));
@@ -110,7 +110,7 @@ public class FormFieldValidator {
                         for (JsonNode sub : subArray) {
                             String subName = sub.has("name") ? sub.get("name").asText() : null;
                             if (subName == null) continue;
-                            String subType = sub.has("type") ? sub.get("type").asText() : "TEXT";
+                            String subType = sub.has("type") ? sub.get("type").asText() : FieldType.TEXT.name();
                             boolean subRequired = sub.has("required") && sub.get("required").asBoolean();
                             Integer subLength = integerValue(sub.get("length"));
                             Integer subMinLength = integerValue(sub.get("minLength"));
@@ -287,7 +287,7 @@ public class FormFieldValidator {
                     if (!(value instanceof Number)) {
                         if (value instanceof String s) {
                             try {
-                                new java.math.BigDecimal(s);
+                                new BigDecimal(s);
                             } catch (NumberFormatException e) {
                                 throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                                         "字段「" + def.displayName() + "」需要数字，当前填写的内容不是数字");
@@ -300,8 +300,8 @@ public class FormFieldValidator {
                 }
                 case "DATE" -> {
                     if (!(value instanceof String) && !(value instanceof Number)
-                            && !(value instanceof java.time.temporal.Temporal)
-                            && !(value instanceof java.util.Date)) {
+                            && !(value instanceof Temporal)
+                            && !(value instanceof Date)) {
                         throw new BaseException(FormErrorCode.SUBMIT_FIELD_TYPE_MISMATCH,
                                 "字段「" + def.displayName() + "」需要日期");
                     }
@@ -361,7 +361,7 @@ public class FormFieldValidator {
                                 "字段「" + def.displayName() + "」需要 HH:mm 或 HH:mm:ss 时间格式");
                     }
                 }
-                case "USER", "DEPT" -> {
+                case FormAppScopeTypes.USER, FormAppScopeTypes.DEPT -> {
                     // 数字型对象 ID；存在性/启用/租户校验由 FormFieldEnrichmentService 经 Facade 执行
                     if (def.multiple()) {
                         // P63 多选：每个元素都是稳定对象 ID（Number 或数字串）
@@ -466,7 +466,7 @@ public class FormFieldValidator {
      */
     public String loadDefinitionJson(String formId) {
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );

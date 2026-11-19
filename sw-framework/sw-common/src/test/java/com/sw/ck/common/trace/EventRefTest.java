@@ -1,9 +1,14 @@
 package com.sw.ck.common.trace;
 
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -33,13 +38,13 @@ class EventRefTest {
         when(request.getHeader(EventRef.HEADER)).thenReturn(headerValue);
         when(request.getRequestId()).thenReturn(serverRequestId);
         // 让 mock 具备真实的请求属性行为：EventRef 依赖属性在请求内缓存引用
-        java.util.Map<String, Object> attributes = new java.util.HashMap<>();
-        when(request.getAttribute(org.mockito.ArgumentMatchers.anyString()))
+        Map<String, Object> attributes = new HashMap<>();
+        when(request.getAttribute(ArgumentMatchers.anyString()))
                 .thenAnswer(inv -> attributes.get((String) inv.getArgument(0)));
-        org.mockito.Mockito.doAnswer(inv -> {
+        Mockito.doAnswer(inv -> {
             attributes.put((String) inv.getArgument(0), inv.getArgument(1));
             return null;
-        }).when(request).setAttribute(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any());
+        }).when(request).setAttribute(ArgumentMatchers.anyString(), ArgumentMatchers.any());
         RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
         return request;
     }
@@ -132,6 +137,6 @@ class EventRefTest {
     }
 
     private void assertTrue(boolean condition, String message) {
-        org.junit.jupiter.api.Assertions.assertTrue(condition, message);
+        Assertions.assertTrue(condition, message);
     }
 }

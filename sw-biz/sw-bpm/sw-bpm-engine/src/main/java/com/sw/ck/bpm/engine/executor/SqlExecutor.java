@@ -3,15 +3,15 @@ package com.sw.ck.bpm.engine.executor;
 import com.sw.ck.bpm.api.dto.SqlExecutionResult;
 import com.sw.ck.bpm.engine.config.ExternalDatasourceProperties;
 import com.sw.ck.bpm.engine.datasource.ExternalDatasourceManager;
+import com.sw.ck.bpm.engine.datasource.ExternalDatasourceUnavailableException;
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.bpm.engine.service.SqlExecutionAuditService;
 import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
+
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.select.Select;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.Connection;
@@ -25,7 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import javax.sql.DataSource;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 外部数据源 SQL 执行引擎。
  * <p>
@@ -38,9 +40,8 @@ import java.util.regex.Pattern;
  * </ul>
  * </p>
  */
+@Log4j2
 public class SqlExecutor {
-
-    private static final Logger log = LoggerFactory.getLogger(SqlExecutor.class);
 
     /** 危险 SQL 关键字黑名单（兜底，不依赖 jsqlparser 版本差异） */
     private static final Set<String> BLOCKLIST = Set.of(
@@ -86,11 +87,11 @@ public class SqlExecutor {
         // 1. 加载数据源配置（目标缺失/停用以专用 IAE 子类表达，供 form 端口适配转 empty）
         ExternalDatasource entity = datasourceService.getById(datasourceId);
         if (entity == null) {
-            throw new com.sw.ck.bpm.engine.datasource.ExternalDatasourceUnavailableException(
+            throw new ExternalDatasourceUnavailableException(
                     "External datasource not found: id=" + datasourceId);
         }
         if (entity.getEnabled() == null || entity.getEnabled() != 1) {
-            throw new com.sw.ck.bpm.engine.datasource.ExternalDatasourceUnavailableException(
+            throw new ExternalDatasourceUnavailableException(
                     "External datasource is disabled: " + entity.getName());
         }
 
@@ -98,7 +99,7 @@ public class SqlExecutor {
         validateSql(sql);
 
         // 3. 获取独立连接池，通过裸 JDBC 执行
-        javax.sql.DataSource pool = poolManager.getOrCreatePool(entity);
+        DataSource pool = poolManager.getOrCreatePool(entity);
         jdbcTemplate.setDataSource(pool);
         int maxRows = maxRows();
         // 只允许探测到上限+1 行；超过上限时由 executeQuery 明确失败，不能静默截断。
@@ -186,7 +187,7 @@ public class SqlExecutor {
         // 通过 JdbcTemplate 的 PreparedStatementCreator 来设置 readOnly
         // JdbcTemplate.setMaxRows/setQueryTimeout 已在上层设置，但 readOnly 需要连接级设置
         // 直接用 JdbcTemplate.query() 并让回调使用 Connection
-        javax.sql.DataSource ds = jdbcTemplate.getDataSource();
+        DataSource ds = jdbcTemplate.getDataSource();
         if (ds == null) {
             throw new IllegalStateException("DataSource is not set on JdbcTemplate");
         }

@@ -1,17 +1,20 @@
 package com.sw.ck.agent.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.dto.AgentGraphCreateReqDTO;
-import com.sw.ck.agent.dto.AgentGraphDefDTO;
+import com.sw.ck.agent.vo.AgentGraphDefVO;
 import com.sw.ck.agent.dto.AgentGraphExecuteReqDTO;
-import com.sw.ck.agent.dto.AgentGraphExecuteRespDTO;
+import com.sw.ck.agent.vo.AgentGraphExecuteRespVO;
 import com.sw.ck.agent.dto.AgentGraphSettingsReqDTO;
-import com.sw.ck.agent.dto.AgentGraphSnapshotDTO;
+import com.sw.ck.agent.vo.AgentGraphSnapshotVO;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +24,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * Agent 图定义管理 Controller（M07-F02 Step7 图定义 CRUD + 版本 + 发布骨架；
@@ -37,14 +42,10 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/agent/graph-defs")
 public class AgentGraphDefController {
 
-    private final AgentGraphDefService agentGraphDefService;
-    private final AgentGraphExecutionService agentGraphExecutionService;
-
-    public AgentGraphDefController(AgentGraphDefService agentGraphDefService,
-                                   AgentGraphExecutionService agentGraphExecutionService) {
-        this.agentGraphDefService = agentGraphDefService;
-        this.agentGraphExecutionService = agentGraphExecutionService;
-    }
+    @Autowired
+    private AgentGraphDefService agentGraphDefService;
+    @Autowired
+    private AgentGraphExecutionService agentGraphExecutionService;
 
     /** 创建图定义（服务端生成 graphKey + 初始图 START→END，DRAFT） */
     @PostMapping
@@ -64,7 +65,7 @@ public class AgentGraphDefController {
     /** 发布图定义（defVersion 递增 + PUBLISHED + graphKey 冻结检查） */
     @PostMapping("/{id}/publish")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<AgentGraphDefDTO> publish(@PathVariable Long id) {
+    public R<AgentGraphDefVO> publish(@PathVariable Long id) {
         return R.ok(agentGraphDefService.publish(id));
     }
 
@@ -78,7 +79,7 @@ public class AgentGraphDefController {
     /** 分页列表（DTO 不含 graph_json 大字段） */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<PageResult<AgentGraphDefDTO>> pageDefs(PageParam pageParam) {
+    public R<PageResult<AgentGraphDefVO>> pageDefs(PageParam pageParam) {
         return R.ok(agentGraphDefService.pageDefs(pageParam));
     }
 
@@ -93,14 +94,14 @@ public class AgentGraphDefController {
     /** 历史发布版本列表（D022-06，新版本在前，不含 graph_json） */
     @GetMapping("/{id}/versions")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<java.util.List<AgentGraphSnapshotDTO>> versions(@PathVariable Long id) {
+    public R<List<AgentGraphSnapshotVO>> versions(@PathVariable Long id) {
         return R.ok(agentGraphDefService.listVersions(id));
     }
 
     /** 更新图级设置（当前为执行超时秒数） */
     @PutMapping("/{id}/settings")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<AgentGraphDefDTO> updateSettings(@PathVariable Long id,
+    public R<AgentGraphDefVO> updateSettings(@PathVariable Long id,
                                               @RequestBody AgentGraphSettingsReqDTO req) {
         return R.ok(agentGraphDefService.updateSettings(id, req.getExecutionTimeoutSeconds()));
     }
@@ -111,7 +112,7 @@ public class AgentGraphDefController {
      */
     @PostMapping("/{id}/execute")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<AgentGraphExecuteRespDTO> execute(@PathVariable Long id,
+    public R<AgentGraphExecuteRespVO> execute(@PathVariable Long id,
                                                @RequestBody AgentGraphExecuteReqDTO req) {
         return R.ok(agentGraphExecutionService.execute(id, req.getInput()));
     }

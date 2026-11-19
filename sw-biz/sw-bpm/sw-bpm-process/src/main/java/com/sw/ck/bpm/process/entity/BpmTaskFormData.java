@@ -2,9 +2,13 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * P64 任务级节点业务表单数据（ADR-P64-001 §1）。
@@ -53,5 +57,5 @@ public class BpmTaskFormData extends BaseEntity {
     private Long submittedBy;
 
     @TableField("submit_time")
-    private java.time.LocalDateTime submitTime;
+    private LocalDateTime submitTime;
 }

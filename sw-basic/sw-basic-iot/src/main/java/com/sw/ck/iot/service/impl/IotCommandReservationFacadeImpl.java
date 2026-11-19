@@ -6,16 +6,21 @@ import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.entity.IotCommandReservation;
 import com.sw.ck.iot.mapper.IotCommandReservationMapper;
 import com.sw.ck.iot.service.IotDeviceService;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.iot.service.MessageIngestService;
 
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import com.sw.ck.iot.entity.IotReservationStatusEnum;
 
 /**
  * IoT 命令预约门面实现（P63）。
@@ -26,24 +31,19 @@ import java.util.Optional;
  * 取消为条件更新（仅 PENDING），与到点认领竞争只一个结果生效并留审计。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class IotCommandReservationFacadeImpl implements IotCommandReservationFacade {
 
-    private final IotCommandReservationMapper mapper;
-    private final IotDeviceService deviceService;
-    private final Clock clock;
-
-    public IotCommandReservationFacadeImpl(IotCommandReservationMapper mapper,
-                                           IotDeviceService deviceService,
-                                           Clock clock) {
-        this.mapper = mapper;
-        this.deviceService = deviceService;
-        this.clock = clock;
-    }
+    @Autowired
+    private IotCommandReservationMapper mapper;
+    @Autowired
+    private IotDeviceService deviceService;
+    @Autowired
+    private Clock clock;
 
     @Override
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public Optional<Long> createIntent(Long tenantId, String processInstanceId, String processDefKey,
                                        Integer defVersion, String formKey, String recordId,
                                        String deviceKey, String productId, String deviceName,
@@ -73,7 +73,7 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
         row.setProductId(productId);
         row.setDeviceName(deviceName);
         row.setCommandKey(commandKey);
-        row.setCommandType(commandType == null ? "PROPERTY" : commandType);
+        row.setCommandType(commandType == null ? MessageIngestService.TYPE_PROPERTY : commandType);
         row.setPayload(payloadJson);
         row.setDueAtUtc(dueAtUtc);
         row.setTimezoneId(timezoneId);
@@ -101,13 +101,13 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
             return Optional.empty();
         }
         int updated = mapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                .set(IotCommandReservation::getStatus, "CANCELED")
+                .set(IotCommandReservation::getStatus, IotReservationStatusEnum.CANCELED.getCode())
                 .set(IotCommandReservation::getCancelBy, actorUserId)
                 .set(IotCommandReservation::getCancelReason, reason)
                 .set(IotCommandReservation::getCancelTime, LocalDateTime.now())
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                 .eq(IotCommandReservation::getId, reservationId)
-                .eq(IotCommandReservation::getStatus, "PENDING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                 .eq(IotCommandReservation::getDeleted, 0));
         return Optional.of(updated == 1 ? CANCEL_CANCELED : CANCEL_NOT_CANCELLABLE);
     }

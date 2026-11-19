@@ -24,17 +24,8 @@ import java.util.Optional;
 @Component
 public class ExpressionParticipantResolver implements NodeParticipantResolver {
 
-    private final ObjectProvider<ParticipantScriptResolvePort> scriptPort;
-
     @Autowired
-    public ExpressionParticipantResolver(ObjectProvider<ParticipantScriptResolvePort> scriptPort) {
-        this.scriptPort = scriptPort;
-    }
-
-    /** 测试接缝：无业务侧脚本服务时退回受控路径表达式。 */
-    public ExpressionParticipantResolver() {
-        this.scriptPort = null;
-    }
+    private ObjectProvider<ParticipantScriptResolvePort> scriptPort;
 
     @Override
     public Optional<String> strategy() {

@@ -1,5 +1,6 @@
 package com.sw.ck.iot.api;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -46,7 +47,7 @@ public interface IotDeviceFacade {
      * @return 恒返回 {@code Optional.of(非 null 列表)}：关联命令摘要列表（命令 ID/设备/命令键/
      *         状态/结果时间），<strong>合法空集合即无关联</strong>（P62 FD02 按 Optional 合同修复）
      */
-    java.util.Optional<java.util.List<DeviceCommandSummary>> findByApprovalBizId(Long tenantId, String approvalBizId);
+    Optional<List<DeviceCommandSummary>> findByApprovalBizId(Long tenantId, String approvalBizId);
 
     /**
      * 下发设备控制命令（调用方指定<b>稳定幂等键</b>；Phase 4 可靠业务事件用）。

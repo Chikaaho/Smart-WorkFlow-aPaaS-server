@@ -2,27 +2,26 @@ package com.sw.ck.bpm.process.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.ActionConfig;
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.result.MutationOutcome;
+import com.sw.ck.bpm.process.entity.BpmActionRef;
 import com.sw.ck.bpm.process.entity.BpmChildBatch;
 import com.sw.ck.bpm.process.entity.BpmChildItem;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
-import com.sw.ck.bpm.process.entity.BpmActionRef;
+import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmActionRefMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildBatchMapper;
 import com.sw.ck.bpm.process.mapper.BpmChildItemMapper;
+import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.facade.FormDataWritebackFacade;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -30,8 +29,18 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * P64 阶段Ⅱ（A05/A06）主子流程编排：派发批次冻结、子完成回写、等待策略结算、
@@ -54,7 +63,7 @@ import java.util.Set;
  *       超限阻止派发并留可诊断原因。</li>
  * </ul>
  */
-@Slf4j
+@Log4j2
 @Service
 public class ChildOrchestrationService {
 
@@ -70,15 +79,24 @@ public class ChildOrchestrationService {
     private static final String POLICY_COUNT = "COUNT";
     private static final String POLICY_NONE = "NONE";
 
-    private final BpmActionRefMapper actionRefMapper;
-    private final BpmChildBatchMapper batchMapper;
-    private final BpmChildItemMapper itemMapper;
-    private final NodeFormDataService nodeFormDataService;
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmRuntimeFacade bpmRuntimeFacade;
-    private final FormDataWritebackFacade writebackFacade;
-    private final com.sw.ck.bpm.process.mapper.BpmInstanceMapper bpmInstanceMapper;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private BpmActionRefMapper actionRefMapper;
+    @Autowired
+    private BpmChildBatchMapper batchMapper;
+    @Autowired
+    private BpmChildItemMapper itemMapper;
+    @Autowired
+    private NodeFormDataService nodeFormDataService;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmRuntimeFacade bpmRuntimeFacade;
+    @Autowired
+    private FormDataWritebackFacade writebackFacade;
+    @Autowired
+    private BpmInstanceMapper bpmInstanceMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** 父子嵌套上限（默认 3；服务端硬钳 8；UI 可见并经服务端复核）。 */
     @Value("${sw.bpm.orchestration.max-nesting:3}")
@@ -87,26 +105,6 @@ public class ChildOrchestrationService {
     /** 异常处理→复检自动循环轮数上限（默认 3；服务端硬钳 10；按根链+目标模板计数）。 */
     @Value("${sw.bpm.orchestration.rework-max-rounds:3}")
     private int configuredReworkMaxRounds;
-
-    public ChildOrchestrationService(BpmActionRefMapper actionRefMapper,
-                                     BpmChildBatchMapper batchMapper,
-                                     BpmChildItemMapper itemMapper,
-                                     NodeFormDataService nodeFormDataService,
-                                     BpmInstanceService bpmInstanceService,
-                                     BpmRuntimeFacade bpmRuntimeFacade,
-                                     FormDataWritebackFacade writebackFacade,
-                                     com.sw.ck.bpm.process.mapper.BpmInstanceMapper bpmInstanceMapper,
-                                     ObjectMapper objectMapper) {
-        this.actionRefMapper = actionRefMapper;
-        this.batchMapper = batchMapper;
-        this.itemMapper = itemMapper;
-        this.nodeFormDataService = nodeFormDataService;
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmRuntimeFacade = bpmRuntimeFacade;
-        this.writebackFacade = writebackFacade;
-        this.bpmInstanceMapper = bpmInstanceMapper;
-        this.objectMapper = objectMapper;
-    }
 
     // ==================== 派发冻结（派发同事务调用） ====================
 
@@ -158,7 +156,7 @@ public class ChildOrchestrationService {
                 .eq(BpmChildBatch::getRootInstanceId, rootInstanceId));
         long chainInstances = rootBatches.stream()
                 .map(BpmChildBatch::getExpectedCount)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .mapToLong(Integer::longValue)
                 .sum();
         if (chainInstances + Math.max(expectedCount, 0) > MAX_ROOT_CHAIN_INSTANCES) {
@@ -178,7 +176,7 @@ public class ChildOrchestrationService {
                     .filter(batch -> action.getTargetProcessDefKey()
                             .equals(resolveBatchTargetDefKey(batch)))
                     .map(BpmChildBatch::getExpectedCount)
-                    .filter(java.util.Objects::nonNull)
+                    .filter(Objects::nonNull)
                     .mapToLong(Integer::longValue)
                     .sum();
             if (stageInstances + Math.max(expectedCount, 0) > reworkLimit) {
@@ -291,7 +289,7 @@ public class ChildOrchestrationService {
      * 子流程实例终态回调：本实例作为子流程时回写并推进父批次结算；
      * 非子流程实例零行为。
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void onChildProcessTerminal(BpmInstance child, String terminalStatus) {
         if (child == null || child.getBusinessKey() == null || child.getTenantId() == null) {
             return;
@@ -327,7 +325,7 @@ public class ChildOrchestrationService {
             if (batch == null) {
                 continue;
             }
-            if (!"APPROVED".equals(terminalStatus)) {
+            if (!InstanceStatusEnum.APPROVED.getCode().equals(terminalStatus)) {
                 // 失败/拒绝/取消不凑成功数：FAILED 计阻断项（ALL 阻断、ANY/COUNT 忽略）
                 item.setStatus(BpmChildItem.STATUS_FAILED);
                 item.setErrorText("子流程终态 " + terminalStatus + "，不计有效完成");
@@ -518,7 +516,7 @@ public class ChildOrchestrationService {
         }
         try {
             List<Map<String, Object>> rows = objectMapper.readValue(sourceRowsJson,
-                    new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                    new TypeReference<List<Map<String, Object>>>() {});
             rows.forEach(row -> row.put("version", null));
             return safeJson(rows);
         } catch (Exception e) {
@@ -533,7 +531,7 @@ public class ChildOrchestrationService {
         if (json != null && !json.isBlank()) {
             try {
                 List<Map<String, Object>> rows = objectMapper.readValue(json,
-                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                        new TypeReference<List<Map<String, Object>>>() {});
                 rows.forEach(row -> {
                     Object value = row.get("rowId");
                     if (value != null && !String.valueOf(value).isBlank()) {
@@ -558,7 +556,7 @@ public class ChildOrchestrationService {
         if (json != null && !json.isBlank()) {
             try {
                 List<Map<String, Object>> rows = objectMapper.readValue(json,
-                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                        new TypeReference<List<Map<String, Object>>>() {});
                 for (Map<String, Object> row : rows) {
                     Object id = row.get("rowId");
                     Object version = row.get("version");
@@ -632,7 +630,6 @@ public class ChildOrchestrationService {
     void settleForTest(Long batchId) {
         settleBatch(batchId);
     }
-
 
     /**
      * 批次结算（幂等：状态守卫单次推进；ALL 阻断落 BLOCKED 可诊断）。
@@ -709,7 +706,7 @@ public class ChildOrchestrationService {
      * @return present = 处置结果（APPLIED 本次已唤醒；ALREADY_APPLIED 合法无操作：保持挂起/
      *         无等待引用/唤醒目标不在运行期）；empty = 父实例或租户上下文缺失，无法核对
      */
-    public Optional<com.sw.ck.bpm.api.result.MutationOutcome> onWaitNodeArrival(
+    public Optional<MutationOutcome> onWaitNodeArrival(
             Long tenantId, String processInstanceId, String activityId) {
         // 令牌到达：引用批次已全部终态则立即唤醒，否则挂起等待结算侧信号
         return signalIfNoOpenBatches(tenantId, processInstanceId, activityId);
@@ -747,7 +744,7 @@ public class ChildOrchestrationService {
     }
 
     /** 引用批次全部终态时唤醒指定等待节点（幂等；无等待执行流由门面吸收）。 */
-    private Optional<com.sw.ck.bpm.api.result.MutationOutcome> signalIfNoOpenBatches(
+    private Optional<MutationOutcome> signalIfNoOpenBatches(
             Long tenantId, String parentInstanceId, String activityId) {
         BpmInstance parent = bpmInstanceService.findByProcessInstanceId(parentInstanceId)
                 .orElse(null);
@@ -758,7 +755,7 @@ public class ChildOrchestrationService {
                 parent.getDefVersion());
         Set<String> references = waitReferences(graph, activityId);
         if (references.isEmpty()) {
-            return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
+            return Optional.of(MutationOutcome.ALREADY_APPLIED);
         }
         boolean anyWaiting = references.stream().anyMatch(actionId ->
                 batchMapper.selectCount(Wrappers.<BpmChildBatch>lambdaQuery()
@@ -769,13 +766,13 @@ public class ChildOrchestrationService {
         if (anyWaiting) {
             log.info("等待节点保持挂起（存在 WAITING 批次）: parent={}, activityId={}",
                     parentInstanceId, activityId);
-            return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
+            return Optional.of(MutationOutcome.ALREADY_APPLIED);
         }
         return bpmRuntimeFacade.signalWaitNode(parentInstanceId, activityId)
                 .map(outcome -> {
                     log.info("等待节点唤醒结果: parent={}, activityId={}, outcome={}",
                             parentInstanceId, activityId, outcome);
-                    if (com.sw.ck.bpm.api.result.MutationOutcome.APPLIED.equals(outcome)) {
+                    if (MutationOutcome.APPLIED.equals(outcome)) {
                         syncParentStatusIfEnded(parent);
                     }
                     return outcome;
@@ -783,7 +780,7 @@ public class ChildOrchestrationService {
                 .or(() -> {
                     log.info("等待节点唤醒目标不在运行期: parent={}, activityId={}",
                             parentInstanceId, activityId);
-                    return Optional.of(com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED);
+                    return Optional.of(MutationOutcome.ALREADY_APPLIED);
                 });
     }
 
@@ -793,13 +790,13 @@ public class ChildOrchestrationService {
      */
     private void syncParentStatusIfEnded(BpmInstance parent) {
         bpmRuntimeFacade.getActiveActivityIds(parent.getProcessInstanceId()).ifPresent(active -> {
-            if (!active.isEmpty() || !"RUNNING".equals(parent.getStatus())) {
+            if (!active.isEmpty() || !InstanceStatusEnum.RUNNING.getCode().equals(parent.getStatus())) {
                 return;
             }
             boolean updated = bpmInstanceService.lambdaUpdate()
                     .eq(BpmInstance::getId, parent.getId())
-                    .eq(BpmInstance::getStatus, "RUNNING")
-                    .set(BpmInstance::getStatus, "APPROVED")
+                    .eq(BpmInstance::getStatus, InstanceStatusEnum.RUNNING.getCode())
+                    .set(BpmInstance::getStatus, InstanceStatusEnum.APPROVED.getCode())
                     .update();
             if (updated) {
                 log.info("父流程等待唤醒后已结束，实例状态同步为 APPROVED: processInstanceId={}",
@@ -847,7 +844,7 @@ public class ChildOrchestrationService {
                 .orElse(Set.of());
     }
 
-    private boolean referencesAction(com.sw.ck.bpm.api.dto.GraphElement element, String actionId,
+    private boolean referencesAction(GraphElement element, String actionId,
                                      ProcessGraph graph) {
         Set<String> references = waitReferences(graph, element.getId());
         return references.contains(actionId);
@@ -858,7 +855,7 @@ public class ChildOrchestrationService {
     /**
      * 父流程终态化（取消/退回/驳回/撤回/废弃/合法完成）：未完成批次失去写回推进权。
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void cancelBatchesForParent(BpmInstance parent, String reason) {
         if (parent == null || parent.getTenantId() == null) {
             return;
@@ -895,7 +892,7 @@ public class ChildOrchestrationService {
     public record WritebackRetryOutcome(String status, String message) {
     }
 
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public WritebackRetryOutcome retryWriteback(Long tenantId, Long itemId, Long actorId) {
         BpmChildItem item = itemMapper.selectById(itemId);
         if (item == null || !tenantId.equals(item.getTenantId())) {
@@ -998,7 +995,7 @@ public class ChildOrchestrationService {
      * 持久 target_record_id，作为在途链的权威补充路径；两路并集取最大深度。
      */
     private List<BpmChildBatch> batchesOwningBusinessKey(Long tenantId, String businessKey) {
-        java.util.LinkedHashMap<Long, BpmChildBatch> owned = new java.util.LinkedHashMap<>();
+        LinkedHashMap<Long, BpmChildBatch> owned = new LinkedHashMap<>();
         List<BpmChildItem> items = itemMapper.selectList(Wrappers.<BpmChildItem>lambdaQuery()
                 .eq(BpmChildItem::getTenantId, tenantId)
                 .eq(BpmChildItem::getTargetRecordId, businessKey));
@@ -1022,7 +1019,7 @@ public class ChildOrchestrationService {
                 }
             }
         }
-        return new java.util.ArrayList<>(owned.values());
+        return new ArrayList<>(owned.values());
     }
 
     private String resolveRootInstanceId(Long tenantId, String parentBusinessKey) {

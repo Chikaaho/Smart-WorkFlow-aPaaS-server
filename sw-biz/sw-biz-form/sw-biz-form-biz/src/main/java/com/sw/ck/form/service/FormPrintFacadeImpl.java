@@ -1,9 +1,11 @@
 package com.sw.ck.form.service;
 
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDTO;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotVO;
 import com.sw.ck.form.api.print.FormPrintFacade;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -20,24 +22,20 @@ import java.util.Optional;
  * 无权/不存在统一收敛为 empty，由调用方给出安全结论。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class FormPrintFacadeImpl implements FormPrintFacade {
 
-    private final FormDataQueryService formDataQueryService;
-    private final FormDefService formDefService;
-
-    public FormPrintFacadeImpl(FormDataQueryService formDataQueryService,
-                               FormDefService formDefService) {
-        this.formDataQueryService = formDataQueryService;
-        this.formDefService = formDefService;
-    }
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private FormDefService formDefService;
 
     @Override
     public Optional<FormPrintData> recordDetail(String formKey, String recordId,
                                                 LocalDateTime submittedAt) {
         try {
-            FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+            FormDefVO formDef = formDefService.getFormDefByKey(formKey);
             if (formDef == null) {
                 return Optional.empty();
             }
@@ -51,7 +49,7 @@ public class FormPrintFacadeImpl implements FormPrintFacade {
             boolean versionPinned = false;
             if (submittedAt != null && formDef.getId() != null) {
                 // 快照列表按版本倒序；取 create_time ≤ 提交时间的最新一版（提交时可见的定义）
-                Optional<FormSnapshotDTO> pinned = formDefService.listSnapshots(formDef.getId())
+                Optional<FormSnapshotVO> pinned = formDefService.listSnapshots(formDef.getId())
                         .stream()
                         .filter(snapshot -> snapshot.getCreateTime() != null
                                 && !snapshot.getCreateTime().isAfter(submittedAt))

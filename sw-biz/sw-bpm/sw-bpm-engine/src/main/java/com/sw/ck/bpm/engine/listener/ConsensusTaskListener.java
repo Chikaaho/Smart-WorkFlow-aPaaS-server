@@ -1,40 +1,38 @@
 package com.sw.ck.bpm.engine.listener;
 
+import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.ParticipantSnapshotRecorder;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+import com.sw.ck.bpm.api.common.BatchItemStatusEnum;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.flowable.task.service.delegate.DelegateTask;
-import org.flowable.task.service.delegate.TaskListener;
-import org.flowable.engine.RuntimeService;
-import org.springframework.stereotype.Component;
-import org.springframework.beans.factory.annotation.Autowired;
 
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+
+import org.flowable.engine.RuntimeService;
+import org.flowable.task.service.delegate.DelegateTask;
+import org.flowable.task.service.delegate.TaskListener;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /** 会签子任务监听器：将多实例元素变量绑定为 assignee，并维护动作计数。 */
 @Component("consensusTaskListener")
 public class ConsensusTaskListener implements TaskListener {
     private static final ConcurrentMap<String, Object> LOCKS = new ConcurrentHashMap<>();
-    private final RuntimeService runtimeService;
-    private final ParticipantSnapshotRecorder snapshotRecorder;
-    private final UserQueryFacade userQueryFacade;
+    @Autowired(required = false)
+    private RuntimeService runtimeService;
+    @Autowired(required = false)
+    private ParticipantSnapshotRecorder snapshotRecorder;
+    @Autowired(required = false)
+    private UserQueryFacade userQueryFacade;
     /** 会签 DB 计数端口（I3）：多实例唯一键替代单 JVM synchronized。 */
     @Autowired(required = false)
-    private transient org.springframework.beans.factory.ObjectProvider<com.sw.ck.bpm.api.participant.ConsensusVotePort> votePortProvider;
-
-    public ConsensusTaskListener(org.springframework.beans.factory.ObjectProvider<ParticipantSnapshotRecorder> recorder) {
-        this(null, recorder, null);
-    }
-
-    @Autowired
-    public ConsensusTaskListener(RuntimeService runtimeService,
-                                 org.springframework.beans.factory.ObjectProvider<ParticipantSnapshotRecorder> recorder,
-                                 org.springframework.beans.factory.ObjectProvider<UserQueryFacade> userQueryFacade) {
-        this.runtimeService = runtimeService;
-        this.snapshotRecorder = recorder.getIfAvailable();
-        this.userQueryFacade = userQueryFacade == null ? null : userQueryFacade.getIfAvailable();
-    }
+    private transient ObjectProvider<ConsensusVotePort> votePortProvider;
 
     @Override
     public void notify(DelegateTask task) {
@@ -47,26 +45,26 @@ public class ConsensusTaskListener implements TaskListener {
             try { tenant = Long.valueOf(String.valueOf(task.getVariable("tenantId"))); }
             catch (Exception ignored) { }
             // 冻结参与人展示名（I1）：会签子任务同样不随后续改名被重写
-            java.util.Map<String, String> displayNames = java.util.Collections.emptyMap();
+            Map<String, String> displayNames = Collections.emptyMap();
             if (userQueryFacade != null) {
                 try {
                     Long pid = null;
                     try { pid = Long.valueOf(String.valueOf(participant)); } catch (Exception ignored) { }
                     if (pid != null) {
                         // empty = 查询对象缺失：无展示名可冻结，快照仅记录 ID
-                        java.util.Optional<java.util.Map<Long, String>> names =
-                                userQueryFacade.getUserDisplayNames(java.util.List.of(pid));
+                        Optional<Map<Long, String>> names =
+                                userQueryFacade.getUserDisplayNames(List.of(pid));
                         if (names.isPresent()) {
                             String name = names.orElseThrow().get(pid);
                             if (name != null) {
-                                displayNames = java.util.Map.of(String.valueOf(participant), name);
+                                displayNames = Map.of(String.valueOf(participant), name);
                             }
                         }
                     }
-                } catch (Exception ignored) { }
+                } catch (Exception ignored) { /* 展示名查询失败 → 快照仅记录 ID */ }
             }
             snapshotRecorder.record(task.getProcessInstanceId(), task.getTaskDefinitionKey(), task.getId(),
-                    java.util.List.of(String.valueOf(participant)), displayNames, tenant)
+                    List.of(String.valueOf(participant)), displayNames, tenant)
             .orElseThrow(() -> new IllegalStateException(
                     "ParticipantSnapshotRecorder#record 契约恒 present，empty 属契约违约"));
         }
@@ -80,7 +78,7 @@ public class ConsensusTaskListener implements TaskListener {
             String outcome = rawOutcome == null
                     || rawOutcome.isBlank()
                     || "DISAPPROVED".equalsIgnoreCase(rawOutcome)
-                    || "REJECTED".equalsIgnoreCase(rawOutcome) ? "DISAPPROVE" : "APPROVE";
+                    || BatchItemStatusEnum.REJECTED.getCode().equalsIgnoreCase(rawOutcome) ? "DISAPPROVE" : "APPROVE";
             if (runtimeService == null) {
                 String counter = "APPROVE".equals(outcome)
                         ? "consensusApprovedCount" : "consensusRejectedCount";
@@ -96,10 +94,10 @@ public class ConsensusTaskListener implements TaskListener {
                 boolean counted = false;
                 boolean votePortUnavailable = false;
                 if (votePortProvider != null) {
-                    com.sw.ck.bpm.api.participant.ConsensusVotePort port = votePortProvider.getIfAvailable();
+                    ConsensusVotePort port = votePortProvider.getIfAvailable();
                     if (port != null) {
                         // empty = 投票服务不可用：不得据此认为重复，按旧变量计数兜底
-                        java.util.Optional<Boolean> recorded = port.record(
+                        Optional<Boolean> recorded = port.record(
                                 String.valueOf(task.getVariable("tenantId")),
                                 task.getProcessInstanceId(), task.getTaskDefinitionKey(),
                                 task.getId(),

@@ -1,6 +1,8 @@
 package com.sw.ck.bpm.process.service;
 
-import com.sw.ck.bpm.process.dto.UrgeRespDTO;
+import com.sw.ck.bpm.process.vo.UrgeRespVO;
+
+import java.util.List;
 
 /** 催办服务（v0.0.2 OA）。 */
 public interface BpmUrgeService {
@@ -13,13 +15,13 @@ public interface BpmUrgeService {
      * 催办不改变审批结论。
      * </p>
      */
-    UrgeRespDTO urge(Long instanceRecordId);
+    UrgeRespVO urge(Long instanceRecordId);
 
     /**
      * 同 {@link #urge(Long)}，附带发起人可选催办留言（最长 200 字，空白视为无留言）。
      * <p>留言随站内催办通知一并送达待办人，并进入催办留痕明细；催办不改变审批结论。</p>
      */
-    default UrgeRespDTO urge(Long instanceRecordId, String message) {
+    default UrgeRespVO urge(Long instanceRecordId, String message) {
         return urge(instanceRecordId);
     }
 
@@ -28,7 +30,7 @@ public interface BpmUrgeService {
      * <p>接收人必须是服务端核定的当前实例合法待办人的子集；空表示全部待办人（旧语义）。
      * 越权/越界接收人明确拒绝，不向非本实例参与人发送。</p>
      */
-    default UrgeRespDTO urge(Long instanceRecordId, String message, java.util.List<Long> recipientIds) {
+    default UrgeRespVO urge(Long instanceRecordId, String message, List<Long> recipientIds) {
         return urge(instanceRecordId, message);
     }
 }

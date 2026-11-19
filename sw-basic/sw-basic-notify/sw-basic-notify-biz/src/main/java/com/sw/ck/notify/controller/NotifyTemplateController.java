@@ -1,11 +1,13 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.notify.api.NotifyBizType;
-import com.sw.ck.notify.dto.NotifyTemplateDTO;
+import com.sw.ck.notify.vo.NotifyTemplateVO;
 import com.sw.ck.notify.dto.NotifyTemplateQuery;
 import com.sw.ck.notify.dto.TemplatePreviewRequest;
 import com.sw.ck.notify.dto.TemplatePreviewResult;
@@ -17,13 +19,14 @@ import com.sw.ck.notify.render.TemplateRenderService;
 import com.sw.ck.notify.service.NotifyMessageService;
 import com.sw.ck.notify.service.NotifyTemplateService;
 import com.sw.ck.notify.service.impl.NotifyTemplateServiceImpl;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 消息模板管理控制器（P36 / M05-F02-01）。
  *
@@ -38,55 +41,48 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/notify/templates")
+@Log4j2
 public class NotifyTemplateController {
 
-    private static final Logger log = LoggerFactory.getLogger(NotifyTemplateController.class);
+    @Autowired
+    private NotifyTemplateService templateService;
 
-    private final NotifyTemplateService templateService;
+    @Autowired
+    private NotifyTemplateServiceImpl templateServiceImpl;
 
-    private final NotifyTemplateServiceImpl templateServiceImpl;
+    @Autowired
+    private TemplateRenderService renderService;
 
-    private final TemplateRenderService renderService;
-
-    private final NotifyMessageService messageService;
-
-    public NotifyTemplateController(NotifyTemplateService templateService,
-                                    NotifyTemplateServiceImpl templateServiceImpl,
-                                    TemplateRenderService renderService,
-                                    NotifyMessageService messageService) {
-        this.templateService = templateService;
-        this.templateServiceImpl = templateServiceImpl;
-        this.renderService = renderService;
-        this.messageService = messageService;
-    }
+    @Autowired
+    private NotifyMessageService messageService;
 
     // ==================== 管理端 ====================
 
     /** 分页列表 */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:template:view')")
-    public R<PageResult<NotifyTemplateDTO>> page(NotifyTemplateQuery query) {
+    public R<PageResult<NotifyTemplateVO>> page(NotifyTemplateQuery query) {
         return R.ok(templateService.pageTemplates(query));
     }
 
     /** 详情 */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:template:view')")
-    public R<NotifyTemplateDTO> get(@PathVariable Long id) {
+    public R<NotifyTemplateVO> get(@PathVariable Long id) {
         return R.ok(templateService.getTemplate(id));
     }
 
     /** 新建 */
     @PostMapping
     @PreAuthorize("@ss.hasPermi('notify:template:manage')")
-    public R<Long> create(@RequestBody NotifyTemplateDTO dto) {
+    public R<Long> create(@RequestBody NotifyTemplateVO dto) {
         return R.ok(templateService.createTemplate(dto));
     }
 
     /** 编辑（模板代码不可变更） */
     @PutMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('notify:template:manage')")
-    public R<Void> update(@PathVariable Long id, @RequestBody NotifyTemplateDTO dto) {
+    public R<Void> update(@PathVariable Long id, @RequestBody NotifyTemplateVO dto) {
         templateService.updateTemplate(id, dto);
         return R.ok();
     }
@@ -136,7 +132,7 @@ public class NotifyTemplateController {
     /** 变量提取：按模板内容返回引用的变量名集（前端动态生成变量输入框） */
     @PostMapping("/variables")
     @PreAuthorize("@ss.hasPermi('notify:template:view')")
-    public R<java.util.Set<String>> variables(@RequestBody TemplatePreviewRequest request) {
+    public R<Set<String>> variables(@RequestBody TemplatePreviewRequest request) {
         if (request == null) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "请求体不能为空");
         }

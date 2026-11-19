@@ -3,9 +3,11 @@ package com.sw.ck.bpm.process.notify;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
 import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifySendRequest;
 
 import java.util.Optional;
+import com.sw.ck.bpm.api.common.BpmNotifyLinkTypeEnum;
 
 /**
  * {@link BpmNotifyEvent} → 通知请求的<b>唯一</b>文案与身份映射。
@@ -62,7 +64,7 @@ public final class BpmNotifyMessages {
 
     /** 深链对象类型：流程终态类事件指向流程实例，其余指向任务。 */
     public static String linkType(BpmNotifyTrigger trigger) {
-        return trigger != null && trigger.name().startsWith("PROCESS") ? "WF_PROCESS" : "WF_TASK";
+        return trigger != null && trigger.name().startsWith("PROCESS") ? BpmNotifyLinkTypeEnum.WF_PROCESS.getCode() : BpmNotifyLinkTypeEnum.WF_TASK.getCode();
     }
 
     /** 事件类型标识（= 触发器常量名），幂等身份组成之一。 */
@@ -78,7 +80,7 @@ public final class BpmNotifyMessages {
      * @param channel 目标渠道
      */
     public static NotifySendRequest requestFor(BpmNotifyEvent event, Spec spec,
-                                               com.sw.ck.notify.api.NotifyChannel channel) {
+                                               NotifyChannel channel) {
         return NotifySendRequest.builder()
                 .channel(channel)
                 .recipientId(event.getRecipientId())

@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.multidb;
 
 import com.sw.ck.common.jdbc.DatabaseVendor;
+
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -12,11 +13,13 @@ import java.sql.Blob;
 import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
@@ -25,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -211,7 +215,7 @@ class SeedComparisonTest {
         Map<String, String> columns = columnNames(connection, actualTable);
         List<String> actualKeys = keys.stream()
                 .map(key -> columns.get(key.toLowerCase(Locale.ROOT)))
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .toList();
         if (actualKeys.size() != keys.size()) {
             return "MISSING-KEYS";
@@ -275,11 +279,11 @@ class SeedComparisonTest {
         } else {
             basePk = businessKeys.stream()
                     .map(key -> baseColumns.get(key.toLowerCase(Locale.ROOT)))
-                    .filter(java.util.Objects::nonNull)
+                    .filter(Objects::nonNull)
                     .toList();
             targetPk = businessKeys.stream()
                     .map(key -> targetColumns.get(key.toLowerCase(Locale.ROOT)))
-                    .filter(java.util.Objects::nonNull)
+                    .filter(Objects::nonNull)
                     .toList();
         }
         if (basePk.isEmpty() || targetPk.isEmpty()) {
@@ -306,7 +310,7 @@ class SeedComparisonTest {
             }
             List<String> values = baseRows.get(key);
             for (int i = 0; i < logicalColumns.size(); i++) {
-                if (!java.util.Objects.equals(values.get(i), targetValues.get(i))) {
+                if (!Objects.equals(values.get(i), targetValues.get(i))) {
                     addDiff(mismatches, logicalTable + "[" + key + "] 列 "
                             + logicalColumns.get(i) + " base=" + values.get(i)
                             + " target=" + targetValues.get(i));
@@ -400,8 +404,8 @@ class SeedComparisonTest {
         if (value instanceof Number number) {
             return new BigDecimal(number.toString()).stripTrailingZeros().toPlainString();
         }
-        if (value instanceof Timestamp || value instanceof java.sql.Date
-                || value instanceof java.sql.Time || value instanceof TemporalAccessor
+        if (value instanceof Timestamp || value instanceof Date
+                || value instanceof Time || value instanceof TemporalAccessor
                 || value.getClass().getName().startsWith("oracle.sql.TIMESTAMP")
                 || value.getClass().getName().startsWith("oracle.sql.DATE")
                 || value.getClass().getName().startsWith("oracle.sql.TIMESTAMPTZ")) {

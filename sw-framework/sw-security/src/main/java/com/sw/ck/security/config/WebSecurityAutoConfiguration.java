@@ -1,6 +1,8 @@
 package com.sw.ck.security.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.security.filter.AccessLoggingFilter;
 import com.sw.ck.security.filter.DebugAuthenticationFilter;
@@ -9,11 +11,13 @@ import com.sw.ck.security.handler.RestAccessDeniedHandler;
 import com.sw.ck.security.handler.RestAuthenticationEntryPoint;
 import com.sw.ck.security.jwt.JwtTokenProvider;
 import com.sw.ck.security.support.PermissionService;
+
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration;
 import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.Environment;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -40,7 +44,7 @@ public class WebSecurityAutoConfiguration {
     public JwtAuthenticationFilter jwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
                                                              LoginUserLoader loginUserLoader,
                                                              SecurityProperties securityProperties,
-                                                             com.sw.ck.security.cache.LoginUserCacheService loginUserCacheService) {
+                                                             LoginUserCacheService loginUserCacheService) {
         return new JwtAuthenticationFilter(jwtTokenProvider, loginUserLoader, securityProperties, loginUserCacheService);
     }
 
@@ -49,7 +53,7 @@ public class WebSecurityAutoConfiguration {
             LoginUserLoader loginUserLoader,
             SecurityProperties securityProperties,
             DebugAuthenticationProperties debugAuthenticationProperties,
-            org.springframework.core.env.Environment environment,
+            Environment environment,
             ObjectMapper objectMapper) {
         return new DebugAuthenticationFilter(loginUserLoader, securityProperties,
                 debugAuthenticationProperties, environment, objectMapper);

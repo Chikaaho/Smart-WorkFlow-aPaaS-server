@@ -4,6 +4,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -38,7 +39,7 @@ class I6G7UpgradeDrillH2Test {
     @Test
     @DisplayName("G7 基线全新建库：通知消息/模板/尝试关键列语义按同一 ID 回读一致")
     void baselineDatabaseKeepsNotificationSemantics() throws Exception {
-        Files.deleteIfExists(new java.io.File("./target/i6-g7-baseline-db.mv.db").toPath());
+        Files.deleteIfExists(new File("./target/i6-g7-baseline-db.mv.db").toPath());
 
         // ---------- 1. 基线全新建库 ----------
         String[] allLocations = "classpath:db/migration/h2,classpath:db/migration/bpm/h2,classpath:db/migration/notify/h2,classpath:db/migration/form/h2,classpath:db/migration/storage/h2,classpath:db/migration/job/h2,classpath:db/migration/agent/h2,classpath:db/migration/iot/h2,classpath:db/migration/openapi/h2,classpath:db/migration/system/h2".split(",");
@@ -103,7 +104,7 @@ class I6G7UpgradeDrillH2Test {
     @Test
     @DisplayName("D022-03 升级演练：旧三行搬迁为供应商+模型，ollama 补 /v1、other 停用、旧 id 原样")
     void f1LegacyProviderConfigMigrated() throws Exception {
-        Files.deleteIfExists(new java.io.File("./target/i6-g7-f1-upgrade-db.mv.db").toPath());
+        Files.deleteIfExists(new File("./target/i6-g7-f1-upgrade-db.mv.db").toPath());
 
         String[] allLocations = "classpath:db/migration/h2,classpath:db/migration/bpm/h2,classpath:db/migration/notify/h2,classpath:db/migration/form/h2,classpath:db/migration/storage/h2,classpath:db/migration/job/h2,classpath:db/migration/agent/h2,classpath:db/migration/iot/h2,classpath:db/migration/openapi/h2,classpath:db/migration/system/h2".split(",");
 

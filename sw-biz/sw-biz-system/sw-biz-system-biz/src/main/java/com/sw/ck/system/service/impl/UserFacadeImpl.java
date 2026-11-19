@@ -1,13 +1,18 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.jdbc.JdbcMaps;
+import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
+
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
@@ -15,8 +20,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -39,13 +46,10 @@ public class UserFacadeImpl implements UserQueryFacade {
     /** 用户状态：0=正常（对齐 sys_user_status 字典与 V4 种子口径） */
     private static final int STATUS_ACTIVE = 0;
 
-    private final SysUserMapper sysUserMapper;
-    private final SysDeptMapper sysDeptMapper;
-
-    public UserFacadeImpl(SysUserMapper sysUserMapper, SysDeptMapper sysDeptMapper) {
-        this.sysUserMapper = sysUserMapper;
-        this.sysDeptMapper = sysDeptMapper;
-    }
+    @Autowired
+    private SysUserMapper sysUserMapper;
+    @Autowired
+    private SysDeptMapper sysDeptMapper;
 
     @Override
     public Optional<List<UserOptionDTO>> searchActiveUsers(String keyword, int limit) {
@@ -87,7 +91,7 @@ public class UserFacadeImpl implements UserQueryFacade {
                 .select(SysUser::getId, SysUser::getDeptId)
                 .in(SysUser::getId, ids)
                 .eq(SysUser::getStatus, STATUS_ACTIVE));
-        Map<Long, Long> result = new java.util.LinkedHashMap<>();
+        Map<Long, Long> result = new LinkedHashMap<>();
         for (SysUser user : users) {
             if (user.getId() != null && user.getDeptId() != null) {
                 result.put(user.getId(), user.getDeptId());
@@ -168,7 +172,7 @@ public class UserFacadeImpl implements UserQueryFacade {
                 .collect(Collectors.toMap(SysUser::getId, u ->
                                 u.getRealName() != null && !u.getRealName().isBlank()
                                         ? u.getRealName() : u.getUsername(),
-                        (a, b) -> a, java.util.LinkedHashMap::new)));
+                        (a, b) -> a, LinkedHashMap::new)));
     }
 
     @Override
@@ -176,7 +180,7 @@ public class UserFacadeImpl implements UserQueryFacade {
         if (ids == null) {
             return Optional.empty();
         }
-        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        var loginUser = LoginUserHolder.get();
         if (loginUser == null || loginUser.getTenantId() == null) {
             // 无登录租户上下文：无法确定租户范围
             return Optional.empty();
@@ -201,7 +205,7 @@ public class UserFacadeImpl implements UserQueryFacade {
         if (roleCodes == null) {
             return Optional.empty();
         }
-        var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+        var loginUser = LoginUserHolder.get();
         if (loginUser == null || loginUser.getTenantId() == null) {
             // 无登录租户上下文：无法确定租户范围
             return Optional.empty();
@@ -227,7 +231,7 @@ public class UserFacadeImpl implements UserQueryFacade {
             // 部门集合或租户上下文缺失，查询未执行
             return Optional.empty();
         }
-        List<Long> distinct = deptIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        List<Long> distinct = deptIds.stream().filter(Objects::nonNull).distinct().toList();
         if (distinct.isEmpty()) {
             return Optional.of(List.of());
         }
@@ -235,17 +239,17 @@ public class UserFacadeImpl implements UserQueryFacade {
     }
 
     @Override
-    public Optional<java.util.Map<Long, Long>> findDeptLeaderMap(Collection<Long> deptIds, Long tenantId) {
+    public Optional<Map<Long, Long>> findDeptLeaderMap(Collection<Long> deptIds, Long tenantId) {
         if (deptIds == null || tenantId == null) {
             // 部门集合或租户上下文缺失，查询未执行
             return Optional.empty();
         }
-        List<Long> distinct = deptIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        List<Long> distinct = deptIds.stream().filter(Objects::nonNull).distinct().toList();
         if (distinct.isEmpty()) {
-            return Optional.of(java.util.Map.of());
+            return Optional.of(Map.of());
         }
-        java.util.Map<Long, Long> leaderByDept = new java.util.LinkedHashMap<>();
-        for (java.util.Map<String, Object> row
+        Map<Long, Long> leaderByDept = new LinkedHashMap<>();
+        for (Map<String, Object> row
                 : JdbcMaps.caseInsensitiveKeys(sysUserMapper.selectDeptLeaderMap(distinct, tenantId))) {
             Object deptId = row.get("dept_id");
             Object leaderId = row.get("leader_id");

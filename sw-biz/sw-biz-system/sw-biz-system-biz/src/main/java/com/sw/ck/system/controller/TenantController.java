@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.service.TenantAdminService;
@@ -31,11 +33,8 @@ import java.util.List;
 @RequestMapping("/system/tenant")
 public class TenantController {
 
-    private final TenantAdminService tenantAdminService;
-
-    public TenantController(TenantAdminService tenantAdminService) {
-        this.tenantAdminService = tenantAdminService;
-    }
+    @Autowired
+    private TenantAdminService tenantAdminService;
 
     /** 新建租户请求。初始密码只入参，不在任何响应中回显。 */
     @Data
@@ -125,7 +124,7 @@ public class TenantController {
 
     @GetMapping("/{id}/administrators")
     @PreAuthorize("@ss.hasPermi('system:tenant:list')")
-    public R<java.util.List<TenantAdminService.AdminCandidate>> administrators(@PathVariable Long id) {
+    public R<List<TenantAdminService.AdminCandidate>> administrators(@PathVariable Long id) {
         return R.ok(tenantAdminService.adminCandidates(id));
     }
 

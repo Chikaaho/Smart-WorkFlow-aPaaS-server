@@ -1,6 +1,6 @@
 package com.sw.ck.job.impl;
 
-import com.sw.ck.job.dto.JobInfoDTO;
+import com.sw.ck.job.vo.JobInfoVO;
 import com.sw.ck.job.entity.JobInfo;
 import com.sw.ck.job.service.JobInfoService;
 import org.junit.jupiter.api.DisplayName;
@@ -58,10 +58,10 @@ class JobFacadeImplTest {
             JobInfo entity = createJobInfo(1L, "test-job");
             when(jobInfoService.getById(1L)).thenReturn(entity);
 
-            Optional<JobInfoDTO> dto = jobFacade.getById(1L);
+            Optional<JobInfoVO> dto = jobFacade.getById(1L);
 
             assertThat(dto).isPresent();
-            JobInfoDTO value = dto.orElseThrow();
+            JobInfoVO value = dto.orElseThrow();
             assertThat(value.getId()).isEqualTo(1L);
             assertThat(value.getJobName()).isEqualTo("test-job");
             assertThat(value.getJobGroup()).isEqualTo("DEFAULT");
@@ -84,7 +84,7 @@ class JobFacadeImplTest {
         void getById_notFound_shouldReturnEmpty() {
             when(jobInfoService.getById(999L)).thenReturn(null);
 
-            Optional<JobInfoDTO> dto = jobFacade.getById(999L);
+            Optional<JobInfoVO> dto = jobFacade.getById(999L);
 
             assertThat(dto).isEmpty();
             verify(jobInfoService).getById(999L);
@@ -103,7 +103,7 @@ class JobFacadeImplTest {
             JobInfo entity = createJobInfo(2L, "cron-cleanup");
             when(jobInfoService.getByJobName("cron-cleanup")).thenReturn(entity);
 
-            Optional<JobInfoDTO> dto = jobFacade.getByJobName("cron-cleanup");
+            Optional<JobInfoVO> dto = jobFacade.getByJobName("cron-cleanup");
 
             assertThat(dto).isPresent();
             assertThat(dto.orElseThrow().getId()).isEqualTo(2L);
@@ -116,7 +116,7 @@ class JobFacadeImplTest {
         void getByJobName_notFound_shouldReturnEmpty() {
             when(jobInfoService.getByJobName("ghost-job")).thenReturn(null);
 
-            Optional<JobInfoDTO> dto = jobFacade.getByJobName("ghost-job");
+            Optional<JobInfoVO> dto = jobFacade.getByJobName("ghost-job");
 
             assertThat(dto).isEmpty();
             verify(jobInfoService).getByJobName("ghost-job");
@@ -131,7 +131,7 @@ class JobFacadeImplTest {
             entity.setFlowDefKey("approval_flow_v1");
             when(jobInfoService.getByJobName("flow-trigger")).thenReturn(entity);
 
-            JobInfoDTO dto = jobFacade.getByJobName("flow-trigger").orElseThrow();
+            JobInfoVO dto = jobFacade.getByJobName("flow-trigger").orElseThrow();
 
             assertThat(dto.getJobType()).isEqualTo("FLOW");
             assertThat(dto.getBeanName()).isNull();

@@ -3,8 +3,11 @@ package com.sw.ck.bootstrap.phase5;
 import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.iot.job.CommandCompensationJob;
+
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
+import org.flowable.task.service.delegate.DelegateTask;
+import org.flowable.task.service.delegate.TaskListener;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -13,7 +16,9 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -53,7 +58,7 @@ class Phase5PgDeviceCommandBoundaryBehaviourTest extends Phase5PgSupport {
     private CommandCompensationJob commandCompensationJob;
 
     /** t2 节点 create 监听器：在引擎事务内发布审批设备命令事件（与生产发布点同构）。 */
-    public static class DeviceCommandProbe implements org.flowable.task.service.delegate.TaskListener {
+    public static class DeviceCommandProbe implements TaskListener {
 
         private final DomainEventPublisher publisher;
 
@@ -62,10 +67,10 @@ class Phase5PgDeviceCommandBoundaryBehaviourTest extends Phase5PgSupport {
         }
 
         @Override
-        public void notify(org.flowable.task.service.delegate.DelegateTask delegateTask) {
+        public void notify(DelegateTask delegateTask) {
             System.out.println("[P5-EV] probe.node=" + delegateTask.getTaskDefinitionKey()
                     + " device=" + PROBE_DEVICE.get()
-                    + " inTransaction=" + org.springframework.transaction.support.TransactionSynchronizationManager
+                    + " inTransaction=" + TransactionSynchronizationManager
                     .isActualTransactionActive());
             publisher.publish(new BpmDeviceCommandEvent(delegateTask.getProcessInstanceId(), PRODUCT_ID,
                     PROBE_DEVICE.get(), COMMAND_KEY, "PROPERTY", TENANT_A, USER_A));
@@ -177,7 +182,7 @@ class Phase5PgDeviceCommandBoundaryBehaviourTest extends Phase5PgSupport {
         // 下游发送失败：把命令置为可重试失败态（等价于发送尝试失败后的落库结果）
         jdbc.update("update sw_iot_device_command set status = 'FAILED', retry_count = 0, last_error = '下行发送失败',"
                         + " expiry_time = ? where id = ?",
-                java.time.LocalDateTime.now().plusHours(2), rowId);
+                LocalDateTime.now().plusHours(2), rowId);
         commandCompensationJob.execute();
 
         assertThat(activeTaskKeys(processInstanceId))

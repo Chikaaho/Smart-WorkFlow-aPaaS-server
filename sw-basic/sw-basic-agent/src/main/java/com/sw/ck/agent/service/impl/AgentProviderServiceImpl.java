@@ -1,9 +1,11 @@
 package com.sw.ck.agent.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.sw.ck.agent.dto.AgentProviderDTO;
+import com.sw.ck.agent.vo.AgentProviderVO;
 import com.sw.ck.agent.dto.AgentProviderSaveReqDTO;
 import com.sw.ck.agent.entity.AgentProvider;
 import com.sw.ck.agent.mapper.AgentProviderMapper;
@@ -33,14 +35,11 @@ public class AgentProviderServiceImpl
         extends BaseServiceImpl<AgentProviderMapper, AgentProvider>
         implements AgentProviderService {
 
-    private final AesGcmCipher cipher;
-
-    public AgentProviderServiceImpl(AesGcmCipher cipher) {
-        this.cipher = cipher;
-    }
+    @Autowired
+    private AesGcmCipher cipher;
 
     @Override
-    public PageResult<AgentProviderDTO> pageProviders(PageParam pageParam, String nameKeyword) {
+    public PageResult<AgentProviderVO> pageProviders(PageParam pageParam, String nameKeyword) {
         String keyword = nameKeyword != null && !nameKeyword.isBlank() ? nameKeyword : null;
         IPage<AgentProvider> page = baseMapper.selectPage(
                 new Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
@@ -51,7 +50,7 @@ public class AgentProviderServiceImpl
     }
 
     @Override
-    public List<AgentProviderDTO> listEnabled() {
+    public List<AgentProviderVO> listEnabled() {
         return baseMapper.selectList(
                         Wrappers.<AgentProvider>lambdaQuery()
                                 .eq(AgentProvider::getEnabled, true)
@@ -60,8 +59,8 @@ public class AgentProviderServiceImpl
     }
 
     @Override
-    public AgentProviderDTO getById(Long id) {
-        AgentProviderDTO dto = toDTO(requireEntity(id));
+    public AgentProviderVO getById(Long id) {
+        AgentProviderVO dto = toDTO(requireEntity(id));
         if (dto != null && dto.getApiKeyMasked() == null) {
             AgentProvider entity = requireEntity(id);
             if (entity.getApiKeyCipher() != null && !entity.getApiKeyCipher().isEmpty()) {
@@ -165,8 +164,8 @@ public class AgentProviderServiceImpl
         return entity;
     }
 
-    private AgentProviderDTO toDTO(AgentProvider entity) {
-        AgentProviderDTO dto = new AgentProviderDTO();
+    private AgentProviderVO toDTO(AgentProvider entity) {
+        AgentProviderVO dto = new AgentProviderVO();
         dto.setId(entity.getId());
         dto.setName(entity.getName());
         dto.setApiFormat(entity.getApiFormat());

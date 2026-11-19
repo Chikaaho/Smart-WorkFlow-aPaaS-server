@@ -9,8 +9,10 @@ import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
+import com.sw.ck.notify.service.NotifyDeliveryRecoveryService;
 import com.sw.ck.openapi.biz.job.OpenApiCallbackRecoveryJob;
 import com.sw.ck.openapi.biz.listener.OpenApiCallbackIntentRecorder;
+
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -22,7 +24,11 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -49,7 +55,7 @@ class Phase4PgDeliverySeamBehaviourTest extends Phase4PgSupport {
     private CommandQueueService commandQueueService;
     private CommandCompensationJob commandCompensationJob;
     private NotifyFacade notifyFacade;
-    private com.sw.ck.notify.service.NotifyDeliveryRecoveryService notifyRecoveryService;
+    private NotifyDeliveryRecoveryService notifyRecoveryService;
     private OpenApiCallbackIntentRecorder callbackRecorder;
     private OpenApiCallbackRecoveryJob callbackRecoveryJob;
 
@@ -61,7 +67,7 @@ class Phase4PgDeliverySeamBehaviourTest extends Phase4PgSupport {
         callbackServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         callbackServer.createContext("/callback", exchange -> {
             callbackHits++;
-            byte[] body = "{\"ok\":true}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] body = "{\"ok\":true}".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -77,7 +83,7 @@ class Phase4PgDeliverySeamBehaviourTest extends Phase4PgSupport {
         commandQueueService = app.getBean(CommandQueueService.class);
         commandCompensationJob = app.getBean(CommandCompensationJob.class);
         notifyFacade = app.getBean(NotifyFacade.class);
-        notifyRecoveryService = app.getBean(com.sw.ck.notify.service.NotifyDeliveryRecoveryService.class);
+        notifyRecoveryService = app.getBean(NotifyDeliveryRecoveryService.class);
         callbackRecorder = app.getBean(OpenApiCallbackIntentRecorder.class);
         callbackRecoveryJob = app.getBean(OpenApiCallbackRecoveryJob.class);
         // 设备命令接缝要求设备存在（与生产同路径解析设备身份）
@@ -342,10 +348,10 @@ class Phase4PgDeliverySeamBehaviourTest extends Phase4PgSupport {
     private void seedCallbackApp(String appId, String callbackUrl) {
         String digest;
         try {
-            digest = java.util.HexFormat.of().formatHex(
-                    java.security.MessageDigest.getInstance("SHA-256")
-                            .digest(("p4-secret-" + appId).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        } catch (java.security.NoSuchAlgorithmException e) {
+            digest = HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(("p4-secret-" + appId).getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
         jdbc.update("insert into sw_openapi_app (id, create_time, update_time, deleted, tenant_id, version, app_id,"

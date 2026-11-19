@@ -1,5 +1,7 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.system.controller.AuthMenuVO;
 import com.sw.ck.system.entity.SysMenu;
@@ -27,20 +29,14 @@ import java.util.stream.Collectors;
 @Service
 public class SysMenuServiceImpl implements SysMenuService {
 
-    private final SysMenuMapper sysMenuMapper;
-    private final SysUserRoleMapper sysUserRoleMapper;
-    private final SysRoleMapper sysRoleMapper;
-    private final SysRoleMenuMapper sysRoleMenuMapper;
-
-    public SysMenuServiceImpl(SysMenuMapper sysMenuMapper,
-                              SysUserRoleMapper sysUserRoleMapper,
-                              SysRoleMapper sysRoleMapper,
-                              SysRoleMenuMapper sysRoleMenuMapper) {
-        this.sysMenuMapper = sysMenuMapper;
-        this.sysUserRoleMapper = sysUserRoleMapper;
-        this.sysRoleMapper = sysRoleMapper;
-        this.sysRoleMenuMapper = sysRoleMenuMapper;
-    }
+    @Autowired
+    private SysMenuMapper sysMenuMapper;
+    @Autowired
+    private SysUserRoleMapper sysUserRoleMapper;
+    @Autowired
+    private SysRoleMapper sysRoleMapper;
+    @Autowired
+    private SysRoleMenuMapper sysRoleMenuMapper;
 
     @Override
     public List<AuthMenuVO> getMenuTree(Long userId, boolean superAdmin) {

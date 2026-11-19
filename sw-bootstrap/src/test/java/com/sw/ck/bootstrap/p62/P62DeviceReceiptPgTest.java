@@ -1,17 +1,25 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.DeviceCommandSummary;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.job.CommandCompensationJob;
+import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
+import com.sw.ck.iot.model.ManualVerifyRequest;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.service.DeviceReceiptService;
 import com.sw.ck.iot.service.impl.DeviceReceiptServiceImpl;
 import com.sw.ck.iot.util.DeferredControlUtil;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import cn.hutool.http.HttpRequest;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.sun.net.httpserver.HttpServer;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
@@ -19,19 +27,27 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.context.WebApplicationContext;
 
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -97,32 +113,32 @@ class P62DeviceReceiptPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p62-rcpt-e2e-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-rcpt-e2e-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         // S4 受控回执通道与 IoT 发送路径
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.receipt.secret", RECEIPT_SECRET);
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-rcpt-e2e", props));
+                            new MapPropertySource("p62-rcpt-e2e", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62RcptE2eLoginContextProvider", provider);
                     // 受控真实传输对端 Provider：经真实 HTTP loopback 下发（腾讯 provider-mode 未开启）
-                    org.springframework.beans.factory.support.RootBeanDefinition controlProvider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
+                    RootBeanDefinition controlProvider =
+                            new RootBeanDefinition(
                                     LoopbackDeviceControlProvider.class);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory)
+                    ((DefaultListableBeanFactory)
                             context.getBeanFactory()).registerBeanDefinition(
                             "p62LoopbackDeviceControlProvider", controlProvider);
                 })
@@ -179,7 +195,7 @@ class P62DeviceReceiptPgTest {
         assertThat(commandIdOpt).as("命令已受理入队").isPresent();
         Long commandId = commandIdOpt.orElseThrow();
         asOperator(() -> {
-            IotDeviceCommand queued = app.getBean(com.sw.ck.iot.mapper.IotDeviceCommandMapper.class)
+            IotDeviceCommand queued = app.getBean(IotDeviceCommandMapper.class)
                     .selectById(commandId);
             deferredControlUtil.sendCommand(queued);
             return null;
@@ -204,7 +220,7 @@ class P62DeviceReceiptPgTest {
         assertThat(statusOf(commandId)).isEqualTo("UNKNOWN");
 
         // —— 迟到合法回执收敛 UNKNOWN ——
-        cn.hutool.json.JSONObject lateApplied = postReceipt(commandId, "req-1", "SUCCESS",
+        JSONObject lateApplied = postReceipt(commandId, "req-1", "SUCCESS",
                 hmac(commandId, "req-1", "SUCCESS"));
         assertThat(lateApplied.getInt("code", -1)).as("迟到合法回执可收敛").isZero();
         assertThat(lateApplied.getJSONObject("data").getStr("verdict")).isEqualTo("APPLIED");
@@ -213,7 +229,7 @@ class P62DeviceReceiptPgTest {
         assertThat(result).contains("\"source\":\"RECEIPT\"").contains("req-1");
 
         // —— 重复回执幂等 ——
-        cn.hutool.json.JSONObject duplicate = postReceipt(commandId, "req-1", "SUCCESS",
+        JSONObject duplicate = postReceipt(commandId, "req-1", "SUCCESS",
                 hmac(commandId, "req-1", "SUCCESS"));
         assertThat(duplicate.getInt("code", -1)).isZero();
         assertThat(duplicate.getJSONObject("data").getStr("verdict")).isEqualTo("DUPLICATE");
@@ -223,7 +239,7 @@ class P62DeviceReceiptPgTest {
         assertThat(receiptAudits).as("APPLIED 审计恰一条（重复不重复收敛）").isEqualTo(1L);
 
         // —— 冲突回执不覆盖已确定结果 ——
-        cn.hutool.json.JSONObject conflict = postReceipt(commandId, "req-1", "FAILED",
+        JSONObject conflict = postReceipt(commandId, "req-1", "FAILED",
                 hmac(commandId, "req-1", "FAILED"));
         assertThat(conflict.getInt("code", -1)).isZero();
         assertThat(conflict.getJSONObject("data").getStr("verdict")).isEqualTo("CONFLICT");
@@ -235,7 +251,7 @@ class P62DeviceReceiptPgTest {
 
         // —— BPM 关联回查（U07）：按流程实例回查命令摘要 ——
         var summaries = asOperator(() -> iotDeviceFacade.findByApprovalBizId(TENANT, processInstanceId))
-                .orElse(java.util.List.of());
+                .orElse(List.of());
         assertThat(summaries).hasSize(1);
         DeviceCommandSummary summary = summaries.get(0);
         assertThat(summary.commandId()).isEqualTo(commandId);
@@ -247,7 +263,7 @@ class P62DeviceReceiptPgTest {
                 "rcpt-inst-02", "P62-S4-RCPT-02"));
         Long verifyId = verifyIdOpt.orElseThrow();
         asOperator(() -> {
-            IotDeviceCommand queued = app.getBean(com.sw.ck.iot.mapper.IotDeviceCommandMapper.class)
+            IotDeviceCommand queued = app.getBean(IotDeviceCommandMapper.class)
                     .selectById(verifyId);
             deferredControlUtil.sendCommand(queued);
             return null;
@@ -258,9 +274,9 @@ class P62DeviceReceiptPgTest {
         assertThat(statusOf(verifyId)).isEqualTo("UNKNOWN");
 
         // 无权限用户拒绝（仅 iot:view 的普通视角不可改结果）
-        asUserWithPermissions(java.util.List.of("iot:view"), () -> {
+        asUserWithPermissions(List.of("iot:view"), () -> {
             assertThatThrownBy(() -> deviceReceiptService.verifyManually(verifyId,
-                    new com.sw.ck.iot.model.ManualVerifyRequest("SUCCESS", "工单 GD-001")))
+                    new ManualVerifyRequest("SUCCESS", "工单 GD-001")))
                     .isInstanceOfSatisfying(BaseException.class, e ->
                             assertThat(e.getCode()).isEqualTo(403));
             return null;
@@ -268,13 +284,13 @@ class P62DeviceReceiptPgTest {
         // 有权限但无依据拒绝（不带可信依据不得宣告成功）
         asOperator(() -> {
             assertThatThrownBy(() -> deviceReceiptService.verifyManually(verifyId,
-                    new com.sw.ck.iot.model.ManualVerifyRequest("SUCCESS", "  ")))
+                    new ManualVerifyRequest("SUCCESS", "  ")))
                     .isInstanceOf(BaseException.class);
             return null;
         });
         // 有权限 + 可信依据 → 收敛并记录依据/操作者/前后状态
         asOperator(() -> deviceReceiptService.verifyManually(verifyId,
-                new com.sw.ck.iot.model.ManualVerifyRequest("SUCCESS", "现场复核工单 GD-001，设备已开启")));
+                new ManualVerifyRequest("SUCCESS", "现场复核工单 GD-001，设备已开启")));
         assertThat(statusOf(verifyId)).isEqualTo("SUCCESS");
         String verifyResult = resultOf(verifyId);
         assertThat(verifyResult).contains("MANUAL_VERIFY").contains("现场复核工单 GD-001");
@@ -310,14 +326,14 @@ class P62DeviceReceiptPgTest {
 
         private DeviceControlResult send(String productId, String deviceName, String payload) {
             // 真实 HTTP 传输到受控对端（hutool HttpRequest；工程宪法指定业务 HTTP 工具）
-            String body = cn.hutool.http.HttpRequest.post(
+            String body = HttpRequest.post(
                             "http://127.0.0.1:" + peerPort + "/device")
                     .body("{\"productId\":\"" + productId + "\",\"deviceName\":\"" + deviceName
                             + "\",\"payload\":" + (payload == null ? "null" : payload) + "}")
                     .timeout(5000)
                     .execute()
                     .body();
-            cn.hutool.json.JSONObject json = cn.hutool.json.JSONUtil.parseObj(body);
+            JSONObject json = JSONUtil.parseObj(body);
             return DeviceControlResult.success(json.getStr("requestId"), null);
         }
     }
@@ -325,9 +341,9 @@ class P62DeviceReceiptPgTest {
     // ==================== 回执 HTTP 与签名 ====================
 
     /** 经真实 HTTP 携签名调用应用回执端点，返回统一响应包裹（code=0 成功，裁决在 data.verdict）。 */
-    private static cn.hutool.json.JSONObject postReceipt(Long commandId, String requestId,
+    private static JSONObject postReceipt(Long commandId, String requestId,
                                                          String outcome, String signature) {
-        String body = cn.hutool.http.HttpRequest.post(
+        String body = HttpRequest.post(
                         "http://127.0.0.1:" + appPort + "/api/iot/commands/receipt")
                 .header("X-Sw-Receipt-Signature", signature)
                 .body("{\"commandId\":" + commandId + ",\"requestId\":\"" + requestId
@@ -336,14 +352,14 @@ class P62DeviceReceiptPgTest {
                 .timeout(5000)
                 .execute()
                 .body();
-        return cn.hutool.json.JSONUtil.parseObj(body);
+        return JSONUtil.parseObj(body);
     }
 
     private static String hmac(Long commandId, String requestId, String outcome) {
         String canonical = commandId + "|" + requestId + "|" + outcome + "|ok|" + TENANT;
         try {
-            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-            mac.init(new javax.crypto.spec.SecretKeySpec(
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(
                     RECEIPT_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             return String.format("%064x", new BigInteger(1,
                     mac.doFinal(canonical.getBytes(StandardCharsets.UTF_8))));
@@ -366,16 +382,16 @@ class P62DeviceReceiptPgTest {
 
     private static <T> T asOperator(Callable<T> action) {
         return asUserWithPermissions(
-                java.util.List.of("form:action:invoke", "iot:command:verify", "iot:device:manage"),
+                List.of("form:action:invoke", "iot:command:verify", "iot:device:manage"),
                 action);
     }
 
-    private static <T> T asUserWithPermissions(java.util.List<String> permissions, Callable<T> action) {
+    private static <T> T asUserWithPermissions(List<String> permissions, Callable<T> action) {
         LoginUser previous = LoginUserHolder.get();
         LoginUser user = new LoginUser();
         user.setUserId(USER);
         user.setTenantId(TENANT);
-        user.setPermissions(new java.util.ArrayList<>(permissions));
+        user.setPermissions(new ArrayList<>(permissions));
         try {
             LoginUserHolder.set(user);
             return action.call();
@@ -392,14 +408,4 @@ class P62DeviceReceiptPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

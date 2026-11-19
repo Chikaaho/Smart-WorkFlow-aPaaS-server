@@ -1,9 +1,13 @@
 package com.sw.ck.agent.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * Agent 图执行节点明细（M07 Step12 图执行历史持久化）—— 对应
@@ -57,10 +61,10 @@ public class AgentGraphExecutionNode extends BaseEntity {
     private String outputText;
 
     /** 节点开始时间（出队时点） */
-    private java.time.LocalDateTime startTime;
+    private LocalDateTime startTime;
 
     /** 节点结束时间（本步执行/路由完成时点） */
-    private java.time.LocalDateTime endTime;
+    private LocalDateTime endTime;
 
     /** 节点执行状态：SUCCESS / FAILED */
     private String status;

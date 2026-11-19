@@ -1,12 +1,15 @@
 package com.sw.ck.bpm.process.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
-import com.sw.ck.bpm.process.dto.CommandStatusRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
+import com.sw.ck.bpm.process.vo.CommandStatusRespVO;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
-import com.sw.ck.bpm.process.entity.CommandStatusEnum;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.service.BpmCommandService;
 import com.sw.ck.bpm.process.service.CommandAcceptService;
 import com.sw.ck.bpm.process.service.CommandSyncWaiter;
@@ -15,8 +18,11 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.security.support.PermissionService;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,7 +31,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
 /**
  * 流程业务命令通道控制器。
  * <p>
@@ -38,24 +43,17 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/workflow/commands")
+@Log4j2
 public class BpmCommandController {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmCommandController.class);
-
-    private final CommandAcceptService commandAcceptService;
-    private final BpmCommandService bpmCommandService;
-    private final CommandSyncWaiter syncWaiter;
-    private final com.sw.ck.security.support.PermissionService permissionService;
-
-    public BpmCommandController(CommandAcceptService commandAcceptService,
-                                BpmCommandService bpmCommandService,
-                                CommandSyncWaiter syncWaiter,
-                                com.sw.ck.security.support.PermissionService permissionService) {
-        this.commandAcceptService = commandAcceptService;
-        this.bpmCommandService = bpmCommandService;
-        this.syncWaiter = syncWaiter;
-        this.permissionService = permissionService;
-    }
+    @Autowired
+    private CommandAcceptService commandAcceptService;
+    @Autowired
+    private BpmCommandService bpmCommandService;
+    @Autowired
+    private CommandSyncWaiter syncWaiter;
+    @Autowired
+    private PermissionService permissionService;
 
     /**
      * 受理审批动作（channel=NORMAL 异步 / P0 同步优先）。
@@ -65,7 +63,7 @@ public class BpmCommandController {
      * </p>
      */
     @PostMapping("/tasks/{taskId}/{action}")
-    public R<CommandAcceptRespDTO> acceptTaskAction(@PathVariable String taskId,
+    public R<CommandAcceptRespVO> acceptTaskAction(@PathVariable String taskId,
                                                     @PathVariable String action,
                                                     @RequestBody(required = false) ApprovalActionRequest request,
                                                     @RequestParam(required = false, defaultValue = "NORMAL") String channel) {
@@ -73,7 +71,7 @@ public class BpmCommandController {
         if ("P0".equalsIgnoreCase(channel)) {
             return R.ok(acceptP0Sync(taskId, approvalAction, request));
         }
-        if (!"NORMAL".equalsIgnoreCase(channel)) {
+        if (!CommandChannelEnum.NORMAL.getCode().equalsIgnoreCase(channel)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "未知通道: " + channel);
         }
         return R.ok(commandAcceptService.acceptTaskAction(
@@ -81,7 +79,7 @@ public class BpmCommandController {
     }
 
     /** P0 同步优先：专用权限 + 受理 + 有界等待单次命令结果。 */
-    private CommandAcceptRespDTO acceptP0Sync(String taskId, ApprovalAction action,
+    private CommandAcceptRespVO acceptP0Sync(String taskId, ApprovalAction action,
                                               ApprovalActionRequest request) {
         // 经既有 RBAC 表达式入口判定（superAdmin 短路语义与全局一致）；
         // 权限码 workflow:p0:dispatch 仅显式授权的紧急调用方角色持有。
@@ -92,10 +90,10 @@ public class BpmCommandController {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(),
                     "缺少 P0 调用专用权限: " + P0_PERMISSION);
         }
-        CommandAcceptRespDTO accepted = commandAcceptService.acceptTaskAction(
+        CommandAcceptRespVO accepted = commandAcceptService.acceptTaskAction(
                 taskId, action, request, CommandChannelEnum.P0);
         CommandSyncWaiter.WaitResult wait = syncWaiter.waitTerminal(accepted.getCommandId());
-        CommandAcceptRespDTO resp = new CommandAcceptRespDTO();
+        CommandAcceptRespVO resp = new CommandAcceptRespVO();
         resp.setCommandId(accepted.getCommandId());
         resp.setCommandKey(accepted.getCommandKey());
         resp.setCommandType(accepted.getCommandType());
@@ -104,7 +102,7 @@ public class BpmCommandController {
         resp.setStatus(switch (wait.outcome()) {
             case COMPLETED -> CommandStatusEnum.COMPLETED.getCode();
             case FAILED -> CommandStatusEnum.FAILED.getCode();
-            case TIMEOUT -> CommandAcceptRespDTO.STATUS_ACCEPTED;
+            case TIMEOUT -> CommandAcceptRespVO.STATUS_ACCEPTED;
         });
         return resp;
     }
@@ -116,7 +114,7 @@ public class BpmCommandController {
      * 命令状态回查（仅受理人本人可查）。
      */
     @GetMapping("/{commandId}")
-    public R<CommandStatusRespDTO> status(@PathVariable Long commandId) {
+    public R<CommandStatusRespVO> status(@PathVariable Long commandId) {
         LoginUser loginUser = LoginUserHolder.get();
         BpmCommand command = bpmCommandService.getById(commandId);
         if (command == null) {
@@ -128,7 +126,7 @@ public class BpmCommandController {
                     commandId, command.getInitiatorId(), loginUser.getUserId());
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "无权查看该命令");
         }
-        CommandStatusRespDTO dto = new CommandStatusRespDTO();
+        CommandStatusRespVO dto = new CommandStatusRespVO();
         dto.setCommandId(command.getId());
         dto.setCommandType(command.getCommandType());
         dto.setChannel(command.getChannel());
@@ -148,7 +146,7 @@ public class BpmCommandController {
      * 不新增持久化结构——命令行本身即权威记录；恢复链 :R<n> 行同样按键前缀命中。
      */
     @GetMapping("/tasks/{taskId}/latest")
-    public R<CommandStatusRespDTO> latestForTask(@PathVariable String taskId) {
+    public R<CommandStatusRespVO> latestForTask(@PathVariable String taskId) {
         LoginUser loginUser = LoginUserHolder.get();
         BpmCommand command = bpmCommandService.lambdaQuery()
                 .eq(BpmCommand::getTenantId, loginUser.getTenantId())
@@ -162,7 +160,7 @@ public class BpmCommandController {
         if (command == null) {
             return R.ok(null);
         }
-        CommandStatusRespDTO dto = new CommandStatusRespDTO();
+        CommandStatusRespVO dto = new CommandStatusRespVO();
         dto.setCommandId(command.getId());
         dto.setCommandType(command.getCommandType());
         dto.setChannel(command.getChannel());
@@ -182,15 +180,15 @@ public class BpmCommandController {
      * 受理/实例）。父命令内部 COMPLETED 不因此改写；缺 recordId 或子命令不存在
      * 时返回 null——调用方据 "flowStart != STARTED" 不得解读为业务发起成功。
      */
-    private CommandStatusRespDTO.FlowStartView resolveFlowStartView(BpmCommand command) {
-        if (!"DRAFT_SUBMIT".equals(command.getCommandType())
-                || !"COMPLETED".equals(command.getStatus())
+    private CommandStatusRespVO.FlowStartView resolveFlowStartView(BpmCommand command) {
+        if (!CommandTypeEnum.DRAFT_SUBMIT.getCode().equals(command.getCommandType())
+                || !CommandStatusEnum.COMPLETED.getCode().equals(command.getStatus())
                 || command.getResult() == null) {
             return null;
         }
         String recordId;
         try {
-            recordId = new com.fasterxml.jackson.databind.ObjectMapper()
+            recordId = new ObjectMapper()
                     .readTree(command.getResult()).path("recordId").asText(null);
         } catch (Exception e) {
             log.warn("启动结果关联解析失败: commandId={}", command.getId());
@@ -206,7 +204,7 @@ public class BpmCommandController {
         if (child == null) {
             return null;
         }
-        CommandStatusRespDTO.FlowStartView view = new CommandStatusRespDTO.FlowStartView();
+        CommandStatusRespVO.FlowStartView view = new CommandStatusRespVO.FlowStartView();
         view.setCommandId(child.getId());
         view.setStatus(child.getStatus());
         view.setResult(child.getResult());
@@ -218,7 +216,7 @@ public class BpmCommandController {
 
     private ApprovalAction resolveAction(String action) {
         return switch (action.toUpperCase()) {
-            case "COMPLETE", "APPROVE", "APPROVAL" -> ApprovalAction.APPROVE;
+            case "COMPLETE", "APPROVE", GraphElement.TYPE_APPROVAL -> ApprovalAction.APPROVE;
             case "REJECT" -> ApprovalAction.REJECT;
             // 单任务不通过意见（会签负向票等）：区别于 REJECT 流程级终态（I3 §4.4）
             case "DISAPPROVE" -> ApprovalAction.DISAPPROVE;

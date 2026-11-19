@@ -2,6 +2,7 @@ package com.sw.ck.iot.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotScript;
 import com.sw.ck.iot.entity.IotScriptExec;
@@ -10,8 +11,8 @@ import com.sw.ck.iot.mapper.IotScriptMapper;
 import com.sw.ck.iot.mapper.IotScriptVersionMapper;
 import com.sw.ck.iot.script.ScriptEngineService;
 import com.sw.ck.iot.script.ScriptRunResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -19,7 +20,10 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
 /**
  * 受控脚本生命周期服务：草稿、语法/安全校验、试运行、发布、版本留痕、停用。
  * <p>
@@ -28,27 +32,18 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Log4j2
 public class IotScriptService {
 
-    private static final Logger log = LoggerFactory.getLogger(IotScriptService.class);
-
-    private final IotScriptMapper scriptMapper;
-    private final IotScriptVersionMapper versionMapper;
-    private final ScriptEngineService engineService;
+    @Autowired
+    private IotScriptMapper scriptMapper;
+    @Autowired
+    private IotScriptVersionMapper versionMapper;
+    @Autowired
+    @Lazy
+    private ScriptEngineService engineService;
+    @Autowired
     private IotAuditService auditService;
-
-    public IotScriptService(IotScriptMapper scriptMapper,
-                            IotScriptVersionMapper versionMapper,
-                            @Lazy ScriptEngineService engineService) {
-        this.scriptMapper = scriptMapper;
-        this.versionMapper = versionMapper;
-        this.engineService = engineService;
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public void setAuditService(IotAuditService auditService) {
-        this.auditService = auditService;
-    }
 
     public List<IotScript> list() {
         return scriptMapper.selectList(new LambdaQueryWrapper<>());
@@ -86,7 +81,7 @@ public class IotScriptService {
         script.setId(null);
         script.setCurrentVersion(1);
         script.setPublishedVersion(null);
-        script.setStatus("DRAFT");
+        script.setStatus(IotPublishStatusEnum.DRAFT.getCode());
         scriptMapper.insert(script);
         saveDraftVersion(script, 1, sourceCode);
         return script;
@@ -159,7 +154,7 @@ public class IotScriptService {
         if (auditService != null) {
             auditService.recordAction(script.getTenantId(), null, "system:iot-script-publish",
                     "SCRIPT_PUBLISH", "SCRIPT", String.valueOf(id), "PUBLISHED",
-                    java.util.UUID.randomUUID().toString(),
+                    UUID.randomUUID().toString(),
                     "scriptVersion=" + script.getCurrentVersion());
         }
         return scriptMapper.selectById(id);
@@ -184,7 +179,7 @@ public class IotScriptService {
         }
         List<IotScript> scripts = scriptMapper.selectList(new LambdaQueryWrapper<IotScript>()
                 .eq(IotScript::getTriggerType, "MESSAGE")
-                .eq(IotScript::getStatus, "PUBLISHED"));
+                .eq(IotScript::getStatus, IotPublishStatusEnum.PUBLISHED.getCode()));
         for (IotScript script : scripts) {
             if (!matchesBinding(script, device, topic)) {
                 continue;

@@ -1,16 +1,23 @@
 package com.sw.ck.bootstrap.p21;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.config.GlobalConfig;
+import com.baomidou.mybatisplus.core.config.GlobalConfig.DbConfig;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor;
 import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor;
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
+
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
+import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.iot.entity.IotConnection;
 import com.sw.ck.iot.mapper.IotConnectionMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterAll;
@@ -26,6 +33,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.net.Socket;
+import java.time.LocalDateTime;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -88,13 +98,13 @@ class H7TenantIsolationIntegrationTest {
                 }
 
                 @Override
-                public com.sw.ck.common.datascope.DataScopeType getDataScopeType() {
-                    return com.sw.ck.common.datascope.DataScopeType.SELF;
+                public DataScopeType getDataScopeType() {
+                    return DataScopeType.SELF;
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
-                    return java.util.Set.of();
+                public Set<Long> getCustomDeptIds() {
+                    return Set.of();
                 }
 
                 @Override
@@ -117,14 +127,14 @@ class H7TenantIsolationIntegrationTest {
             interceptor.addInnerInterceptor(new TenantLineInnerInterceptor(
                     new CommonTenantLineHandler(tenantProperties, loginContextProvider)));
 
-            com.baomidou.mybatisplus.core.MybatisConfiguration configuration =
-                    new com.baomidou.mybatisplus.core.MybatisConfiguration();
+            MybatisConfiguration configuration =
+                    new MybatisConfiguration();
             configuration.setMapUnderscoreToCamelCase(true);
 
-            com.baomidou.mybatisplus.core.config.GlobalConfig globalConfig =
-                    new com.baomidou.mybatisplus.core.config.GlobalConfig();
-            com.baomidou.mybatisplus.core.config.GlobalConfig.DbConfig dbConfig =
-                    new com.baomidou.mybatisplus.core.config.GlobalConfig.DbConfig();
+            GlobalConfig globalConfig =
+                    new GlobalConfig();
+            DbConfig dbConfig =
+                    new DbConfig();
             dbConfig.setLogicDeleteField("deleted");
             dbConfig.setLogicDeleteValue("1");
             dbConfig.setLogicNotDeleteValue("0");
@@ -153,8 +163,8 @@ class H7TenantIsolationIntegrationTest {
     private IotConnection newConn(Long tenantId, String code) {
         IotConnection conn = new IotConnection();
         conn.setCode(code);
-        conn.setCreateTime(java.time.LocalDateTime.now());
-        conn.setUpdateTime(java.time.LocalDateTime.now());
+        conn.setCreateTime(LocalDateTime.now());
+        conn.setUpdateTime(LocalDateTime.now());
         conn.setDeleted(0);
         conn.setVersion(0L);
         conn.setName("H7 " + code);
@@ -167,7 +177,7 @@ class H7TenantIsolationIntegrationTest {
     }
 
     @BeforeAll
-    static void cleanupPreviousRuns(@org.springframework.beans.factory.annotation.Autowired DataSource dataSource) {
+    static void cleanupPreviousRuns(@Autowired DataSource dataSource) {
         // 本测试依赖本机常驻 PostgreSQL（localhost:5432）。环境不可用时按外部环境事实
         // 跳过（assumeTrue），等强度跨租户行为由 I4TenantIsolationPostgresTest（zonky
         // 内嵌 PG + 全链迁移 + TenantLine 拦截器四象限）持续承载，不降低隔离验证强度。
@@ -183,7 +193,7 @@ class H7TenantIsolationIntegrationTest {
     }
 
     private static boolean postgresReachable() {
-        try (var socket = new java.net.Socket("localhost", 5432)) {
+        try (var socket = new Socket("localhost", 5432)) {
             return true;
         } catch (Exception e) {
             return false;
@@ -238,13 +248,13 @@ class H7TenantIsolationIntegrationTest {
             // 各自列表只见自身
             LoginUserHolder.set(context(T0));
             List<IotConnection> t0List = connectionMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotConnection>()
+                    new LambdaQueryWrapper<IotConnection>()
                             .eq(IotConnection::getCode, CODE_T0));
             assertEquals(1, t0List.size(), "t0 列表应见自身 h7 对象");
             System.out.println("{\"kind\":\"list\",\"requestTenant\":0,\"codes\":[\"" + t0List.get(0).getCode() + "\"],\"count\":" + t0List.size() + "}");
             LoginUserHolder.set(context(T88));
             List<IotConnection> t88List = connectionMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotConnection>()
+                    new LambdaQueryWrapper<IotConnection>()
                             .eq(IotConnection::getCode, CODE_T88));
             assertEquals(1, t88List.size(), "t88 列表应见自身 h7 对象");
             System.out.println("{\"kind\":\"list\",\"requestTenant\":88,\"codes\":[\"" + t88List.get(0).getCode() + "\"],\"count\":" + t88List.size() + "}");
@@ -261,10 +271,10 @@ class H7TenantIsolationIntegrationTest {
         } finally {
             // 清理本轮对象（各租户上下文删各自对象）
             LoginUserHolder.set(context(T0));
-            connectionMapper.delete(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotConnection>()
+            connectionMapper.delete(new LambdaQueryWrapper<IotConnection>()
                     .eq(IotConnection::getCode, CODE_T0));
             LoginUserHolder.set(context(T88));
-            connectionMapper.delete(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IotConnection>()
+            connectionMapper.delete(new LambdaQueryWrapper<IotConnection>()
                     .eq(IotConnection::getCode, CODE_T88));
             LoginUserHolder.clear();
         }

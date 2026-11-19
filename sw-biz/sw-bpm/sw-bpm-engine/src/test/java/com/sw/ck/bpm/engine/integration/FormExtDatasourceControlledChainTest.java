@@ -1,5 +1,6 @@
 package com.sw.ck.bpm.engine.integration;
 
+import com.sw.ck.bpm.engine.adapter.FormExtDatasourceQueryAdapter;
 import com.sw.ck.bpm.engine.config.ExternalDatasourceProperties;
 import com.sw.ck.bpm.engine.datasource.ExternalDatasourceManager;
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
@@ -10,6 +11,7 @@ import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.form.api.dto.ExtQueryResult;
 import com.sw.ck.form.api.exception.ExternalDatasourceResultLimitExceededException;
 import com.sw.ck.form.api.port.ExtDatasourceQueryPort;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -68,7 +70,7 @@ class FormExtDatasourceControlledChainTest {
         }
         poolManager = new ExternalDatasourceManager(cipher, properties(1000));
         sqlExecutor = new SqlExecutor(datasourceService, poolManager, auditService, properties(1000));
-        adapter = new com.sw.ck.bpm.engine.adapter.FormExtDatasourceQueryAdapter(sqlExecutor);
+        adapter = new FormExtDatasourceQueryAdapter(sqlExecutor);
     }
 
     @AfterEach
@@ -178,7 +180,7 @@ class FormExtDatasourceControlledChainTest {
         SqlExecutor limitExecutor = new SqlExecutor(datasourceService, poolManager, auditService,
                 properties(1));
         ExtDatasourceQueryPort limitAdapter =
-                new com.sw.ck.bpm.engine.adapter.FormExtDatasourceQueryAdapter(limitExecutor);
+                new FormExtDatasourceQueryAdapter(limitExecutor);
 
         assertThatThrownBy(() -> limitAdapter.executeQuery(
                 9L, "SELECT id AS \"value\", name AS \"display\" FROM ext_obj", 42L, "operator"))

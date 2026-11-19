@@ -1,13 +1,18 @@
 package com.sw.ck.bpm.process.config;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import com.sw.ck.bpm.api.participant.ConsensusSettlementPort;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.process.service.ApprovalLifecycleService;
 import com.sw.ck.bpm.process.service.NodeFunctionService;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -31,7 +36,7 @@ public class BpmLifecyclePortConfiguration {
         return new LifecycleTaskEntryPort() {
             @Override
             public Optional<String> onTaskCreate(Long tenantId, String processInstanceId, String nodeKey,
-                                                 String taskId, java.util.List<String> resolvedUsers,
+                                                 String taskId, List<String> resolvedUsers,
                                                  String nodeConfig) {
                 ApprovalLifecycleService service = lifecycleService.getIfAvailable();
                 if (service == null) {
@@ -43,38 +48,38 @@ public class BpmLifecyclePortConfiguration {
             }
 
             @Override
-            public Optional<java.util.List<String>> resolveParticipantsByFunction(
+            public Optional<List<String>> resolveParticipantsByFunction(
                     Long tenantId, String processInstanceId, String nodeKey, String taskId,
-                    java.util.Map<String, Object> variables, String nodeConfig) {
+                    Map<String, Object> variables, String nodeConfig) {
                 NodeFunctionService functions = nodeFunctionService.getIfAvailable();
                 if (functions == null) {
                     // 函数服务不可用：走默认策略解析（原 null 返回路径）
                     return Optional.empty();
                 }
-                java.util.Map<String, Object> config = parse(configOf(nodeConfig));
+                Map<String, Object> config = parse(configOf(nodeConfig));
                 return functions.resolveParticipants(tenantId, processInstanceId, nodeKey,
                         taskId, config, variables);
             }
 
             private Object configOf(String nodeConfig) {
                 if (nodeConfig == null || nodeConfig.isBlank()) {
-                    return java.util.Map.of();
+                    return Map.of();
                 }
                 try {
-                    return new com.fasterxml.jackson.databind.ObjectMapper()
+                    return new ObjectMapper()
                             .readTree(nodeConfig);
                 } catch (Exception e) {
-                    return java.util.Map.of();
+                    return Map.of();
                 }
             }
 
-            private java.util.Map<String, Object> parse(Object raw) {
+            private Map<String, Object> parse(Object raw) {
                 if (raw instanceof Map<?, ?> map) {
-                    java.util.Map<String, Object> copy = new java.util.LinkedHashMap<>();
+                    Map<String, Object> copy = new LinkedHashMap<>();
                     map.forEach((k, v) -> copy.put(String.valueOf(k), v));
                     return copy;
                 }
-                return java.util.Map.of();
+                return Map.of();
             }
         };
     }
@@ -110,9 +115,9 @@ public class BpmLifecyclePortConfiguration {
     }
 
     @Bean
-    public com.sw.ck.bpm.api.participant.ConsensusSettlementPort consensusSettlementPort(
+    public ConsensusSettlementPort consensusSettlementPort(
             ObjectProvider<ApprovalLifecycleService> lifecycleService) {
-        return new com.sw.ck.bpm.api.participant.ConsensusSettlementPort() {
+        return new ConsensusSettlementPort() {
             @Override
             public Optional<MutationOutcome> onNegativeSettlement(String tenantId, String processInstanceId,
                                                                   String nodeKey, String reason) {

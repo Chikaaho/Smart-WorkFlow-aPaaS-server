@@ -1,7 +1,7 @@
 package com.sw.ck.agent.service;
 
 import com.sw.ck.agent.dto.AgentOrchestrationRunReqDTO;
-import com.sw.ck.agent.dto.AgentOrchestrationRunRespDTO;
+import com.sw.ck.agent.vo.AgentOrchestrationRunRespVO;
 
 /**
  * 编排执行引擎 Service（M07 Step2）。
@@ -19,5 +19,5 @@ public interface AgentOrchestrationService {
      * @param req 配置 id + 用户输入（Service 层校验非空）
      * @return success + output / errorMessage + latencyMs
      */
-    AgentOrchestrationRunRespDTO run(AgentOrchestrationRunReqDTO req);
+    AgentOrchestrationRunRespVO run(AgentOrchestrationRunReqDTO req);
 }

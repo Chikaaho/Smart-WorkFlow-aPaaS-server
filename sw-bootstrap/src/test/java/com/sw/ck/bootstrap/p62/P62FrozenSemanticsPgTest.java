@@ -1,6 +1,7 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -10,7 +11,7 @@ import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.TxnBatchService;
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.form.txn.model.TxnActionConfig;
@@ -18,22 +19,42 @@ import com.sw.ck.form.txn.model.TxnActionSaveRequest;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.queue.CommandDispatcher;
+import com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.form.api.port.FormTxnActionPort;
+import com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand;
+import com.sw.ck.form.api.port.FormTxnActionPort.TxnActionResult;
+import com.sw.ck.form.txn.model.TxnInvokeRequest;
+import com.sw.ck.form.txn.service.TxnActionExecutor;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,8 +89,8 @@ class P62FrozenSemanticsPgTest {
     private TxnActionService actionService;
     private TxnBatchService batchService;
     private BpmProcessDefService processDefService;
-    private com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue queue;
-    private com.sw.ck.bpm.process.queue.CommandDispatcher dispatcher;
+    private PersistentBpmCommandQueue queue;
+    private CommandDispatcher dispatcher;
 
     @BeforeAll
     void boot() throws Exception {
@@ -83,24 +104,24 @@ class P62FrozenSemanticsPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p62-frozen-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-frozen-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.txn-batch.enabled", "true");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-frozen", props));
+                            new MapPropertySource("p62-frozen", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62FrozenLoginContextProvider", provider);
                 })
                 .run();
@@ -110,8 +131,8 @@ class P62FrozenSemanticsPgTest {
         actionService = app.getBean(TxnActionService.class);
         batchService = app.getBean(TxnBatchService.class);
         processDefService = app.getBean(BpmProcessDefService.class);
-        queue = app.getBean(com.sw.ck.bpm.process.queue.PersistentBpmCommandQueue.class);
-        dispatcher = app.getBean(com.sw.ck.bpm.process.queue.CommandDispatcher.class);
+        queue = app.getBean(PersistentBpmCommandQueue.class);
+        dispatcher = app.getBean(CommandDispatcher.class);
 
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'frozen-operator', 'seed-not-a-login-secret', '冻结演练员', ?, 0) "
@@ -119,7 +140,7 @@ class P62FrozenSemanticsPgTest {
         jdbc.update("INSERT INTO sys_user_role (id, tenant_id, user_id, role_id) VALUES (92501, ?, ?, 2) "
                 + "ON CONFLICT (id) DO NOTHING", TENANT, USER);
         asOperator(() -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "冻结演练库存", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "冻结演练库存", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return null;
@@ -193,10 +214,10 @@ class P62FrozenSemanticsPgTest {
         String newRecord = seedRecord("FRZ-DIS-NEW", "10");
         boolean newCallRejected = false;
         try {
-            asOperator(() -> app.getBean(com.sw.ck.form.txn.service.TxnActionExecutor.class)
+            asOperator(() -> app.getBean(TxnActionExecutor.class)
                     .invoke(actionId, invokeReq(newRecord, "1")));
-            org.junit.jupiter.api.Assertions.fail("停用后新调用应被拒绝");
-        } catch (com.sw.ck.common.exception.BaseException expected) {
+            Assertions.fail("停用后新调用应被拒绝");
+        } catch (BaseException expected) {
             newCallRejected = true;
         }
         assertThat(newCallRejected).as("停用对未冻结新调用生效").isTrue();
@@ -223,7 +244,7 @@ class P62FrozenSemanticsPgTest {
             ProcessGraph graph = ProcessGraph.builder()
                     .processKey(def.getProcessKey()).name("冻结流程轻流程")
                     .formKey(FORM_KEY).version(1).elements(elements).build();
-            String json = app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+            String json = app.getBean(ObjectMapper.class)
                     .writeValueAsString(graph);
             processDefService.saveDraftGraph(def.getId(), json);
             processDefService.publish(def.getId());
@@ -245,15 +266,15 @@ class P62FrozenSemanticsPgTest {
         payload.put("recordId", recordId);
         payload.put("submitter", String.valueOf(USER));
         CommandEnvelope envelope = new CommandEnvelope();
-        envelope.setCommandType(com.sw.ck.bpm.process.entity.CommandTypeEnum.FLOW_START);
+        envelope.setCommandType(CommandTypeEnum.FLOW_START);
         envelope.setChannel(CommandChannelEnum.NORMAL);
         envelope.setCommandKey("FLOW_START:g3b-" + recordId);
         envelope.setTenantId(TENANT);
         envelope.setInitiatorId(USER);
-        envelope.setPayload(app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class)
+        envelope.setPayload(app.getBean(ObjectMapper.class)
                 .writeValueAsString(payload));
         TransactionTemplate tx = new TransactionTemplate(
-                app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+                app.getBean(PlatformTransactionManager.class));
         Long commandId = asOperator(() -> tx.execute(status -> queue.enqueue(envelope)));
         envelope.setCommandId(commandId);
 
@@ -287,13 +308,13 @@ class P62FrozenSemanticsPgTest {
         BigDecimal reservedAfterFirst = reservedOf(recordId);
 
         // 新事务（新连接）同幂等键重放
-        var port = app.getBean(com.sw.ck.form.api.port.FormTxnActionPort.class);
+        var port = app.getBean(FormTxnActionPort.class);
         var executor = new TransactionTemplate(
-                app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+                app.getBean(PlatformTransactionManager.class));
         // 跨会话回查请求与原受理同形状（含冻结版本，请求指纹一致才会重放而非冲突）
-        com.sw.ck.form.api.port.FormTxnActionPort.TxnActionResult replay = asOperator(
+        TxnActionResult replay = asOperator(
                 () -> executor.execute(status ->
-                        port.invoke(new com.sw.ck.form.api.port.FormTxnActionPort.TxnActionCommand(
+                        port.invoke(new TxnActionCommand(
                                 actionId, recordId, "2", "BATCH:frozen-replay-batch:replay-item",
                                 null, null, 1)))).orElseThrow();
         assertThat(replay.status()).isEqualTo("SUCCEEDED");
@@ -306,11 +327,11 @@ class P62FrozenSemanticsPgTest {
 
     // ==================== 辅助 ====================
 
-    private com.sw.ck.form.txn.model.TxnInvokeRequest invokeReq(String recordId, String qty) {
-        var req = new com.sw.ck.form.txn.model.TxnInvokeRequest();
+    private TxnInvokeRequest invokeReq(String recordId, String qty) {
+        var req = new TxnInvokeRequest();
         req.setRecordId(recordId);
         req.setQuantity(qty);
-        req.setInvocationKey("DIRECT-" + java.util.UUID.randomUUID());
+        req.setInvocationKey("DIRECT-" + UUID.randomUUID());
         return req;
     }
 
@@ -468,7 +489,7 @@ class P62FrozenSemanticsPgTest {
         LoginUser user = new LoginUser();
         user.setUserId(USER);
         user.setTenantId(TENANT);
-        user.setPermissions(new java.util.ArrayList<>(List.of(
+        user.setPermissions(new ArrayList<>(List.of(
                 "form:action:invoke", "form:action:manage", "form:action:publish")));
         try {
             LoginUserHolder.set(user);
@@ -486,14 +507,4 @@ class P62FrozenSemanticsPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

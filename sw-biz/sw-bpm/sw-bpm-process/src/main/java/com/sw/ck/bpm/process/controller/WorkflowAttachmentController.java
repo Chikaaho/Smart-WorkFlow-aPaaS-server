@@ -1,8 +1,12 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.bpm.process.vo.AttachmentUploadResultVO;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.CopyRecord;
@@ -18,8 +22,7 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.storage.api.StorageFacade;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.storage.api.StorageUploadResult;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -32,11 +35,14 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单附件/图片端点（v0.0.2 OA，P2 表单子集）。
  * <p>
@@ -48,50 +54,42 @@ import java.util.regex.Pattern;
  */
 @RestController
 @RequestMapping("/workflow/attachments")
+@Log4j2
 public class WorkflowAttachmentController {
-
-    private static final Logger log = LoggerFactory.getLogger(WorkflowAttachmentController.class);
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     /** 意见数据里附件字段的键名口径（与前端展示口径一致）。 */
     private static final Pattern OPINION_ATTACHMENT_KEY =
             Pattern.compile("^(attachments?|files?|附件|附录)", Pattern.CASE_INSENSITIVE);
 
-    private final StorageFacade storageFacade;
-    private final ApprovalActionRecordMapper approvalActionRecordMapper;
-    private final FormDefinitionService formDefinitionService;
-    private final BpmInstanceService bpmInstanceService;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final CopyRecordMapper copyRecordMapper;
-
-    public WorkflowAttachmentController(StorageFacade storageFacade,
-                                        ApprovalActionRecordMapper approvalActionRecordMapper,
-                                        FormDefinitionService formDefinitionService,
-                                        BpmInstanceService bpmInstanceService,
-                                        BpmTaskFacade bpmTaskFacade,
-                                        CopyRecordMapper copyRecordMapper) {
-        this.storageFacade = storageFacade;
-        this.approvalActionRecordMapper = approvalActionRecordMapper;
-        this.formDefinitionService = formDefinitionService;
-        this.bpmInstanceService = bpmInstanceService;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.copyRecordMapper = copyRecordMapper;
-    }
+    @Autowired
+    private StorageFacade storageFacade;
+    @Autowired
+    private ApprovalActionRecordMapper approvalActionRecordMapper;
+    @Autowired
+    private FormDefinitionService formDefinitionService;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private CopyRecordMapper copyRecordMapper;
 
     /** 上传附件/图片（登录用户），返回 storageKey 供表单字段关联。 */
     @PostMapping("/upload")
-    public R<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) throws IOException {
+    public R<AttachmentUploadResultVO> upload(@RequestParam("file") MultipartFile file) throws IOException {
         if (file == null || file.isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "上传文件不能为空");
         }
         // upload 当前契约恒 present（上传失败抛异常，不以上空表达失败）
-        StorageUploadResult result = storageFacade.upload(file.getInputStream(),
+        StorageUploadResult uploadResult = storageFacade.upload(file.getInputStream(),
                         file.getOriginalFilename(), file.getContentType())
                 .orElseThrow(() -> new IllegalStateException("文件上传未返回结果"));
-        return R.ok(Map.of(
-                "storageKey", result.getStorageKey(),
-                "storageName", result.getStorageName() == null ? "" : result.getStorageName(),
-                "fileSize", result.getFileSize() == null ? 0L : result.getFileSize()));
+        AttachmentUploadResultVO result = new AttachmentUploadResultVO();
+        result.setStorageKey(uploadResult.getStorageKey());
+        result.setStorageName(uploadResult.getStorageName() == null ? "" : uploadResult.getStorageName());
+        result.setFileSize(uploadResult.getFileSize() == null ? 0L : uploadResult.getFileSize());
+        return R.ok(result);
     }
 
     /**
@@ -135,7 +133,7 @@ public class WorkflowAttachmentController {
         String fileName = (name == null || name.isBlank()) ? storageKey : name;
         return ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename*=UTF-8''"
-                        + java.net.URLEncoder.encode(fileName, java.nio.charset.StandardCharsets.UTF_8))
+                        + URLEncoder.encode(fileName, StandardCharsets.UTF_8))
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .body(new InputStreamResource(stream));
     }
@@ -184,7 +182,7 @@ public class WorkflowAttachmentController {
         String fileName = (name == null || name.isBlank()) ? storageKey : name;
         return ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename*=UTF-8''"
-                        + java.net.URLEncoder.encode(fileName, java.nio.charset.StandardCharsets.UTF_8))
+                        + URLEncoder.encode(fileName, StandardCharsets.UTF_8))
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .body(new InputStreamResource(stream));
     }

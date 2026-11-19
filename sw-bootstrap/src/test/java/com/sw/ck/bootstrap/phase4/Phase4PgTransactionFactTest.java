@@ -1,8 +1,13 @@
 package com.sw.ck.bootstrap.phase4;
 
+import com.sw.ck.bpm.api.event.BpmDeviceCommandEvent;
+import com.sw.ck.common.event.DomainEventPublisher;
+
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.task.api.Task;
+import org.flowable.task.service.delegate.DelegateTask;
+import org.flowable.task.service.delegate.TaskListener;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -40,7 +45,7 @@ class Phase4PgTransactionFactTest extends Phase4PgSupport {
     private static final AtomicInteger CALLBACKS = new AtomicInteger();
     private static final AtomicInteger CALLBACKS_IN_TRANSACTION = new AtomicInteger();
 
-    private com.sw.ck.common.event.DomainEventPublisher eventPublisher;
+    private DomainEventPublisher eventPublisher;
     private RuntimeService runtimeService;
     private TaskService taskService;
 
@@ -51,22 +56,22 @@ class Phase4PgTransactionFactTest extends Phase4PgSupport {
      * must-deliver 事件（审批设备命令），由生产用的同事务意图记录器落持久意图。
      * 于是"回调是否在事务内"与"意图是否与审批原子"由同一实验同时观测。</p>
      */
-    public static class TxProbeListener implements org.flowable.task.service.delegate.TaskListener {
+    public static class TxProbeListener implements TaskListener {
 
-        private final com.sw.ck.common.event.DomainEventPublisher publisher;
+        private final DomainEventPublisher publisher;
 
-        public TxProbeListener(com.sw.ck.common.event.DomainEventPublisher publisher) {
+        public TxProbeListener(DomainEventPublisher publisher) {
             this.publisher = publisher;
         }
 
         @Override
-        public void notify(org.flowable.task.service.delegate.DelegateTask delegateTask) {
+        public void notify(DelegateTask delegateTask) {
             boolean inTx = TransactionSynchronizationManager.isActualTransactionActive();
             CALLBACKS.incrementAndGet();
             if (inTx) {
                 CALLBACKS_IN_TRANSACTION.incrementAndGet();
             }
-            publisher.publish(new com.sw.ck.bpm.api.event.BpmDeviceCommandEvent(
+            publisher.publish(new BpmDeviceCommandEvent(
                     delegateTask.getProcessInstanceId(), "p4-product", DEVICE_NAME_TX, COMMAND_KEY_TX,
                     "PROPERTY", TENANT_A, USER_A));
             System.out.println("[P4-EV] g3.callback-probe taskDefinitionKey=" + delegateTask.getTaskDefinitionKey()
@@ -92,7 +97,7 @@ class Phase4PgTransactionFactTest extends Phase4PgSupport {
         });
         seedBinding(FORM_KEY, TX_FLOW_KEY);
         deployBpmn(TX_FLOW_KEY, twoStepBpmn(), FORM_KEY, false);
-        eventPublisher = app.getBean(com.sw.ck.common.event.DomainEventPublisher.class);
+        eventPublisher = app.getBean(DomainEventPublisher.class);
         app.getBeanFactory().registerSingleton("phase4TxProbeListener", new TxProbeListener(eventPublisher));
         runtimeService = app.getBean(RuntimeService.class);
         taskService = app.getBean(TaskService.class);

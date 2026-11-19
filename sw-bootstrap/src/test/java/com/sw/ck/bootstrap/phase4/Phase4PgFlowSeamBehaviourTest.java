@@ -17,6 +17,9 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.process.listener.BpmNotifyIntentRecorder;
+import com.sw.ck.form.api.event.FormSubmittedEvent;
+
+import org.flowable.engine.RepositoryService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +30,11 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.quartz.JobDataMap;
 import org.quartz.JobExecutionContext;
+import org.quartz.Scheduler;
+import org.quartz.SchedulerContext;
+import org.springframework.context.ApplicationEvent;
+import org.springframework.context.ApplicationListener;
+import org.springframework.context.PayloadApplicationEvent;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -97,13 +105,13 @@ class Phase4PgFlowSeamBehaviourTest extends Phase4PgSupport {
         formSubmitService = app.getBean(FormSubmitService.class);
         notifyRecorder = app.getBean(BpmNotifyIntentRecorder.class);
         notifyFacade = app.getBean(NotifyFacade.class);
-        app.addApplicationListener(new org.springframework.context.ApplicationListener<
-                org.springframework.context.ApplicationEvent>() {
+        app.addApplicationListener(new ApplicationListener<
+                ApplicationEvent>() {
             @Override
-            public void onApplicationEvent(org.springframework.context.ApplicationEvent event) {
+            public void onApplicationEvent(ApplicationEvent event) {
                 // FormSubmittedEvent 是普通 POJO，发布时由 Spring 包成载荷事件
-                if (event instanceof org.springframework.context.PayloadApplicationEvent<?> payload
-                        && payload.getPayload() instanceof com.sw.ck.form.api.event.FormSubmittedEvent) {
+                if (event instanceof PayloadApplicationEvent<?> payload
+                        && payload.getPayload() instanceof FormSubmittedEvent) {
                     inMemoryFormSubmittedEvents.incrementAndGet();
                 }
             }
@@ -426,8 +434,8 @@ class Phase4PgFlowSeamBehaviourTest extends Phase4PgSupport {
     // ==================== 场景搭建 ====================
 
     private void deployAndRegister(String processKey, String formKey, boolean iotAccess, String assignee) {
-        org.flowable.engine.RepositoryService repositoryService =
-                app.getBean(org.flowable.engine.RepositoryService.class);
+        RepositoryService repositoryService =
+                app.getBean(RepositoryService.class);
         String bpmn = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -509,8 +517,8 @@ class Phase4PgFlowSeamBehaviourTest extends Phase4PgSupport {
         when(context.getMergedJobDataMap()).thenReturn(dataMap);
         when(context.getNextFireTime()).thenReturn(null);
         // Spring 的 QuartzJobBean 入口会读取 SchedulerContext（真实调度器里恒存在）
-        org.quartz.Scheduler scheduler = mock(org.quartz.Scheduler.class);
-        when(scheduler.getContext()).thenReturn(new org.quartz.SchedulerContext());
+        Scheduler scheduler = mock(Scheduler.class);
+        when(scheduler.getContext()).thenReturn(new SchedulerContext());
         when(context.getScheduler()).thenReturn(scheduler);
         return context;
     }

@@ -2,21 +2,29 @@ package com.sw.ck.bootstrap.iot;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.bootstrap.p63.P63ControlledMqttBroker;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.iot.job.IotReservationDispatchJob;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,31 +78,31 @@ class IotNativeMqttDeferredDispatchPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "nat-mqtt-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "nat-mqtt-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.receipt.secret", "nat-mqtt-receipt-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("nat-mqtt", props));
+                            new MapPropertySource("nat-mqtt", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("natMqttLoginContextProvider", provider);
                 })
                 .run();
         // 本用例显式调用生产调度入口；取消自动任务，避免后台先认领导致手动调用提前返回。
         // 在插入任何预约或命令前完成取消，生产调度配置保持不变。
-        app.getBean(org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor.class)
+        app.getBean(ScheduledAnnotationBeanPostProcessor.class)
                 .getScheduledTasks().forEach(task -> task.cancel(false));
         jdbc = app.getBean(JdbcTemplate.class);
         dispatchJob = app.getBean(IotReservationDispatchJob.class);
@@ -274,14 +282,4 @@ class IotNativeMqttDeferredDispatchPgTest {
                 .findFirst().orElseThrow(() -> new AssertionError("QoS1 发布完成但 Broker 接收记录缺失"));
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

@@ -1,19 +1,24 @@
 package com.sw.ck.bpm.engine.translator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.Process;
 import org.flowable.bpmn.model.SequenceFlow;
 import org.flowable.bpmn.model.ServiceTask;
 import org.flowable.bpmn.model.UserTask;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -31,8 +36,8 @@ class NodeTypeTranslatorPlugabilityTest {
     /** 测试型节点翻译器：TEST_NODE → ServiceTask（可验证的 Flowable 元素）。 */
     private static final NodeTypeTranslator TEST_NODE_TRANSLATOR = new NodeTypeTranslator() {
         @Override
-        public java.util.Optional<String> type() {
-            return java.util.Optional.of("TEST_NODE");
+        public Optional<String> type() {
+            return Optional.of("TEST_NODE");
         }
 
         @Override
@@ -65,7 +70,7 @@ class NodeTypeTranslatorPlugabilityTest {
                 .build();
 
         BpmnModel model = translator.translate(graph);
-        org.flowable.bpmn.model.Process process = model.getProcesses().get(0);
+        Process process = model.getProcesses().get(0);
 
         // 1. 新类型被翻译：TEST_NODE → ServiceTask
         FlowElement testElement = process.getFlowElement("test");
@@ -101,7 +106,7 @@ class NodeTypeTranslatorPlugabilityTest {
                 .build();
 
         // 发布翻译不能再 warn + skip，否则会生成缺少节点/悬空边的 BPMN。
-        assertThat(org.junit.jupiter.api.Assertions.assertThrows(
+        assertThat(Assertions.assertThrows(
                 BaseException.class, () -> translator.translate(graph)).getCode())
                 .isEqualTo(2107);
     }

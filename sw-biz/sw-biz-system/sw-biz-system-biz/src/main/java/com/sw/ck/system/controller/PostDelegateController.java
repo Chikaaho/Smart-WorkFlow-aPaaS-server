@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -7,6 +9,7 @@ import com.sw.ck.system.entity.SysPostDelegate;
 import com.sw.ck.system.service.PositionDelegateService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import com.sw.ck.system.vo.SysPostDelegateVO;
 
 /**
  * P64 阶段Ⅱ（A07）岗位委托管理控制器（后台组织域通用配置）。
@@ -19,24 +22,22 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/system/post-delegate")
 public class PostDelegateController {
 
-    private final PositionDelegateService positionDelegateService;
-
-    public PostDelegateController(PositionDelegateService positionDelegateService) {
-        this.positionDelegateService = positionDelegateService;
-    }
+    @Autowired
+    private PositionDelegateService positionDelegateService;
 
     /**
      * 分页查询委托关系。
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:postDelegate:list')")
-    public R<PageResult<SysPostDelegate>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysPostDelegateVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                                @RequestParam(defaultValue = "10") long pageSize,
                                                @RequestBody(required = false) SysPostDelegate query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(positionDelegateService.page(pageParam, query));
+        return R.ok(PageResult.map(positionDelegateService.page(pageParam, query),
+                SysPostDelegateVO::from));
     }
 
     /**

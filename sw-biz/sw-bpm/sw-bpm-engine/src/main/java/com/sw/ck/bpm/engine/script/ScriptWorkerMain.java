@@ -1,6 +1,7 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 
 import java.io.BufferedReader;
@@ -11,6 +12,8 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import org.graalvm.polyglot.Engine;
 
 /**
  * P64 判断脚本专职 worker 进程入口（ADR-P64-001 §3 隔离修订）。
@@ -41,8 +44,8 @@ public final class ScriptWorkerMain {
         ObjectMapper mapper = new ObjectMapper();
         // BF20261019-02：进程内共享 Engine + 预热后再握手——首个真实判断不再支付
         // GraalJS 语言初始化冷启动（慢宿主上曾超固定 5s 预算被宿主销毁后每次冷启动）
-        org.graalvm.polyglot.Engine engine = org.graalvm.polyglot.Engine.newBuilder().build();
-        BpmScriptRunner runner = new BpmScriptRunner(mapper, engine);
+        Engine engine = Engine.newBuilder().build();
+        BpmScriptRunner runner = BpmScriptRunner.forStandalone(mapper, engine);
         // 启动握手：宿主据此确认 worker 就绪并核对本 JVM 实际堆上限（-Xmx 生效值）
         Map<String, Object> hello = new LinkedHashMap<>();
         hello.put("id", "__ready__");
@@ -90,7 +93,7 @@ public final class ScriptWorkerMain {
             } catch (Exception e) {
                 Map<String, Object> out = new LinkedHashMap<>();
                 out.put("id", "unknown");
-                out.put("kind", "SCRIPT_ERROR");
+                out.put("kind", BpmScriptEvaluatePort.ScriptOutcome.KIND_SCRIPT_ERROR);
                 out.put("errorMessage", "worker 请求处理失败: " + e.getMessage());
                 response = mapper.writeValueAsString(out);
             }

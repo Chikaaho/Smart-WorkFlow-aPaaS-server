@@ -1,9 +1,17 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
+import com.sw.ck.bpm.process.service.TxnBatchService;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.security.cache.LoginUserCacheService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import cn.hutool.http.HttpRequest;
+import cn.hutool.json.JSONUtil;
 import com.sun.net.httpserver.HttpServer;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
@@ -11,14 +19,20 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +42,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -77,12 +93,12 @@ class P62ReceiptBoundaryPgTest {
                         + ",classpath:db/migration/openapi/{vendor}"
                         + ",classpath:db/migration/system/{vendor}");
         props.put("sw.security.jwt.secret", "p62-boundary-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-boundary-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.enabled", "true");
         props.put("sw.security.debug-auth.enabled", "true");
         props.put("sw.iot.receipt.secret", RECEIPT_SECRET);
@@ -92,25 +108,25 @@ class P62ReceiptBoundaryPgTest {
                     // 测试环境无 Redis：登录缓存以 no-op 替身替换（Configuration 类处理完成后执行，
                     // kickOut/get 均安全无操作，debug 回查每次走正式 UserDetailsProvider）
                     context.addBeanFactoryPostProcessor(beanFactory -> {
-                        var registry = (org.springframework.beans.factory.support.DefaultListableBeanFactory) beanFactory;
+                        var registry = (DefaultListableBeanFactory) beanFactory;
                         registry.removeBeanDefinition("loginUserCacheService");
-                        org.springframework.beans.factory.support.GenericBeanDefinition cacheBean =
-                                new org.springframework.beans.factory.support.GenericBeanDefinition();
-                        cacheBean.setBeanClass(com.sw.ck.security.cache.LoginUserCacheService.class);
-                        cacheBean.setInstanceSupplier(() -> org.mockito.Mockito.mock(
-                                com.sw.ck.security.cache.LoginUserCacheService.class));
+                        GenericBeanDefinition cacheBean =
+                                new GenericBeanDefinition();
+                        cacheBean.setBeanClass(LoginUserCacheService.class);
+                        cacheBean.setInstanceSupplier(() -> Mockito.mock(
+                                LoginUserCacheService.class));
                         registry.registerBeanDefinition("loginUserCacheService", cacheBean);
                     });
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-boundary", props));
+                            new MapPropertySource("p62-boundary", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62BoundaryLoginContextProvider", provider);
                 })
                 .run();
@@ -291,8 +307,8 @@ class P62ReceiptBoundaryPgTest {
     @Test
     @DisplayName("批次查询隔离：同租户非发起人且无管理权限不可见；发起人与管理权限可见")
     void batchQueryIsolation() {
-        com.sw.ck.bpm.process.service.TxnBatchService service =
-                app.getBean(com.sw.ck.bpm.process.service.TxnBatchService.class);
+        TxnBatchService service =
+                app.getBean(TxnBatchService.class);
         // 发起人（92001）可见
         TxnBatchView owner = asUser(92001, TENANT, List.of("form:action:invoke"), () ->
                 service.get("boundary-batch-01"));
@@ -302,7 +318,7 @@ class P62ReceiptBoundaryPgTest {
             try {
                 service.get("boundary-batch-01");
                 throw new AssertionError("应不可见");
-            } catch (com.sw.ck.common.exception.BaseException e) {
+            } catch (BaseException e) {
                 assertThat(e.getCode()).as("非发起人无管理权限不可见").isEqualTo(2424);
             }
             return null;
@@ -318,7 +334,7 @@ class P62ReceiptBoundaryPgTest {
 
     private Map<String, Object> postReceiptRaw(long commandId, String requestId, String outcome,
                                                String tenantKey, String signature) {
-        String body = cn.hutool.http.HttpRequest.post(
+        String body = HttpRequest.post(
                         "http://127.0.0.1:" + appPort + "/api/iot/commands/receipt")
                 .header("X-Sw-Receipt-Signature", signature)
                 .body("{\"commandId\":" + commandId + ",\"requestId\":\"" + requestId
@@ -327,14 +343,14 @@ class P62ReceiptBoundaryPgTest {
                 .timeout(5000)
                 .execute()
                 .body();
-        return cn.hutool.json.JSONUtil.parseObj(body);
+        return JSONUtil.parseObj(body);
     }
 
     private String hmac(long commandId, String requestId, String outcome, String tenantKey) {
         String canonical = commandId + "|" + requestId + "|" + outcome + "|ok|" + tenantKey;
         try {
-            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-            mac.init(new javax.crypto.spec.SecretKeySpec(
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(
                     RECEIPT_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             return String.format("%064x", new BigInteger(1,
                     mac.doFinal(canonical.getBytes(StandardCharsets.UTF_8))));
@@ -344,7 +360,7 @@ class P62ReceiptBoundaryPgTest {
     }
 
     private Map<String, Object> postReport(long userId, long commandId, String status) {
-        return cn.hutool.json.JSONUtil.parseObj(cn.hutool.http.HttpRequest.post(
+        return JSONUtil.parseObj(HttpRequest.post(
                         "http://127.0.0.1:" + appPort + "/api/iot/devices/commands/" + commandId + "/result")
                 .header("Authorization", "Bearer test_" + userId)
                 .body("{\"status\":\"" + status + "\",\"result\":\"boundary-probe\"}")
@@ -354,7 +370,7 @@ class P62ReceiptBoundaryPgTest {
     }
 
     private Map<String, Object> postVerify(long userId, long commandId, String outcome) {
-        return cn.hutool.json.JSONUtil.parseObj(cn.hutool.http.HttpRequest.post(
+        return JSONUtil.parseObj(HttpRequest.post(
                         "http://127.0.0.1:" + appPort + "/api/iot/commands/" + commandId + "/manual-verify")
                 .header("Authorization", "Bearer test_" + userId)
                 .body("{\"outcome\":\"" + outcome + "\",\"basis\":\"边界探测依据\"}")
@@ -364,7 +380,7 @@ class P62ReceiptBoundaryPgTest {
     }
 
     private Map<String, Object> postVerifyBlankBasis(long userId, long commandId) {
-        return cn.hutool.json.JSONUtil.parseObj(cn.hutool.http.HttpRequest.post(
+        return JSONUtil.parseObj(HttpRequest.post(
                         "http://127.0.0.1:" + appPort + "/api/iot/commands/" + commandId + "/manual-verify")
                 .header("Authorization", "Bearer test_" + userId)
                 .body("{\"outcome\":\"SUCCESS\",\"basis\":\"   \"}")
@@ -400,14 +416,4 @@ class P62ReceiptBoundaryPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

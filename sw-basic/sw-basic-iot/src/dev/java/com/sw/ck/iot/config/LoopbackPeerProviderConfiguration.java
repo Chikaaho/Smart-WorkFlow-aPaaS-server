@@ -3,10 +3,13 @@ package com.sw.ck.iot.config;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.provider.LoopbackPeerProvider;
+import lombok.extern.log4j.Log4j2;
+
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 
 /**
  * 受控真实传输对端 Provider 装配（P63 G07，仅 dev 源根）。
@@ -21,17 +24,15 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(prefix = "sw.iot", name = "enabled", havingValue = "true")
 public class LoopbackPeerProviderConfiguration {
 
+    @Log4j2
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnProperty(prefix = "sw.iot.tencent", name = "provider-mode", havingValue = "loopback")
     static class LoopbackProviderBean {
 
-        private static final org.slf4j.Logger log =
-                org.slf4j.LoggerFactory.getLogger(LoopbackProviderBean.class);
-
         @Bean
         @ConditionalOnMissingBean(DeviceControlProvider.class)
         DeviceControlProvider loopbackPeerProvider(
-                org.springframework.core.env.Environment env,
+                Environment env,
                 IotDeviceCommandMapper commandMapper) {
             String peerUrl = env.getProperty("sw.iot.loopback.peer-url",
                     "http://127.0.0.1:9777/device");

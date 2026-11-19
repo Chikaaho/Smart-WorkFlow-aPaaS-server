@@ -37,7 +37,7 @@ import java.util.Set;
 public class AgentChatModelAssembler {
 
     /** apiFormat 白名单（固定三种，D022-02） */
-    public static final Set<String> SUPPORTED_FORMATS = Set.of("OPENAI_CHAT", "OPENAI_RESPONSES", "ANTHROPIC");
+    public static final Set<String> SUPPORTED_FORMATS = Set.of(AgentProtocolFormatEnum.OPENAI_CHAT.name(), AgentProtocolFormatEnum.OPENAI_RESPONSES.name(), AgentProtocolFormatEnum.ANTHROPIC.name());
 
     /** timeoutSeconds 未配置时的默认值（秒），与 V0.2.2 表结构 DEFAULT 30 一致 */
     private static final int DEFAULT_TIMEOUT_SECONDS = 30;

@@ -1,22 +1,29 @@
 package com.sw.ck.iot.util;
 
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mqtt.MqttDownlinkPublisher;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.stereotype.Component;
+import com.sw.ck.iot.service.MessageIngestService;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Component;
+import com.sw.ck.iot.entity.IotCommandSemanticModeEnum;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * 延迟生效类控制工具。
  * <p>
@@ -34,6 +41,7 @@ import java.util.UUID;
  */
 @Component
 @ConditionalOnProperty(prefix = "sw.iot", name = "enabled", havingValue = "true")
+@Log4j2
 public class DeferredControlUtil {
 
     /** 控制通道未装配时的失败码（与基础设施不可用的既有约定一致）。 */
@@ -47,25 +55,16 @@ public class DeferredControlUtil {
     /** 命令失败原因：MQTT 已发布但 Broker 未确认（可重试，不代表已接收）。 */
     static final String MQTT_NO_BROKER_ACK_REASON = "MQTT 发布未被 Broker 确认（未接收）";
 
-    private static final Logger log = LoggerFactory.getLogger(DeferredControlUtil.class);
-
-    private final IotDeviceService iotDeviceService;
-    private final CommandQueueService commandQueueService;
-    private final ObjectProvider<DeviceControlProvider> deviceControlProvider;
-    private final MqttDownlinkPublisher mqttDownlinkPublisher;
-    private final java.time.Clock clock;
-
-    public DeferredControlUtil(IotDeviceService iotDeviceService,
-                               CommandQueueService commandQueueService,
-                               ObjectProvider<DeviceControlProvider> deviceControlProvider,
-                               MqttDownlinkPublisher mqttDownlinkPublisher,
-                               java.time.Clock clock) {
-        this.iotDeviceService = iotDeviceService;
-        this.commandQueueService = commandQueueService;
-        this.deviceControlProvider = deviceControlProvider;
-        this.mqttDownlinkPublisher = mqttDownlinkPublisher;
-        this.clock = clock;
-    }
+    @Autowired
+    private IotDeviceService iotDeviceService;
+    @Autowired
+    private CommandQueueService commandQueueService;
+    @Autowired
+    private ObjectProvider<DeviceControlProvider> deviceControlProvider;
+    @Autowired
+    private MqttDownlinkPublisher mqttDownlinkPublisher;
+    @Autowired
+    private Clock clock;
 
     /**
      * 取当前装配的设备控制 provider。
@@ -76,7 +75,7 @@ public class DeferredControlUtil {
     private DeviceControlProvider requireProvider() {
         DeviceControlProvider provider = deviceControlProvider.getIfAvailable();
         if (provider == null) {
-            throw new com.sw.ck.common.exception.BaseException(CHANNEL_UNAVAILABLE_CODE,
+            throw new BaseException(CHANNEL_UNAVAILABLE_CODE,
                     "IoT 控制通道未装配：当前无设备控制 provider，控制命令未下发");
         }
         return provider;
@@ -108,7 +107,7 @@ public class DeferredControlUtil {
                                             String propertyJson, String approvalBizId) {
         IotDevice device = iotDeviceService.getByProductAndDeviceName(productId, deviceName);
         if (device == null) {
-            throw new com.sw.ck.common.exception.BaseException(404,
+            throw new BaseException(404,
                     "设备不存在: productId=" + productId + ", deviceName=" + deviceName);
         }
 
@@ -123,9 +122,9 @@ public class DeferredControlUtil {
         command.setProductId(productId);
         command.setDeviceName(deviceName);
         command.setDeviceKey(device.getDeviceKey());
-        command.setCommandType("PROPERTY");
+        command.setCommandType(MessageIngestService.TYPE_PROPERTY);
         command.setCommandKey("control_property");
-        command.setSemanticMode("DEFERRED");
+        command.setSemanticMode(IotCommandSemanticModeEnum.DEFERRED.getCode());
         command.setPayload(propertyJson);
         command.setIdempotentKey(idempotentKey);
         command.setExpiryTime(LocalDateTime.now().plusHours(24));
@@ -158,7 +157,7 @@ public class DeferredControlUtil {
                                           String approvalBizId) {
         IotDevice device = iotDeviceService.getByProductAndDeviceName(productId, deviceName);
         if (device == null) {
-            throw new com.sw.ck.common.exception.BaseException(404,
+            throw new BaseException(404,
                     "设备不存在: productId=" + productId + ", deviceName=" + deviceName);
         }
 
@@ -175,7 +174,7 @@ public class DeferredControlUtil {
         command.setDeviceKey(device.getDeviceKey());
         command.setCommandType("ACTION");
         command.setCommandKey(actionId);
-        command.setSemanticMode("DEFERRED");
+        command.setSemanticMode(IotCommandSemanticModeEnum.DEFERRED.getCode());
         command.setPayload(inputJson);
         command.setIdempotentKey(idempotentKey);
         command.setExpiryTime(LocalDateTime.now().plusHours(24));
@@ -246,7 +245,7 @@ public class DeferredControlUtil {
 
     /** 仅由成功持久认领的补偿调用方使用，延续同一次执行，不重复认领或增加重试数。 */
     public void sendClaimedCommand(IotDeviceCommand command) {
-        if (command == null || command.getId() == null || !"SENDING".equals(command.getStatus())) {
+        if (command == null || command.getId() == null || !IotCommandStatusEnum.SENDING.getCode().equals(command.getStatus())) {
             throw new IllegalArgumentException("发送已认领命令需要有效的 SENDING 对象");
         }
         sendCommand(command, true);
@@ -255,8 +254,8 @@ public class DeferredControlUtil {
     private void sendCommand(IotDeviceCommand command, boolean alreadyClaimed) {
         // 窗口/有效期覆盖实际外发边界（P63 §4.2）：已过有效期的命令不再进入 SENDING、
         // 不触达控制通道，与预约窗口对齐的过期时间按同一口径收敛为 EXPIRED。
-        if (command.getExpiryTime() != null && !java.time.LocalDateTime
-                .ofInstant(clock.instant(), java.time.ZoneId.systemDefault())
+        if (command.getExpiryTime() != null && !LocalDateTime
+                .ofInstant(clock.instant(), ZoneId.systemDefault())
                 .isBefore(command.getExpiryTime())) {
             commandQueueService.markExpired(command.getId());
             log.warn("命令已过有效期，不外发: id={}, expiryTime={}", command.getId(), command.getExpiryTime());
@@ -280,7 +279,7 @@ public class DeferredControlUtil {
         try {
 
             DeviceControlProvider.DeviceControlResult result;
-            if ("PROPERTY".equals(command.getCommandType())) {
+            if (MessageIngestService.TYPE_PROPERTY.equals(command.getCommandType())) {
                 result = provider.controlDeviceData(
                         command.getProductId(), command.getDeviceName(), command.getPayload());
             } else {

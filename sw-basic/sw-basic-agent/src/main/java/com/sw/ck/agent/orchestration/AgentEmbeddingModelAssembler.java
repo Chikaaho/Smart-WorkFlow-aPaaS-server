@@ -22,10 +22,10 @@ public class AgentEmbeddingModelAssembler {
 
     public EmbeddingModel assemble(AgentProvider provider, AgentModel model, String plainApiKey) {
         String format = provider.getApiFormat();
-        if ("ANTHROPIC".equals(format)) {
+        if (AgentProtocolFormatEnum.ANTHROPIC.name().equals(format)) {
             throw new IllegalArgumentException("Anthropic Messages 格式不提供 Embeddings 接口，无法用于知识库向量化");
         }
-        if (!"OPENAI_CHAT".equals(format) && !"OPENAI_RESPONSES".equals(format)) {
+        if (!AgentProtocolFormatEnum.OPENAI_CHAT.name().equals(format) && !AgentProtocolFormatEnum.OPENAI_RESPONSES.name().equals(format)) {
             throw new IllegalArgumentException("不支持的 Embedding 供应商格式: " + format);
         }
         return OpenAiEmbeddingModel.builder()

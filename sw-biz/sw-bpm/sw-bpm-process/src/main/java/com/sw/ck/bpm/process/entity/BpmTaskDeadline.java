@@ -2,9 +2,13 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /** 人工节点办理时限与受控自动动作调度账本（I3 §4.8）。 */
 @Data
@@ -22,7 +26,7 @@ public class BpmTaskDeadline extends BaseEntity {
     private String taskId;
 
     @TableField("due_at")
-    private java.time.LocalDateTime dueAt;
+    private LocalDateTime dueAt;
 
     /** 到期提醒是否已触发。 */
     @TableField("remind_fired")
@@ -52,5 +56,5 @@ public class BpmTaskDeadline extends BaseEntity {
     private String lastReason;
 
     @TableField("handled_at")
-    private java.time.LocalDateTime handledAt;
+    private LocalDateTime handledAt;
 }

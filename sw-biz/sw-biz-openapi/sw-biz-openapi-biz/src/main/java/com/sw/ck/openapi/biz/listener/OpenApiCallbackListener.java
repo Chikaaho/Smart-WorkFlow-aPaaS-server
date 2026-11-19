@@ -1,5 +1,7 @@
 package com.sw.ck.openapi.biz.listener;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
@@ -10,8 +12,6 @@ import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.service.OpenApiCallbackDeliveryService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -19,6 +19,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.openapi.biz.entity.OpenApiAppStatusEnum;
 /**
  * 流程状态出站回调事件转发（I4 §3.4）。
  * <p>
@@ -33,26 +35,20 @@ import java.util.List;
  * </p>
  */
 @Component
+@Log4j2
 public class OpenApiCallbackListener {
-
-    private static final Logger log = LoggerFactory.getLogger(OpenApiCallbackListener.class);
 
     private static final List<BpmNotifyTrigger> TERMINAL = List.of(
             BpmNotifyTrigger.PROCESS_APPROVED, BpmNotifyTrigger.PROCESS_REJECTED,
             BpmNotifyTrigger.PROCESS_DISAPPROVED, BpmNotifyTrigger.PROCESS_WITHDRAWN,
             BpmNotifyTrigger.PROCESS_DISCARDED);
 
-    private final OpenApiAppMapper appMapper;
-    private final OpenApiCallbackDeliveryService deliveryService;
-    private final TenantWorkAdmission tenantWorkAdmission;
-
-    public OpenApiCallbackListener(OpenApiAppMapper appMapper,
-                                   OpenApiCallbackDeliveryService deliveryService,
-                                   TenantWorkAdmission tenantWorkAdmission) {
-        this.appMapper = appMapper;
-        this.deliveryService = deliveryService;
-        this.tenantWorkAdmission = tenantWorkAdmission;
-    }
+    @Autowired
+    private OpenApiAppMapper appMapper;
+    @Autowired
+    private OpenApiCallbackDeliveryService deliveryService;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -82,7 +78,7 @@ public class OpenApiCallbackListener {
         try {
             List<OpenApiApp> apps = appMapper.selectList(new LambdaQueryWrapper<OpenApiApp>()
                     .eq(OpenApiApp::getTenantId, tenantId)
-                    .eq(OpenApiApp::getStatus, "ENABLED")
+                    .eq(OpenApiApp::getStatus, OpenApiAppStatusEnum.ENABLED.getCode())
                     .isNotNull(OpenApiApp::getCallbackUrl)
                     .eq(OpenApiApp::getDeleted, 0));
             for (OpenApiApp app : apps) {

@@ -1,13 +1,18 @@
 package com.sw.ck.bpm.engine.listener;
 
 import com.sw.ck.bpm.api.orchestration.SubflowWaitPort;
+import com.sw.ck.bpm.api.result.MutationOutcome;
+
+import jakarta.annotation.PostConstruct;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.ExecutionListener;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * SUBFLOW_WAIT 等待节点执行监听器（P64 阶段Ⅱ A05）。
  * <p>
@@ -22,24 +27,22 @@ import org.springframework.stereotype.Component;
  * </p>
  */
 @Component("subflowWaitListener")
+@Log4j2
 public class SubflowWaitListener implements ExecutionListener {
-
-    private static final Logger log = LoggerFactory.getLogger(SubflowWaitListener.class);
 
     /** 静态桥接位：Spring 单例构造时登记，Flowable 反射实例经此转发。 */
     private static volatile SubflowWaitListener bridge;
 
-    private final ObjectProvider<SubflowWaitPort> waitPort;
+    @Autowired(required = false)
+    private ObjectProvider<SubflowWaitPort> waitPort;
 
     /** Flowable 反射实例化用（无依赖）。 */
     public SubflowWaitListener() {
-        this.waitPort = null;
     }
 
-    /** P64 阶段Ⅲ（A08 实链修复）：多构造时 Spring 缺省选无参构造，桥接单例需显式指定注入构造。 */
-    @org.springframework.beans.factory.annotation.Autowired
-    public SubflowWaitListener(ObjectProvider<SubflowWaitPort> waitPort) {
-        this.waitPort = waitPort;
+    /** Spring 单例字段注入完成后登记静态桥接位，供 Flowable 反射实例转发。 */
+    @PostConstruct
+    void registerBridge() {
         bridge = this;
     }
 
@@ -63,14 +66,14 @@ public class SubflowWaitListener implements ExecutionListener {
                 .ifPresentOrElse(
                         outcome -> {
                             log.info("等待节点到达处置: activityId={}, outcome={}", activityId, outcome);
-                            if (outcome == com.sw.ck.bpm.api.result.MutationOutcome.ALREADY_APPLIED) {
+                            if (outcome == MutationOutcome.ALREADY_APPLIED) {
                                 // P64 阶段Ⅲ（A08 实链修复）：start 监听先于执行流进入可信号等待态，
                                 // 到达即"无批次应立即唤醒"时首查 signal 可能空吸收（执行流尚未可触发）。
                                 // 事务提交后再次核对唤醒：幂等（有批次则继续保持挂起，无批次则推进一次）。
-                                if (org.springframework.transaction.support.TransactionSynchronizationManager
+                                if (TransactionSynchronizationManager
                                         .isSynchronizationActive()) {
-                                    org.springframework.transaction.support.TransactionSynchronizationManager
-                                            .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                                    TransactionSynchronizationManager
+                                            .registerSynchronization(new TransactionSynchronization() {
                                                 @Override
                                                 public void afterCommit() {
                                                     port.onWaitNodeArrival(tenantId, processInstanceId, activityId)

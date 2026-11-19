@@ -5,8 +5,6 @@ import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -15,6 +13,7 @@ import java.sql.Statement;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 外部数据源连接池管理器。
  * <p>
@@ -23,9 +22,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 形成完全隔离的 JDBC 通道。
  * </p>
  */
+@Log4j2
 public class ExternalDatasourceManager {
-
-    private static final Logger log = LoggerFactory.getLogger(ExternalDatasourceManager.class);
 
     private final Map<Long, HikariDataSource> poolCache = new ConcurrentHashMap<>();
     private final AesGcmCipher cipher;

@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.service;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 
@@ -126,6 +127,18 @@ public interface BpmProcessDefService {
      */
     PageResult<BpmProcessDef> listDefs(PageParam pageParam, String formKey, Long tenantIdFilter);
 
+    /**
+     * 判定表单是否绑定已发布流程定义（与是否已产生实例无关）。
+     * <p>
+     * 统一详情关系端点据此决定是否渲染流程信息区：纯数据表单恒 false，
+     * 有流程但尚未发起时为 true。formKey 空白视为未绑定（fail closed）。
+     * </p>
+     *
+     * @param formKey 表单业务标识
+     * @return true=存在 {@code PUBLISHED} 的流程定义绑定该表单
+     */
+    boolean hasPublishedDefByFormKey(String formKey);
+
     // 0.1.7 #21：流程定义不提供删除（发布/运行/历史引用不可逆，禁删）。
 
     /**
@@ -171,7 +184,7 @@ public interface BpmProcessDefService {
      * @param defId 流程定义 ID
      * @return 版本行列表（按版本号降序）
      */
-    List<com.sw.ck.bpm.process.entity.BpmProcessDefVersion> listVersions(Long defId);
+    List<BpmProcessDefVersion> listVersions(Long defId);
 
     /**
      * 读取指定发布版本的冻结图（ProcessGraph）。

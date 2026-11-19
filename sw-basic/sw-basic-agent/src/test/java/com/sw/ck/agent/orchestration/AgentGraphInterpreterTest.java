@@ -1,17 +1,20 @@
 package com.sw.ck.agent.orchestration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentModel;
 import com.sw.ck.agent.entity.AgentProvider;
-import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.vo.KnowledgeHitVO;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
+
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -22,6 +25,13 @@ import org.junit.jupiter.api.Test;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -73,8 +83,8 @@ class AgentGraphInterpreterTest {
     }
 
     /** 复现 langchain4j HTTP 客户端长驻传输线程：类加载时即建立线程（此时无线程本地监听器），后续提交复用同一线程。 */
-    private static final java.util.concurrent.ExecutorService TRANSPORT_POOL =
-            java.util.concurrent.Executors.newSingleThreadExecutor(
+    private static final ExecutorService TRANSPORT_POOL =
+            Executors.newSingleThreadExecutor(
                     Thread.ofPlatform().name("lc023-transport-thread").daemon(true).factory());
 
     static {
@@ -89,10 +99,10 @@ class AgentGraphInterpreterTest {
         // 否则增量事件在真实运行中静默丢失。
         stubModel(9L, new StubChatModel("流式最终回答"));
         doAnswer(inv -> {
-            java.util.function.Consumer<String> onDelta = inv.getArgument(3);
-            java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(2);
-            java.util.concurrent.atomic.AtomicBoolean transportListenerAbsent =
-                    new java.util.concurrent.atomic.AtomicBoolean(false);
+            Consumer<String> onDelta = inv.getArgument(3);
+            CountDownLatch done = new CountDownLatch(2);
+            AtomicBoolean transportListenerAbsent =
+                    new AtomicBoolean(false);
             TRANSPORT_POOL.submit(() -> {
                 // 长驻传输线程自身的线程本地监听器为空（回归触发条件）
                 transportListenerAbsent.set(AgentExecutionEventContext.get() == null);
@@ -101,12 +111,12 @@ class AgentGraphInterpreterTest {
                 onDelta.accept("增量-B ");
                 done.countDown();
             });
-            assertThat(done.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
             assertThat(transportListenerAbsent.get()).isTrue();
             return ChatResponse.builder().aiMessage(AiMessage.from("流式最终回答")).build();
         }).when(modelRuntimeService).chatStreamingWithRotation(eq(9L), anyList(), any(), any());
 
-        List<String> delivered = new java.util.concurrent.CopyOnWriteArrayList<>();
+        List<String> delivered = new CopyOnWriteArrayList<>();
         AgentExecutionEventContext.set((type, nodeId, payload) -> {
             if ("MODEL_DELTA".equals(type)) delivered.add(type + ":" + payload);
         });
@@ -145,7 +155,7 @@ class AgentGraphInterpreterTest {
                             .build();
                 }
                 boolean hasToolResult = request.messages().stream()
-                        .anyMatch(m -> m instanceof dev.langchain4j.data.message.ToolExecutionResultMessage);
+                        .anyMatch(m -> m instanceof ToolExecutionResultMessage);
                 return ChatResponse.builder()
                         .aiMessage(AiMessage.from(hasToolResult ? "最终答案" : "缺少工具结果"))
                         .build();
@@ -214,7 +224,7 @@ class AgentGraphInterpreterTest {
     @DisplayName("F1S3-K01: KNOWLEDGE 节点检索命中 → 输出含文档名/相似度/正文，轨迹记录输入输出")
     void knowledgeNode_shouldRetrieveAndWriteContextToVariable() {
         KnowledgeRetrievalService retrieval = mock(KnowledgeRetrievalService.class);
-        KnowledgeHitDTO hit = new KnowledgeHitDTO();
+        KnowledgeHitVO hit = new KnowledgeHitVO();
         hit.setChunkId(11L);
         hit.setDocumentId(22L);
         hit.setDocumentName("项目说明.md");
@@ -1242,7 +1252,7 @@ class AgentGraphInterpreterTest {
         // 阶段 2：工具规格透传，供 LLM 节点工具循环测试使用
         when(modelRuntimeService.chatWithRotation(eq(id), anyList(), any())).thenAnswer(inv -> {
             ChatRequest.Builder builder = ChatRequest.builder()
-                    .messages((java.util.List<ChatMessage>) inv.getArgument(1));
+                    .messages((List<ChatMessage>) inv.getArgument(1));
             List<ToolSpecification> specs = inv.getArgument(2);
             if (specs != null && !specs.isEmpty()) {
                 builder.toolSpecifications(specs);

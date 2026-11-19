@@ -3,30 +3,40 @@ package com.sw.ck.bpm.process.service;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
+import com.sw.ck.bpm.process.vo.ApprovalHistoryItemVO;
 import com.sw.ck.form.api.print.FormPrintFacade;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.dict.DictItemDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import lombok.extern.slf4j.Slf4j;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import lombok.extern.log4j.Log4j2;
+
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 
 /**
  * 服务端打印 PDF 生成（1.0.0 F2-3）。
@@ -42,7 +52,7 @@ import java.util.Optional;
  * （模板页脚/版本说明 + 页码）。数据只来自 {@link FormPrintFacade} 的权限过滤链（F2-4）。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class FormPrintPdfService {
 
@@ -55,26 +65,15 @@ public class FormPrintPdfService {
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
-    private final FormPrintFacade formPrintFacade;
+    @Autowired
+    private FormPrintFacade formPrintFacade;
     /** 显示值解析（USER/DEPT/DICT）；单元测试手工构造时可为空（回退原值渲染）。 */
-    private final UserQueryFacade userQueryFacade;
-    private final DeptQueryFacade deptQueryFacade;
-    private final DictFacade dictFacade;
-
-    public FormPrintPdfService(FormPrintFacade formPrintFacade) {
-        this(formPrintFacade, null, null, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public FormPrintPdfService(FormPrintFacade formPrintFacade,
-                               UserQueryFacade userQueryFacade,
-                               DeptQueryFacade deptQueryFacade,
-                               DictFacade dictFacade) {
-        this.formPrintFacade = formPrintFacade;
-        this.userQueryFacade = userQueryFacade;
-        this.deptQueryFacade = deptQueryFacade;
-        this.dictFacade = dictFacade;
-    }
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private DeptQueryFacade deptQueryFacade;
+    @Autowired
+    private DictFacade dictFacade;
 
     /**
      * 生成打印 PDF。
@@ -87,7 +86,7 @@ public class FormPrintPdfService {
      * @throws IllegalStateException 无权读取或数据不可用时（安全结论，不含差异细节）
      */
     public byte[] render(String formKey, String recordId, LocalDateTime submittedAt,
-                         List<ApprovalHistoryItemDTO> history) {
+                         List<ApprovalHistoryItemVO> history) {
         FormPrintFacade.FormPrintData data = formPrintFacade
                 .recordDetail(formKey, recordId, submittedAt)
                 .orElseThrow(() -> new IllegalStateException("打印数据不可用或无权读取"));
@@ -101,7 +100,7 @@ public class FormPrintPdfService {
 
     private byte[] renderDocument(FormPrintFacade.FormPrintData data, JSONObject def,
                                   PrintTemplate template,
-                                  List<ApprovalHistoryItemDTO> history) {
+                                  List<ApprovalHistoryItemVO> history) {
         try (PDDocument doc = new PDDocument()) {
             // embedSubset=true：只嵌入用到的字形，避免整份 10MB CJK 字体进 PDF
             PDType0Font font = PDType0Font.load(doc, fontStream(), true);
@@ -171,8 +170,8 @@ public class FormPrintPdfService {
                         new Column("时间", "time", PAGE_WIDTH * 0.18f),
                         new Column("意见", "opinion", PAGE_WIDTH * 0.24f));
                 List<Map<String, Object>> rows = new ArrayList<>();
-                for (ApprovalHistoryItemDTO item : history) {
-                    Map<String, Object> row = new java.util.LinkedHashMap<>();
+                for (ApprovalHistoryItemVO item : history) {
+                    Map<String, Object> row = new LinkedHashMap<>();
                     row.put("node", nullSafe(item.getTaskName()));
                     row.put("assignee", nullSafe(item.getAssigneeName()));
                     row.put("dept", nullSafe(item.getAssigneeDept()));
@@ -200,14 +199,14 @@ public class FormPrintPdfService {
     }
 
     /** 意见摘要：意见字段展示文本拼接（不含完整快照 JSON）；缺省回退普通意见文本。 */
-    private String opinionSummary(ApprovalHistoryItemDTO item) {
+    private String opinionSummary(ApprovalHistoryItemVO item) {
         if (item.getOpinionFields() == null || item.getOpinionFields().isEmpty()) {
             Object comment = item.getOpinionData() == null ? null
-                    : item.getOpinionData().get("comment");
+                    : item.getOpinionData().asMap().get("comment");
             return comment == null ? "" : String.valueOf(comment);
         }
         List<String> parts = new ArrayList<>();
-        for (ApprovalHistoryItemDTO.OpinionFieldView view : item.getOpinionFields()) {
+        for (ApprovalHistoryItemVO.OpinionFieldView view : item.getOpinionFields()) {
             if (view.getDisplayValue() != null && !view.getDisplayValue().isBlank()) {
                 parts.add((view.getLabel() == null ? view.getName() : view.getLabel())
                         + "：" + view.getDisplayValue());
@@ -422,14 +421,14 @@ public class FormPrintPdfService {
         if (raw instanceof LocalDateTime dateTime) {
             return pattern.format(dateTime);
         }
-        if (raw instanceof java.sql.Timestamp timestamp) {
+        if (raw instanceof Timestamp timestamp) {
             return pattern.format(timestamp.toLocalDateTime());
         }
-        if (raw instanceof java.util.Date date) {
+        if (raw instanceof Date date) {
             return pattern.format(LocalDateTime.ofInstant(date.toInstant(),
-                    java.time.ZoneId.systemDefault()));
+                    ZoneId.systemDefault()));
         }
-        if (raw instanceof java.time.LocalDate date) {
+        if (raw instanceof LocalDate date) {
             return date.toString();
         }
         String text = String.valueOf(raw).replace('T', ' ');
@@ -443,26 +442,26 @@ public class FormPrintPdfService {
 
     /** 数值显示：配置小数位按配置，否则去掉尾随 0（与页面一致）；Excel 侧写数值单元格。 */
     private static String numberText(Object raw, Integer decimals) {
-        java.math.BigDecimal value = decimalOf(raw);
+        BigDecimal value = decimalOf(raw);
         if (value == null) {
             return String.valueOf(raw);
         }
         if (decimals != null) {
-            return value.setScale(decimals, java.math.RoundingMode.HALF_UP).toPlainString();
+            return value.setScale(decimals, RoundingMode.HALF_UP).toPlainString();
         }
         return value.stripTrailingZeros().toPlainString();
     }
 
-    private static java.math.BigDecimal decimalOf(Object raw) {
-        if (raw instanceof java.math.BigDecimal decimal) {
+    private static BigDecimal decimalOf(Object raw) {
+        if (raw instanceof BigDecimal decimal) {
             return decimal;
         }
         if (raw instanceof Number number) {
             double value = number.doubleValue();
-            return Double.isFinite(value) ? java.math.BigDecimal.valueOf(value) : null;
+            return Double.isFinite(value) ? BigDecimal.valueOf(value) : null;
         }
         try {
-            return new java.math.BigDecimal(String.valueOf(raw));
+            return new BigDecimal(String.valueOf(raw));
         } catch (NumberFormatException e) {
             return null;
         }

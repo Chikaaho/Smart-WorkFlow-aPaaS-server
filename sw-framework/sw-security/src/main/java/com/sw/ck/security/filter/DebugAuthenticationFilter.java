@@ -1,18 +1,23 @@
 package com.sw.ck.security.filter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
+import com.sw.ck.common.trace.EventRef;
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.security.config.DebugAuthenticationProfile;
 import com.sw.ck.security.config.DebugAuthenticationProperties;
 import com.sw.ck.security.config.SecurityProperties;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.extern.slf4j.Slf4j;
+
+import lombok.extern.log4j.Log4j2;
 import org.springframework.core.env.Environment;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -32,7 +37,7 @@ import java.util.regex.Pattern;
  * 角色和权限；本过滤器不创建用户、不注入权限、不签发 JWT，也不写 Cookie 或 token 表。
  * 调试 token 不是 JWT，拒绝后继续走正式 JWT 过滤器，最终由既有安全链决定 401/403。
  */
-@Slf4j
+@Log4j2
 public class DebugAuthenticationFilter extends OncePerRequestFilter {
 
     private static final Pattern TOKEN_PATTERN = Pattern.compile("^test_([1-9][0-9]*)$");
@@ -159,9 +164,9 @@ public class DebugAuthenticationFilter extends OncePerRequestFilter {
         response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write(objectMapper.writeValueAsString(
-                R.fail(503, com.sw.ck.common.exception.CommonErrorCode.SYSTEM_ERROR.getErrorKey(),
-                        com.sw.ck.common.exception.CommonErrorCode.SYSTEM_ERROR.getMessage(),
-                        com.sw.ck.common.trace.EventRef.current())));
+                R.fail(503, CommonErrorCode.SYSTEM_ERROR.getErrorKey(),
+                        CommonErrorCode.SYSTEM_ERROR.getMessage(),
+                        EventRef.current())));
         response.getWriter().flush();
     }
 }

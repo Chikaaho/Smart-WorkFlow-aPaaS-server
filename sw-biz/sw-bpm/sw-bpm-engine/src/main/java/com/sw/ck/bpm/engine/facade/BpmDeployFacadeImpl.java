@@ -7,13 +7,14 @@ import com.sw.ck.bpm.api.facade.BpmDeployFacade;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.flowable.bpmn.converter.BpmnXMLConverter;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.ProcessDefinition;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +24,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * BPM 部署门面实现 —— 封装 Flowable {@link RepositoryService}。
  * <p>
@@ -30,23 +32,13 @@ import java.util.Optional;
  * </p>
  */
 @Service
+@Log4j2
 public class BpmDeployFacadeImpl implements BpmDeployFacade {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmDeployFacadeImpl.class);
-
-    private final RepositoryService repositoryService;
-    private final GraphToBpmnTranslator graphToBpmnTranslator;
-
-    public BpmDeployFacadeImpl(RepositoryService repositoryService) {
-        this(repositoryService, new GraphToBpmnTranslator());
-    }
-
     @Autowired
-    public BpmDeployFacadeImpl(RepositoryService repositoryService,
-                               GraphToBpmnTranslator graphToBpmnTranslator) {
-        this.repositoryService = repositoryService;
-        this.graphToBpmnTranslator = graphToBpmnTranslator;
-    }
+    private RepositoryService repositoryService;
+    @Autowired
+    private GraphToBpmnTranslator graphToBpmnTranslator;
 
     @Override
     public Optional<String> deployClasspathBpmn(String resourcePath, String deploymentName) {
@@ -76,7 +68,7 @@ public class BpmDeployFacadeImpl implements BpmDeployFacade {
                     .addBytes("process.bpmn20.xml", bpmnXml)
                     .name(deploymentName);
             // 部署跟随发布者租户：发起/待办查询均按 tenantId 过滤，定义无租户会导致实例发起失败
-            com.sw.ck.security.holder.LoginUser loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
+            LoginUser loginUser = LoginUserHolder.get();
             if (loginUser != null && loginUser.getTenantId() != null) {
                 deploymentBuilder.tenantId(String.valueOf(loginUser.getTenantId()));
             }

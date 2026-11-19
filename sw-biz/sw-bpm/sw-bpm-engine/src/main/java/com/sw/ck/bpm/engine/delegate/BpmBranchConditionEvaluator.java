@@ -8,7 +8,7 @@ import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.ExecutionListener;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.SequenceFlow;
-import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -19,11 +19,8 @@ import java.util.Map;
 /** Flowable 条件表达式的受控函数出口；表达式正文以 Base64 传输，避免拼入可执行语法。 */
 @Component("bpmBranchConditionEvaluator")
 public class BpmBranchConditionEvaluator implements ExecutionListener {
-    private final NodeActionAuditPort auditPort;
-
-    public BpmBranchConditionEvaluator(ObjectProvider<NodeActionAuditPort> auditPort) {
-        this.auditPort = auditPort.getIfAvailable();
-    }
+    @Autowired(required = false)
+    private NodeActionAuditPort auditPort;
 
     public boolean matches(DelegateExecution execution, String encodedExpression) {
         return matches(execution, encodedExpression, null);

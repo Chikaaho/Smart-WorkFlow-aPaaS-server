@@ -1,19 +1,23 @@
 package com.sw.ck.bpm.process.notify;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.notify.api.NotifyLinkAuthorizer;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.mapper.ApprovalActionRecordMapper;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
 import com.sw.ck.bpm.process.mapper.CopyRecordMapper;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
+import com.sw.ck.bpm.process.entity.CopyRecord;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.api.common.BpmNotifyLinkTypeEnum;
 /**
  * I6 深链对象权限裁决（方向 §6-11：发起人/参与人/抄送接收人可开，其余 fail closed）。
  * <p>
@@ -24,9 +28,8 @@ import java.util.Optional;
  * </p>
  */
 @Component
+@Log4j2
 public class BpmNotifyLinkAuthorizer implements NotifyLinkAuthorizer {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmNotifyLinkAuthorizer.class);
 
     @Autowired
     private BpmInstanceMapper instanceMapper;
@@ -45,9 +48,9 @@ public class BpmNotifyLinkAuthorizer implements NotifyLinkAuthorizer {
             return Optional.empty();
         }
         boolean allowed;
-        if ("WF_PROCESS".equals(linkType)) {
+        if (BpmNotifyLinkTypeEnum.WF_PROCESS.getCode().equals(linkType)) {
             allowed = canOpenProcess(linkId, userId);
-        } else if ("WF_TASK".equals(linkType)) {
+        } else if (BpmNotifyLinkTypeEnum.WF_TASK.getCode().equals(linkType)) {
             allowed = canOpenTask(linkId, userId);
         } else {
             allowed = false;
@@ -67,26 +70,26 @@ public class BpmNotifyLinkAuthorizer implements NotifyLinkAuthorizer {
         if (userId.equals(instance.getInitiatorId())) {
             return true;
         }
-        Long actorActions = approvalActionRecordMapper.selectCount(Wrappers.<com.sw.ck.bpm.process.entity.ApprovalActionRecord>lambdaQuery()
-                .eq(com.sw.ck.bpm.process.entity.ApprovalActionRecord::getProcessInstanceId, processInstanceId)
-                .eq(com.sw.ck.bpm.process.entity.ApprovalActionRecord::getActorId, userId)
+        Long actorActions = approvalActionRecordMapper.selectCount(Wrappers.<ApprovalActionRecord>lambdaQuery()
+                .eq(ApprovalActionRecord::getProcessInstanceId, processInstanceId)
+                .eq(ApprovalActionRecord::getActorId, userId)
                 .last("LIMIT 1"));
         if (actorActions != null && actorActions > 0) {
             return true;
         }
-        Long copies = copyRecordMapper.selectCount(Wrappers.<com.sw.ck.bpm.process.entity.CopyRecord>lambdaQuery()
-                .eq(com.sw.ck.bpm.process.entity.CopyRecord::getProcessInstanceId, processInstanceId)
-                .eq(com.sw.ck.bpm.process.entity.CopyRecord::getRecipientId, String.valueOf(userId))
+        Long copies = copyRecordMapper.selectCount(Wrappers.<CopyRecord>lambdaQuery()
+                .eq(CopyRecord::getProcessInstanceId, processInstanceId)
+                .eq(CopyRecord::getRecipientId, String.valueOf(userId))
                 .last("LIMIT 1"));
         return copies != null && copies > 0;
     }
 
     private boolean canOpenTask(String taskId, Long userId) {
         // 任务深链：动作记录存在（本人是该任务的动作/收件记录人）即允许查看
-        Long actions = approvalActionRecordMapper.selectCount(Wrappers.<com.sw.ck.bpm.process.entity.ApprovalActionRecord>lambdaQuery()
-                .eq(com.sw.ck.bpm.process.entity.ApprovalActionRecord::getTaskId, taskId)
-                .and(w -> w.eq(com.sw.ck.bpm.process.entity.ApprovalActionRecord::getActorId, userId)
-                        .or().eq(com.sw.ck.bpm.process.entity.ApprovalActionRecord::getTargetUserId, userId))
+        Long actions = approvalActionRecordMapper.selectCount(Wrappers.<ApprovalActionRecord>lambdaQuery()
+                .eq(ApprovalActionRecord::getTaskId, taskId)
+                .and(w -> w.eq(ApprovalActionRecord::getActorId, userId)
+                        .or().eq(ApprovalActionRecord::getTargetUserId, userId))
                 .last("LIMIT 1"));
         return actions != null && actions > 0;
     }

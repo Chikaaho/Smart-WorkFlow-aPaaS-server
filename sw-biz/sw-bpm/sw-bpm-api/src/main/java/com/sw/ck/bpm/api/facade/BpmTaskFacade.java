@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.api.facade;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 
 import java.util.List;
@@ -31,7 +31,7 @@ public interface BpmTaskFacade {
      * @return present = 待办任务列表（无匹配时为空列表，属合法零匹配）；
      *         empty = 租户或处理人上下文缺失，无法确定查询范围
      */
-    Optional<List<BpmTaskDTO>> queryTodo(String tenantId, String assignee);
+    Optional<List<BpmTaskVO>> queryTodo(String tenantId, String assignee);
 
     /**
      * 分页查询待办任务。
@@ -42,7 +42,7 @@ public interface BpmTaskFacade {
      * @param limit    每页条数
      * @return present = 待办任务列表（该页零条为空列表）；empty = 租户或处理人上下文缺失
      */
-    Optional<List<BpmTaskDTO>> queryTodoPage(String tenantId, String assignee, int offset, int limit);
+    Optional<List<BpmTaskVO>> queryTodoPage(String tenantId, String assignee, int offset, int limit);
 
     /**
      * 统计待办任务总数。
@@ -59,7 +59,7 @@ public interface BpmTaskFacade {
      * @param processInstanceId 流程实例 ID
      * @return present = 任务列表（实例存在但无任务时为空列表）；empty = 实例标识缺失
      */
-    Optional<List<BpmTaskDTO>> queryByProcessInstance(String processInstanceId);
+    Optional<List<BpmTaskVO>> queryByProcessInstance(String processInstanceId);
 
     /**
      * 获取单个任务详情。
@@ -67,7 +67,7 @@ public interface BpmTaskFacade {
      * @param taskId 任务 ID
      * @return present = 任务 DTO；empty = 该任务不存在（原 null 返回路径）
      */
-    Optional<BpmTaskDTO> getTask(String taskId);
+    Optional<BpmTaskVO> getTask(String taskId);
 
     /**
      * 获取单个已完成历史任务详情（已办视角）。
@@ -81,7 +81,7 @@ public interface BpmTaskFacade {
      * @return present = 该 taskId 的已完成历史任务 DTO；
      *         empty = 无该任务的已完成历史记录（运行期任务不在本方法范围）
      */
-    Optional<BpmTaskDTO> getHistoricTask(String taskId);
+    Optional<BpmTaskVO> getHistoricTask(String taskId);
 
     /**
      * 完成任务。
@@ -227,7 +227,7 @@ public interface BpmTaskFacade {
      * @return present = 已办任务列表（含 endTime；该页零条为空列表）；
      *         empty = 租户或处理人上下文缺失
      */
-    Optional<List<BpmTaskDTO>> queryProcessedPage(String tenantId, String assignee, int offset, int limit);
+    Optional<List<BpmTaskVO>> queryProcessedPage(String tenantId, String assignee, int offset, int limit);
 
     /**
      * 统计已办任务总数。
@@ -245,7 +245,7 @@ public interface BpmTaskFacade {
      * @return present = 历史任务列表（按完成时间倒序；无历史时为空列表）；
      *         empty = 实例标识缺失
      */
-    Optional<List<BpmTaskDTO>> queryHistoryByProcessInstance(String processInstanceId);
+    Optional<List<BpmTaskVO>> queryHistoryByProcessInstance(String processInstanceId);
 
     // ==================== I3 任务生命周期（转办/委托/代理） ====================
 

@@ -1,15 +1,18 @@
 package com.sw.ck.bootstrap.p63;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.flowable.engine.TaskService;
 import org.junit.jupiter.api.AfterAll;
@@ -21,8 +24,15 @@ import org.flowable.task.api.Task;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
+import org.springframework.core.env.MapPropertySource;
 
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -62,7 +72,7 @@ class P63LegacyConditionPathPgTest {
     void setUp() throws Exception {
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -70,24 +80,24 @@ class P63LegacyConditionPathPgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p63-cond-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p63-cond-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.enabled", "false");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p63-cond", props));
+                            new MapPropertySource("p63-cond", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63CondLoginContextProvider", provider);
                 })
                 .run();
@@ -114,7 +124,7 @@ class P63LegacyConditionPathPgTest {
                 + "ON CONFLICT (id) DO NOTHING", TENANT, APPROVER_B);
 
         asUser(INITIATOR, () -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P63条件表单", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P63条件表单", null, null);
             formDefService.saveConfig(draft.getId(),
                     "{\"schemaVersion\":1,\"title\":\"P63条件表单\",\"fields\":["
                             + "{\"name\":\"topic\",\"type\":\"TEXT\",\"label\":\"主题\",\"required\":false},"
@@ -226,7 +236,7 @@ class P63LegacyConditionPathPgTest {
     private String buildConditionGraphJson(String processKey) {
         Map<String, Object> approverA = Map.of("type", "DESIGNATED", "value", String.valueOf(APPROVER_A));
         Map<String, Object> approverB = Map.of("type", "DESIGNATED", "value", String.valueOf(APPROVER_B));
-        Map<String, Object> graph = new java.util.LinkedHashMap<>();
+        Map<String, Object> graph = new LinkedHashMap<>();
         graph.put("processKey", processKey);
         graph.put("name", "P63条件流程");
         graph.put("formKey", FORM_KEY);
@@ -294,7 +304,7 @@ class P63LegacyConditionPathPgTest {
     }
 
     private Map<String, Object> data(String... kv) {
-        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 0; i + 1 < kv.length; i += 2) {
             m.put(kv[i], kv[i + 1]);
         }
@@ -312,7 +322,7 @@ class P63LegacyConditionPathPgTest {
 
     private String toJson(Object obj) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj);
+            return new ObjectMapper().writeValueAsString(obj);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -340,14 +350,4 @@ class P63LegacyConditionPathPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

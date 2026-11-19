@@ -1,5 +1,6 @@
 package com.sw.ck.form.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -7,25 +8,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
 import com.sw.ck.form.api.dto.FormDataQueryRequest;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormConfigEntity;
 import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.mapper.FormConfigMapper;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -33,7 +30,16 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.Date;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 表单数据导入导出服务。
  *
@@ -54,9 +60,8 @@ import java.util.*;
  * </ul>
  */
 @Service
+@Log4j2
 public class FormImportExportService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormImportExportService.class);
 
     /** 导入行数硬上限（含） */
     public static final int MAX_IMPORT_ROWS = 500;
@@ -78,47 +83,29 @@ public class FormImportExportService {
 
     private static final String ROW_NO_LABEL = "数据行号";
 
-    private final FormDefService formDefService;
-    private final FormConfigMapper formConfigMapper;
-    private final FormDefMapper formDefMapper;
-    private final ObjectMapper objectMapper;
-    private final FormSubmitService formSubmitService;
-    private final FormFieldValidator formFieldValidator;
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormConfigMapper formConfigMapper;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private FormSubmitService formSubmitService;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
     private FormFieldEnrichmentService enrichment;
-    private final FormDataQueryService formDataQueryService;
-    private final TransactionTemplate transactionTemplate;
-    private final JdbcTemplate jdbcTemplate;
-    private final LoginContextProvider loginContextProvider;
-    private final DeptScopeProvider deptScopeProvider;
-
-    public FormImportExportService(FormDefService formDefService,
-                                   FormConfigMapper formConfigMapper,
-                                   FormDefMapper formDefMapper,
-                                   ObjectMapper objectMapper,
-                                   FormSubmitService formSubmitService,
-                                   FormFieldValidator formFieldValidator,
-                                   FormDataQueryService formDataQueryService,
-                                   TransactionTemplate transactionTemplate,
-                                   JdbcTemplate jdbcTemplate,
-                                   LoginContextProvider loginContextProvider,
-                                   DeptScopeProvider deptScopeProvider) {
-        this.formDefService = formDefService;
-        this.formConfigMapper = formConfigMapper;
-        this.formDefMapper = formDefMapper;
-        this.objectMapper = objectMapper;
-        this.formSubmitService = formSubmitService;
-        this.formFieldValidator = formFieldValidator;
-        this.formDataQueryService = formDataQueryService;
-        this.transactionTemplate = transactionTemplate;
-        this.jdbcTemplate = jdbcTemplate;
-        this.loginContextProvider = loginContextProvider;
-        this.deptScopeProvider = deptScopeProvider;
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setEnrichment(FormFieldEnrichmentService enrichment) {
-        this.enrichment = enrichment;
-    }
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    @Autowired
+    private DeptScopeProvider deptScopeProvider;
 
     // ==================== 字段元数据 ====================
 
@@ -185,7 +172,7 @@ public class FormImportExportService {
                 String name = fieldNode.has("name") ? fieldNode.get("name").asText() : null;
                 if (name == null || name.isBlank()) continue;
 
-                String typeStr = fieldNode.has("type") ? fieldNode.get("type").asText() : "TEXT";
+                String typeStr = fieldNode.has("type") ? fieldNode.get("type").asText() : FieldType.TEXT.name();
                 String label = fieldNode.has("label") ? fieldNode.get("label").asText() : name;
 
                 FieldType fieldType;
@@ -206,7 +193,7 @@ public class FormImportExportService {
                         for (JsonNode sub : subArray) {
                             String subName = sub.has("name") ? sub.get("name").asText() : null;
                             if (subName == null || subName.isBlank()) continue;
-                            String subTypeStr = sub.has("type") ? sub.get("type").asText() : "TEXT";
+                            String subTypeStr = sub.has("type") ? sub.get("type").asText() : FieldType.TEXT.name();
                             String subLabel = sub.has("label") ? sub.get("label").asText() : subName;
                             FieldType subType;
                             try {
@@ -238,7 +225,7 @@ public class FormImportExportService {
      * 计算模板签名：formKey + formVersion + 主字段映射 + 子表字段映射指纹。
      * 表单结构（字段增删改/类型变更）或重新发布（formVersion 递增）都会使签名变化。
      */
-    private String buildTemplateSignature(FormDefDTO formDef,
+    private String buildTemplateSignature(FormDefVO formDef,
                                           List<FieldMeta> mainFields,
                                           Map<String, List<FieldMeta>> tableFields) {
         StringBuilder sb = new StringBuilder();
@@ -432,7 +419,7 @@ public class FormImportExportService {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,
                     "关联字段 '" + field.name() + "' 未配置目标表单，无法导入");
         }
-        FormDefDTO targetDef = formDefService.getFormDefByKey(field.targetFormId());
+        FormDefVO targetDef = formDefService.getFormDefByKey(field.targetFormId());
         if (targetDef == null || targetDef.getPhysicalTableName() == null
                 || targetDef.getPhysicalTableName().isBlank()) {
             throw new BaseException(FormErrorCode.SUBMIT_FAILED,
@@ -649,7 +636,7 @@ public class FormImportExportService {
 
         // —— 租户 + 数据权限 + 筛选条件下的有界查询（单页硬上限 = 导出行数上限） ——
         DataScopeFilter scopeFilter = DataScopeFilter.resolve(loginContextProvider, deptScopeProvider);
-        com.sw.ck.common.page.PageResult<Map<String, Object>> queryResult =
+        PageResult<Map<String, Object>> queryResult =
                 formDataQueryService.queryFormData(formKey, queryRequest, scopeFilter, MAX_EXPORT_ROWS);
 
         List<Map<String, Object>> records = queryResult.getRecords();
@@ -806,7 +793,7 @@ public class FormImportExportService {
             }
             if (ids.isEmpty()) continue;
 
-            FormDefDTO targetDef;
+            FormDefVO targetDef;
             try {
                 targetDef = formDefService.getFormDefByKey(field.targetFormId());
             } catch (Exception e) {
@@ -858,7 +845,7 @@ public class FormImportExportService {
             JsonNode fieldsArray = root.get("fields");
             if (fieldsArray != null && fieldsArray.isArray()) {
                 for (JsonNode f : fieldsArray) {
-                    String t = f.has("type") ? f.get("type").asText() : "TEXT";
+                    String t = f.has("type") ? f.get("type").asText() : FieldType.TEXT.name();
                     if ("TEXT".equals(t) && f.has("name")) {
                         rawName = f.get("name").asText();
                         break;
@@ -929,7 +916,7 @@ public class FormImportExportService {
         };
     }
 
-    private static LocalDateTime dateToLocalDateTime(java.util.Date date) {
+    private static LocalDateTime dateToLocalDateTime(Date date) {
         return LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault());
     }
 
@@ -995,7 +982,7 @@ public class FormImportExportService {
             }
             case DATE -> {
                 // 统一以 ISO 文本导出，避免日期被读成纯数值
-                if (value instanceof java.util.Date d) {
+                if (value instanceof Date d) {
                     writeTextCell(cell, d.toInstant().atZone(ZoneId.systemDefault()).toLocalDate().toString());
                 } else if (value instanceof LocalDateTime ldt) {
                     writeTextCell(cell, ldt.toString());
@@ -1012,7 +999,7 @@ public class FormImportExportService {
 
     // ==================== 上下文加载 ====================
 
-    private record FormContext(FormDefDTO formDef,
+    private record FormContext(FormDefVO formDef,
                                FormDefEntity formDefEntity,
                                List<FieldMeta> mainFields,
                                Map<String, List<FieldMeta>> tableFields) {}
@@ -1020,19 +1007,19 @@ public class FormImportExportService {
     private LoginUser requireLogin() {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         return loginUser;
     }
 
     private FormContext loadFormContext(String formKey, String action) {
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.FORM_NOT_FOUND, "表单 '" + formKey + "' 不存在");
         }
         boolean exportExisting = "导出数据".equals(action)
-                && "DISABLED".equals(formDef.getStatus());
-        if (!"PUBLISHED".equals(formDef.getStatus()) && !exportExisting) {
+                && FormStatusEnum.DISABLED.getCode().equals(formDef.getStatus());
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus()) && !exportExisting) {
             throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED,
                     "表单 '" + formKey + "' 未发布，不能" + action);
         }
@@ -1056,7 +1043,7 @@ public class FormImportExportService {
 
     private String loadDefinitionJson(String formId) {
         List<FormConfigEntity> configs = formConfigMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FormConfigEntity>()
+                new LambdaQueryWrapper<FormConfigEntity>()
                         .eq(FormConfigEntity::getFormId, formId)
                         .isNull(FormConfigEntity::getParentTable)
         );

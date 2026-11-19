@@ -1,14 +1,21 @@
 package com.sw.ck.iot.job;
 
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
+import com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget;
 import com.sw.ck.iot.entity.IotCommandReservation;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.mapper.IotCommandReservationMapper;
 import com.sw.ck.iot.mapper.IotDeviceCommandMapper;
 import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
-import lombok.extern.slf4j.Slf4j;
+import com.sw.ck.iot.util.DeferredControlUtil;
+
+import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +24,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
+import com.sw.ck.iot.entity.IotReservationStatusEnum;
 
 /**
  * IoT 预约到点认领下发调度（P63，DB 认领模式：重启自然恢复，无内存状态）。
@@ -30,38 +39,29 @@ import java.util.List;
  * 超时/UNKNOWN 沿既有边界不变。时钟经注入 Clock 供给，受控验证可贯穿真实入口。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 public class IotReservationDispatchJob {
 
-    private final IotCommandReservationMapper reservationMapper;
-    private final IotDeviceCommandMapper commandMapper;
-    private final IotDeviceService deviceService;
-    private final ObjectProvider<com.sw.ck.iot.util.DeferredControlUtil> senderProvider;
-    private final CommandQueueService commandQueueService;
-    private final Clock clock;
-    private final com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission;
-
-    public IotReservationDispatchJob(IotCommandReservationMapper reservationMapper,
-                                     IotDeviceCommandMapper commandMapper,
-                                     IotDeviceService deviceService,
-                                     ObjectProvider<com.sw.ck.iot.util.DeferredControlUtil> senderProvider,
-                                     CommandQueueService commandQueueService,
-                                     Clock clock,
-                                     com.sw.ck.common.tenant.TenantWorkAdmission tenantWorkAdmission) {
-        this.reservationMapper = reservationMapper;
-        this.commandMapper = commandMapper;
-        this.deviceService = deviceService;
-        this.senderProvider = senderProvider;
-        this.commandQueueService = commandQueueService;
-        this.clock = clock;
-        this.tenantWorkAdmission = java.util.Objects.requireNonNull(tenantWorkAdmission);
-    }
+    @Autowired
+    private IotCommandReservationMapper reservationMapper;
+    @Autowired
+    private IotDeviceCommandMapper commandMapper;
+    @Autowired
+    private IotDeviceService deviceService;
+    @Autowired(required = false)
+    private ObjectProvider<DeferredControlUtil> senderProvider;
+    @Autowired
+    private CommandQueueService commandQueueService;
+    @Autowired(required = false)
+    private Clock clock = Clock.systemUTC();
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Scheduled(fixedDelay = 10_000L)
     public void dispatchDueReservations() {
         // 调度线程无登录态：挂起租户拦截器，行自身 tenant_id 为权威过滤（显式条件）
-        com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspend();
+        TenantLineSuspension.suspend();
         try {
             LocalDateTime nowUtc = LocalDateTime.now(clock.withZone(ZoneOffset.UTC));
             expireOverdue(nowUtc);
@@ -71,7 +71,7 @@ public class IotReservationDispatchJob {
                 claimAndDispatch(reservation, nowUtc);
             }
         } finally {
-            com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.restore();
+            TenantLineSuspension.restore();
         }
     }
 
@@ -83,10 +83,10 @@ public class IotReservationDispatchJob {
                             : reservation.getLateWindowSeconds());
             if (windowEnd.isBefore(nowUtc)) {
                 int updated = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                        .set(IotCommandReservation::getStatus, "EXPIRED")
+                        .set(IotCommandReservation::getStatus, IotReservationStatusEnum.EXPIRED.getCode())
                         .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                         .eq(IotCommandReservation::getId, reservation.getId())
-                        .eq(IotCommandReservation::getStatus, "PENDING")
+                        .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                         .eq(IotCommandReservation::getDeleted, 0));
                 if (updated == 1) {
                     log.info("预约超过迟到窗口，标记过期（不外发）: id={}, processInstanceId={}",
@@ -97,11 +97,11 @@ public class IotReservationDispatchJob {
     }
 
     private void claimAndDispatch(IotCommandReservation reservation, LocalDateTime nowUtc) {
-        com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspend();
+        TenantLineSuspension.suspend();
         try {
             claimAndDispatchSuspended(reservation, nowUtc);
         } finally {
-            com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.restore();
+            TenantLineSuspension.restore();
         }
     }
 
@@ -112,10 +112,10 @@ public class IotReservationDispatchJob {
                         : reservation.getLateWindowSeconds());
         if (!nowUtc.isBefore(windowEnd)) {
             int expired = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                    .set(IotCommandReservation::getStatus, "EXPIRED")
+                    .set(IotCommandReservation::getStatus, IotReservationStatusEnum.EXPIRED.getCode())
                     .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                     .eq(IotCommandReservation::getId, reservation.getId())
-                    .eq(IotCommandReservation::getStatus, "PENDING")
+                    .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                     .eq(IotCommandReservation::getDeleted, 0));
             if (expired == 1) {
                 log.info("认领入口拒绝窗后预约（未开始合法下发即过期，零外发）: id={}, windowEndUtc={}, nowUtc={}",
@@ -124,11 +124,11 @@ public class IotReservationDispatchJob {
             return;
         }
         int claimed = tenantWorkAdmission.claim(reservation.getTenantId(), () -> reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                .set(IotCommandReservation::getStatus, "DISPATCHING")
+                .set(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHING.getCode())
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                 .eq(IotCommandReservation::getId, reservation.getId())
                 .eq(IotCommandReservation::getTenantId, reservation.getTenantId())
-                .eq(IotCommandReservation::getStatus, "PENDING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.PENDING.getCode())
                 .eq(IotCommandReservation::getDeleted, 0)));
         if (claimed != 1) {
             return; // 已被取消/过期：竞争只有一个结果生效
@@ -139,11 +139,11 @@ public class IotReservationDispatchJob {
             log.error("预约认领下发失败，标记 FAILED 可查: id={}, processInstanceId={}",
                     reservation.getId(), reservation.getProcessInstanceId(), e);
             reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                    .set(IotCommandReservation::getStatus, "FAILED")
+                    .set(IotCommandReservation::getStatus, IotReservationStatusEnum.FAILED.getCode())
                     .set(IotCommandReservation::getRejectReason, truncate(e.getMessage()))
                     .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                     .eq(IotCommandReservation::getId, reservation.getId())
-                    .eq(IotCommandReservation::getStatus, "DISPATCHING")
+                    .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHING.getCode())
                     .eq(IotCommandReservation::getDeleted, 0));
         }
     }
@@ -155,7 +155,7 @@ public class IotReservationDispatchJob {
         // 到点权威重核（P63 G03a 确证缺陷修复）：无论来源是否在受理时冻结 product/name，
         // 一律按 deviceKey+预约租户重解析执行目标——设备失效/改属他租户在到点拒绝并可查，
         // 不按冻结值跨租户入队（FORM_FIELD/VARIABLE 的既有设计语义统一到全部来源）。
-        com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget target =
+        DeviceTarget target =
                 deviceService.resolveDeviceTargetByKey(reservation.getTenantId(), reservation.getDeviceKey());
         if (target == null) {
             throw new IllegalStateException("设备目标已失效或跨租户: deviceKey=" + reservation.getDeviceKey());
@@ -182,13 +182,13 @@ public class IotReservationDispatchJob {
                                 .toLocalDateTime())
                 .set(IotDeviceCommand::getUpdateTime, LocalDateTime.now())
                 .eq(IotDeviceCommand::getId, command.getId())
-                .eq(IotDeviceCommand::getStatus, "QUEUED"));
+                .eq(IotDeviceCommand::getStatus, IotCommandStatusEnum.QUEUED.getCode()));
 
         // 立即尝试外发：窗口内不得只入队后无限期等待补偿。
         // 状态迁移（QUEUED→SENDING）由共享发送路径 markSending 统一承载；
         // 此处不得预占 SENDING，否则 sendCommand 内的 markSending 必然撞状态判死。
         IotDeviceCommand queued = commandMapper.selectById(command.getId());
-        com.sw.ck.iot.util.DeferredControlUtil sender = senderProvider.getIfAvailable();
+        DeferredControlUtil sender = senderProvider.getIfAvailable();
         if (sender != null && queued != null) {
             sender.sendCommand(queued);
         } else if (queued != null) {
@@ -196,11 +196,11 @@ public class IotReservationDispatchJob {
             commandQueueService.markFailed(queued.getId(), "发送通道未装配（sw.iot.enabled=false）");
         }
         int dispatched = reservationMapper.update(null, new LambdaUpdateWrapper<IotCommandReservation>()
-                .set(IotCommandReservation::getStatus, "DISPATCHED")
+                .set(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHED.getCode())
                 .set(IotCommandReservation::getCommandId, command.getId())
                 .set(IotCommandReservation::getUpdateTime, LocalDateTime.now())
                 .eq(IotCommandReservation::getId, reservation.getId())
-                .eq(IotCommandReservation::getStatus, "DISPATCHING")
+                .eq(IotCommandReservation::getStatus, IotReservationStatusEnum.DISPATCHING.getCode())
                 .eq(IotCommandReservation::getDeleted, 0));
         if (dispatched == 1) {
             log.info("预约已到点下发: reservationId={}, commandId={}, processInstanceId={}, dueUtc={}, window={}s",

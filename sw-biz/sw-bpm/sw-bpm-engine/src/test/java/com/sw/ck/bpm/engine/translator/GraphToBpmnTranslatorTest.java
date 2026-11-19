@@ -3,6 +3,7 @@ package com.sw.ck.bpm.engine.translator;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.common.exception.BaseException;
+
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.EndEvent;
 import org.flowable.bpmn.model.FlowElement;
@@ -12,6 +13,7 @@ import org.flowable.bpmn.model.StartEvent;
 import org.flowable.bpmn.model.UserTask;
 import org.flowable.bpmn.model.SequenceFlow;
 import org.junit.jupiter.api.Test;
+import org.flowable.bpmn.model.Process;
 
 import java.util.Collections;
 import java.util.List;
@@ -50,7 +52,7 @@ class GraphToBpmnTranslatorTest {
 
         // BpmnModel 含一个 Process
         assertThat(model.getProcesses()).hasSize(1);
-        org.flowable.bpmn.model.Process process = model.getProcesses().get(0);
+        Process process = model.getProcesses().get(0);
         assertThat(process.getId()).isEqualTo("test_process");
         assertThat(process.getName()).isEqualTo("Test Process");
         assertThat(process.isExecutable()).isTrue();

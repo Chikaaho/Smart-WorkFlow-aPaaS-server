@@ -1,12 +1,14 @@
 package com.sw.ck.bpm.process.port;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.variable.NodeFormPersonAggregatePort;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
 import com.sw.ck.bpm.process.mapper.BpmTaskFormDataMapper;
 import com.sw.ck.bpm.process.service.NodeFormDataService;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -22,21 +24,16 @@ import java.util.Optional;
  * 已撤回/取消/被新轮次取代的数据不进入集合（仅 SUBMITTED 行）。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 public class NodeFormPersonAggregatePortImpl implements NodeFormPersonAggregatePort {
 
-    private final BpmTaskFormDataMapper taskFormDataMapper;
-    private final NodeFormDataService nodeFormDataService;
-    private final ObjectMapper objectMapper;
-
-    public NodeFormPersonAggregatePortImpl(BpmTaskFormDataMapper taskFormDataMapper,
-                                           NodeFormDataService nodeFormDataService,
-                                           ObjectMapper objectMapper) {
-        this.taskFormDataMapper = taskFormDataMapper;
-        this.nodeFormDataService = nodeFormDataService;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private BpmTaskFormDataMapper taskFormDataMapper;
+    @Autowired
+    private NodeFormDataService nodeFormDataService;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public Optional<List<String>> readPersonFieldValues(Long tenantId, String processInstanceId,

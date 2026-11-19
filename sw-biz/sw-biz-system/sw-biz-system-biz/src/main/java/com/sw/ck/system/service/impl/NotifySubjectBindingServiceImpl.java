@@ -1,7 +1,6 @@
 package com.sw.ck.system.service.impl;
 
 import com.sw.ck.common.crypto.AesGcmCipher;
-import org.springframework.beans.factory.ObjectProvider;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.system.entity.NotifySubjectBinding;
@@ -10,8 +9,6 @@ import com.sw.ck.system.mapper.NotifySubjectBindingMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.service.NotifySubjectBindingService;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import org.springframework.stereotype.Service;
@@ -23,6 +20,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.system.sso.SsoProviderEnum;
 /**
  * 通知 Provider 主体映射服务实现（I6 G5a-I）。
  * <p>规则（方向 §3.6/§D-14）：</p>
@@ -35,30 +34,23 @@ import java.util.Set;
  * </ul>
  */
 @Service
+@Log4j2
 public class NotifySubjectBindingServiceImpl implements NotifySubjectBindingService {
 
-    private static final Logger log = LoggerFactory.getLogger(NotifySubjectBindingServiceImpl.class);
-
     /** I6 三 Provider 独立 Adapter（方向 §3.5 不复用 SSO 凭据语义） */
-    private static final Set<String> SUPPORTED_PROVIDERS = Set.of("FEISHU", "DINGTALK", "WECHAT_WORK");
+    private static final Set<String> SUPPORTED_PROVIDERS = Set.of(SsoProviderEnum.FEISHU.name(), SsoProviderEnum.DINGTALK.name(), SsoProviderEnum.WECHAT_WORK.name());
 
     private static final String STATUS_ACTIVE = "ACTIVE";
     private static final String STATUS_DISABLED = "DISABLED";
 
-    private final NotifySubjectBindingMapper bindingMapper;
-    private final SysUserMapper sysUserMapper;
-    private final AesGcmCipher notifySubjectCipher;
-
     @Autowired
-    public NotifySubjectBindingServiceImpl(NotifySubjectBindingMapper bindingMapper,
-                                           SysUserMapper sysUserMapper,
-                                           ObjectProvider<AesGcmCipher> notifySubjectCipher) {
-        this.bindingMapper = bindingMapper;
-        this.sysUserMapper = sysUserMapper;
-        // I5/I6 窄测试上下文（AuthFlow 等 TestConfig）不装配 AesGcmCipher：依赖惰性化，
-        // 无密钥上下文调用绑定/解密时明确失败，不静默降级为明文
-        this.notifySubjectCipher = notifySubjectCipher.getIfAvailable();
-    }
+    private NotifySubjectBindingMapper bindingMapper;
+    @Autowired
+    private SysUserMapper sysUserMapper;
+    /** I5/I6 窄测试上下文（AuthFlow 等 TestConfig）不装配 AesGcmCipher：依赖惰性化，
+        无密钥上下文调用绑定/解密时明确失败，不静默降级为明文。 */
+    @Autowired(required = false)
+    private AesGcmCipher notifySubjectCipher;
 
     @Override
     public NotifySubjectBinding bind(Long userId, String provider, String subject) {

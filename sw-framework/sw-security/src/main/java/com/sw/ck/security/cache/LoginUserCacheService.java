@@ -2,9 +2,13 @@ package com.sw.ck.security.cache;
 
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.jwt.JwtProperties;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -67,8 +71,8 @@ public class LoginUserCacheService {
 
     private static String digest(String rawToken) {
         try {
-            return java.util.HexFormat.of().formatHex(java.security.MessageDigest
-                    .getInstance("SHA-256").digest(rawToken.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexFormat.of().formatHex(MessageDigest
+                    .getInstance("SHA-256").digest(rawToken.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException("SHA-256 不可用", e);
         }

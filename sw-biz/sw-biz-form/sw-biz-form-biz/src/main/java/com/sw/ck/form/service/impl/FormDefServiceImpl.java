@@ -1,803 +1,171 @@
 package com.sw.ck.form.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.google.re2j.Pattern;
-import com.google.re2j.PatternSyntaxException;
-import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
-import com.sw.ck.form.api.exception.FormErrorCode;
-import com.sw.ck.form.dynamic.ColumnValidation;
-import com.sw.ck.form.dynamic.DynamicTableManager;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotVO;
+import com.sw.ck.form.api.vo.FormSnapshotDetailVO;
 import com.sw.ck.form.dynamic.FieldSpec;
-import com.sw.ck.form.dynamic.FieldType;
-import com.sw.ck.form.dynamic.FormTableSpec;
-import com.sw.ck.form.entity.*;
-import com.sw.ck.form.mapper.FormConfigMapper;
-import com.sw.ck.form.mapper.FormDefMapper;
-import com.sw.ck.form.mapper.FormSnapshotMapper;
-import com.sw.ck.form.service.FieldPermissionService;
+import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.service.FormDefService;
-import com.sw.ck.form.service.FormFieldEnrichmentService;
-import com.sw.ck.form.service.FormExtDataService;
-import com.sw.ck.form.service.FormVisibilityRules;
-import com.sw.ck.form.service.FormulaEngine;
-import com.sw.ck.security.holder.LoginUser;
-import com.sw.ck.security.holder.LoginUserHolder;
-import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-import java.util.*;
-
 /**
- * 表单定义管理服务实现。
+ * 表单定义管理服务实现——门面。
+ *
+ * <p>
+ * 实现按职责拆分至同包协作类（行为与拆分前一致，公开契约不变）：
+ * {@link FormDefDraftService}（草稿创建/元数据更新/改名/definition 保存）、
+ * {@link FormDefPublishService}（首发布与同表新版本发布编排）、
+ * {@link FormDefQueryService}（定义/快照/分页/可见性查询）、
+ * {@link FormDefLifecycleService}（停用/启用/软删/发起可见范围/列表配置与
+ * 生命周期审计）、{@link FormDefDefinitionValidator}（definition 解析校验
+ * 唯一闸门：布局/类型/事件/集成/公式依赖/数据源绑定）。
+ * {@code @Transactional} 事务边界保留在本门面的公开方法上（经 Spring 代理
+ * 调用，语义与拆分前一致）；{@code publish} 沿用拆分前无事务标注的设计
+ * （DDL 不可回滚，校验先行）。
+ * </p>
  */
 @Service
 public class FormDefServiceImpl implements FormDefService {
 
-    private static final Logger log = LoggerFactory.getLogger(FormDefServiceImpl.class);
-
-    private final FormDefMapper formDefMapper;
-    private final FormConfigMapper formConfigMapper;
-    private final FormSnapshotMapper formSnapshotMapper;
-    private final DynamicTableManager dynamicTableManager;
-    private final FormIdGenerator idGenerator;
-    private final ObjectMapper objectMapper;
-    private final FormVisibilityRules visibilityRules;
-    // ==== I2 新增协作对象（可空：兼容既有测试构造；仅新契约路径使用） ====
-    private final FormulaEngine formulaEngine;
-    private final FieldPermissionService fieldPermissionService;
-    private final FormExtDataService extDataService;
-    private final com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper;
-    private final com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper;
-    // ==== V012-BUG-015：创建人展示名解析（system 契约；兼容构造可为 null） ====
-    private final UserQueryFacade userQueryFacade;
-    // ==== 应用中心：表单归属目标校验（兼容构造可为 null，带归属路径 fail-closed） ====
-    private final com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator;
-    // ==== 表单受控集成：保存/发布时按当前租户启用能力复核允许清单（测试构造可缺省） ====
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.sw.ck.common.integration.ExternalCapabilityFacade externalCapabilityFacade;
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public FormDefServiceImpl(FormDefMapper formDefMapper,
-                              FormConfigMapper formConfigMapper,
-                              FormSnapshotMapper formSnapshotMapper,
-                              DynamicTableManager dynamicTableManager,
-                              FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper,
-                              FormVisibilityRules visibilityRules,
-                              FormulaEngine formulaEngine,
-                              FieldPermissionService fieldPermissionService,
-                              @org.springframework.beans.factory.annotation.Autowired(required = false)
-                              FormExtDataService extDataService,
-                              com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper,
-                              com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper,
-                              UserQueryFacade userQueryFacade,
-                              com.sw.ck.form.service.FormAppMembershipValidator appMembershipValidator) {
-        this.formDefMapper = formDefMapper;
-        this.formConfigMapper = formConfigMapper;
-        this.formSnapshotMapper = formSnapshotMapper;
-        this.dynamicTableManager = dynamicTableManager;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-        this.visibilityRules = visibilityRules;
-        this.formulaEngine = formulaEngine;
-        this.fieldPermissionService = fieldPermissionService;
-        this.extDataService = extDataService;
-        this.listConfigMapper = listConfigMapper;
-        this.lifecycleAuditMapper = lifecycleAuditMapper;
-        this.userQueryFacade = userQueryFacade;
-        this.appMembershipValidator = appMembershipValidator;
-    }
-
-    /** 兼容既有测试装配（无归属校验注入；带归属路径 fail-closed，不静默跳过校验）。 */
-    public FormDefServiceImpl(FormDefMapper formDefMapper,
-                              FormConfigMapper formConfigMapper,
-                              FormSnapshotMapper formSnapshotMapper,
-                              DynamicTableManager dynamicTableManager,
-                              FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper,
-                              FormVisibilityRules visibilityRules,
-                              FormulaEngine formulaEngine,
-                              FieldPermissionService fieldPermissionService,
-                              FormExtDataService extDataService,
-                              com.sw.ck.form.mapper.FormListConfigMapper listConfigMapper,
-                              com.sw.ck.form.mapper.FormLifecycleAuditMapper lifecycleAuditMapper,
-                              UserQueryFacade userQueryFacade) {
-        this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
-                idGenerator, objectMapper, visibilityRules, formulaEngine, fieldPermissionService,
-                extDataService, listConfigMapper, lifecycleAuditMapper, userQueryFacade, null);
-    }
-
-    /** 兼容既有测试构造（无显隐规则注入时使用默认实现；I2 协作对象用默认/空实现）。 */
-    public FormDefServiceImpl(FormDefMapper formDefMapper,
-                              FormConfigMapper formConfigMapper,
-                              FormSnapshotMapper formSnapshotMapper,
-                              DynamicTableManager dynamicTableManager,
-                              FormIdGenerator idGenerator,
-                              ObjectMapper objectMapper) {
-        this(formDefMapper, formConfigMapper, formSnapshotMapper, dynamicTableManager,
-                idGenerator, objectMapper, new FormVisibilityRules(objectMapper),
-                new FormulaEngine(), new FieldPermissionService(objectMapper),
-                null, null, null, null, null);
-    }
+    @Autowired
+    private FormDefDraftService draftService;
+    @Autowired
+    private FormDefPublishService publishService;
+    @Autowired
+    private FormDefQueryService queryService;
+    @Autowired
+    private FormDefLifecycleService lifecycleService;
+    @Autowired
+    private FormDefDefinitionValidator definitionValidator;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description) {
-        return createDraft(formKey, name, logicalTableName, description, null);
+    public FormDefVO createDraft(String formKey, String name, String logicalTableName, String description) {
+        return draftService.createDraft(formKey, name, logicalTableName, description);
     }
 
     /** BF20261013-020：带表单类型的草稿创建（空白类型按业务表单）。 */
-    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+    public FormDefVO createDraft(String formKey, String name, String logicalTableName, String description,
             String formType) {
-        return createDraft(formKey, name, logicalTableName, description, formType, null, null);
+        return draftService.createDraft(formKey, name, logicalTableName, description, formType);
     }
 
     /** 应用中心：带表单类型与归属的草稿创建（审批意见表单不参与应用归属）。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+    public FormDefVO createDraft(String formKey, String name, String logicalTableName, String description,
             String formType, String appId, String dirId) {
-        // —— 校验唯一性（经租户拦截器按当前租户过滤；V83 后跨租户同名 formKey 合法） ——
-        LambdaQueryWrapper<FormDefEntity> keyQuery = Wrappers.lambdaQuery(FormDefEntity.class)
-                .eq(FormDefEntity::getFormKey, formKey);
-        if (formDefMapper.selectCount(keyQuery) > 0) {
-            throw new BaseException(FormErrorCode.FORM_KEY_DUPLICATE, "表单标识 '" + formKey + "' 已存在");
-        }
-
-        // —— 归属校验（应用中心）：目标应用须存在且启用、目录须属于该应用；失败不创建 ——
-        String normalizedType = "APPROVAL_COMMENT".equals(formType) ? "APPROVAL_COMMENT" : "BUSINESS";
-        String normalizedAppId = trimToNull(appId);
-        String normalizedDirId = trimToNull(dirId);
-        if ("APPROVAL_COMMENT".equals(normalizedType)) {
-            normalizedAppId = null;
-            normalizedDirId = null;
-        } else if (normalizedAppId != null) {
-            if (appMembershipValidator == null) {
-                throw new IllegalStateException("归属校验组件未装配，拒绝写入应用归属");
-            }
-            appMembershipValidator.validateTarget(normalizedAppId, normalizedDirId);
-        }
-
-        // —— 创建草稿 ——
-        FormDefEntity entity = new FormDefEntity();
-        entity.setId(idGenerator.generate());
-        entity.setFormKey(formKey);
-        entity.setName(name);
-        entity.setLogicalTableName(logicalTableName);
-        entity.setDescription(description);
-        entity.setStatus(FormStatusEnum.DRAFT.getCode());
-        // BF20261013-020：表单类型元数据（空白/未知按业务表单）
-        entity.setFormType(normalizedType);
-        entity.setAppId(normalizedAppId);
-        entity.setDirId(normalizedDirId);
-        entity.setFormVersion(1);
-        entity.setCreateTime(LocalDateTime.now());
-        entity.setUpdateTime(LocalDateTime.now());
-        entity.setDeleted(0);
-        entity.setVersion(0L);
-        formDefMapper.insert(entity);
-
-        // —— 创建空白 config ——
-        FormConfigEntity config = new FormConfigEntity();
-        config.setId(idGenerator.generate());
-        config.setFormId(entity.getId());
-        config.setDefinition("{}");
-        config.setCreateTime(LocalDateTime.now());
-        config.setUpdateTime(LocalDateTime.now());
-        config.setDeleted(0);
-        config.setVersion(0L);
-        formConfigMapper.insert(config);
-
-        log.info("Created form draft: id={}, formKey={}", entity.getId(), formKey);
-        return toDTO(entity);
+        return draftService.createDraft(formKey, name, logicalTableName, description, formType, appId, dirId);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public FormDefDTO updateDraft(String id, String name, String logicalTableName, String description) {
-        FormDefEntity entity = formDefMapper.selectById(id);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        if (!FormStatusEnum.DRAFT.getCode().equals(entity.getStatus())) {
-            throw new BaseException(FormErrorCode.FORM_ALREADY_PUBLISHED, "已发布的表单不能修改元数据");
-        }
-
-        entity.setName(name);
-        entity.setLogicalTableName(logicalTableName);
-        entity.setDescription(description);
-        entity.setUpdateTime(LocalDateTime.now());
-        formDefMapper.updateById(entity);
-
-        return toDTO(entity);
+    public FormDefVO updateDraft(String id, String name, String logicalTableName, String description) {
+        return draftService.updateDraft(id, name, logicalTableName, description);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void renameFormDef(String id, String name) {
-        String trimmed = name == null ? "" : name.trim();
-        if (trimmed.isEmpty()) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能为空");
-        }
-        if (trimmed.length() > 200) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(), "表单名称不能超过 200 字");
-        }
-        FormDefEntity entity = formDefMapper.selectById(id);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        // 0.1.7 #4：改名不动 formKey/定义/物理列，全部状态可改
-        entity.setName(trimmed);
-        entity.setUpdateTime(LocalDateTime.now());
-        formDefMapper.updateById(entity);
-        log.info("Renamed form def: id={}, name={}", id, trimmed);
+        draftService.renameFormDef(id, name);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveConfig(String formId, String definition) {
-        FormDefEntity entity = formDefMapper.selectById(formId);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-
-        // colSpan 是跨前端设计器、预览和填写页的持久化布局契约；保存入口也必须设防，
-        // 不能只依赖浏览器控件限制。缺省值兼容历史 definition，异常值直接拒绝入库。
-        validateLayoutDefinition(definition);
-
-        // 字段类型权威校验（Z8/G14a）：config 保存层即拒绝未启用类型，与 publish 的
-        // validFieldTypes 校验同口径——禁止类型不得依赖 publish 兜底。
-        validateFieldTypes(definition);
-        validateFormEvents(definition);
-        validateFormIntegrations(definition);
-
-        LambdaQueryWrapper<FormConfigEntity> query = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, formId)
-                .isNull(FormConfigEntity::getParentTable);
-        FormConfigEntity config = formConfigMapper.selectOne(query);
-        if (config == null) {
-            // 创建新的 config 记录
-            config = new FormConfigEntity();
-            config.setId(idGenerator.generate());
-            config.setFormId(formId);
-            config.setDefinition(definition);
-            config.setCreateTime(LocalDateTime.now());
-            config.setUpdateTime(LocalDateTime.now());
-            config.setDeleted(0);
-            config.setVersion(0L);
-            formConfigMapper.insert(config);
-        } else {
-            config.setDefinition(definition);
-            config.setUpdateTime(LocalDateTime.now());
-            formConfigMapper.updateById(config);
-        }
-
-        log.info("Saved form config: formId={}", formId);
+        draftService.saveConfig(formId, definition);
     }
 
     @Override
     public void publish(String formId) {
-        // —— Step 1: 加载并校验状态 ——
-        FormDefEntity entity = formDefMapper.selectById(formId);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        if (!FormStatusEnum.DRAFT.getCode().equals(entity.getStatus())) {
-            throw new BaseException(FormErrorCode.FORM_ALREADY_PUBLISHED, "表单已发布，不能重复发布");
-        }
-
-        // —— Step 2: 加载 config.definition 并解析校验字段（唯一字段真源） ——
-        LambdaQueryWrapper<FormConfigEntity> configQuery = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, formId)
-                .isNull(FormConfigEntity::getParentTable);
-        FormConfigEntity config = formConfigMapper.selectOne(configQuery);
-        String definitionJson = (config != null) ? config.getDefinition() : "{}";
-
-        List<FieldSpec> fields = parseAndValidateFieldsFromDefinition(definitionJson);
-
-        // —— Step 2b: 显隐规则校验（v0.0.2：字段存在/op/logic/无环依赖） ——
-        Set<String> fieldNames = fields.stream()
-                .map(FieldSpec::getFieldName)
-                .collect(java.util.stream.Collectors.toSet());
-        visibilityRules.parseAndValidate(definitionJson, collectFieldDisplay(definitionJson));
-
-        // —— Step 2c（I2）: 公式依赖 + 字段权限配置 + 外部数据源绑定校验 ——
-        validateFormulaDependencies(definitionJson, fieldNames);
-        fieldPermissionService.parse(definitionJson);
-        validateFormEvents(definitionJson);
-        validateFormIntegrations(definitionJson);
-        validateDatasourceBindings(definitionJson);
-        String frozenDefinition = freezeSnapshotDefinition(formId, definitionJson);
-
-        // —— Step 3: 校验字段名白名单（复用 ColumnValidation） ——
-        if (entity.getLogicalTableName() != null && !entity.getLogicalTableName().isBlank()) {
-            ColumnValidation.validateColumnName(entity.getLogicalTableName());
-        }
-        Set<String> columnNames = new HashSet<>();
-        for (FieldSpec field : fields) {
-            if (field.getFieldType() == FieldType.TABLE) continue; // 不产生列
-            if (field.getFieldType() == FieldType.LABEL) continue; // v0.0.2：说明文字不产生列
-            String physicalName = field.getPhysicalColumnName();
-            try {
-                ColumnValidation.validateColumnName(physicalName);
-            } catch (IllegalArgumentException e) {
-                throw new BaseException(FormErrorCode.INVALID_COLUMN_NAME,
-                        "存在不合法的字段标识，请按提示修改后重试");
-            }
-            if (!columnNames.add(physicalName)) {
-                throw new BaseException(FormErrorCode.DUPLICATE_COLUMN, "字段标识重复，请修改后重试");
-            }
-        }
-
-        // —— Step 4: 创建物理表（DDL 不可回滚，因此校验先行） ——
-        FormTableSpec tableSpec = new FormTableSpec(false, fields);
-        Map<String, String> subTableNameSink = new HashMap<>();
-        String physicalTableName;
-        try {
-            physicalTableName = dynamicTableManager.createFormTable(tableSpec, subTableNameSink);
-        } catch (Exception e) {
-            log.error("Failed to create physical table for form: {}", formId, e);
-            throw new BaseException(FormErrorCode.PUBLISH_FAILED, "发布失败：数据表创建未成功，请稍后重试或联系管理员");
-        }
-        log.info("Physical table created: {} for form: {}", physicalTableName, formId);
-
-        // —— Step 4a: 序列化子表映射 ——
-        String subTableMappingJson = null;
-        if (!subTableNameSink.isEmpty()) {
-            try {
-                subTableMappingJson = objectMapper.writeValueAsString(subTableNameSink);
-            } catch (JsonProcessingException e) {
-                log.warn("Failed to serialize sub-table mapping, skip: {}", e.getMessage());
-            }
-        }
-
-        // —— Step 5: 回填表单元数据 + sw_form_config 的 table_name/parent_table ——
-        entity.setPhysicalTableName(physicalTableName);
-        entity.setStatus(FormStatusEnum.PUBLISHED.getCode());
-        entity.setFormVersion(entity.getFormVersion() == null ? 1 : entity.getFormVersion() + 1);
-        entity.setSubTableMapping(subTableMappingJson);
-        entity.setUpdateTime(LocalDateTime.now());
-        formDefMapper.updateById(entity);
-
-        // 回填主表单的 sw_form_config 行：table_name = physicalTableName
-        if (config != null) {
-            config.setTableName(physicalTableName);
-            // parent_table 对主表单留空
-            formConfigMapper.updateById(config);
-        }
-
-        // 回填每个 TABLE 子表的 sw_form_config 行：parent_table = 主表 table_name
-        for (Map.Entry<String, String> entry : subTableNameSink.entrySet()) {
-            String subFieldName = entry.getKey();
-            String subTableName = entry.getValue();
-            FormConfigEntity subConfig = new FormConfigEntity();
-            subConfig.setId(idGenerator.generate());
-            subConfig.setFormId(formId);
-            subConfig.setTableName(subTableName);
-            subConfig.setParentTable(physicalTableName);
-            // 子表 definition = 该 TABLE 字段的 subFields 序列化
-            String subDefinition = buildSubTableDefinition(fields, subFieldName);
-            subConfig.setDefinition(subDefinition);
-            subConfig.setCreateTime(LocalDateTime.now());
-            subConfig.setUpdateTime(LocalDateTime.now());
-            subConfig.setDeleted(0);
-            subConfig.setVersion(0L);
-            formConfigMapper.insert(subConfig);
-        }
-
-        // —— Step 6: 存快照 ——
-        FormSnapshotEntity snapshot = new FormSnapshotEntity();
-        snapshot.setId(idGenerator.generate());
-        snapshot.setFormId(formId);
-        snapshot.setFormVersion(entity.getFormVersion());
-        snapshot.setDefinition(frozenDefinition);
-        snapshot.setCreateTime(LocalDateTime.now());
-        snapshot.setUpdateTime(LocalDateTime.now());
-        snapshot.setDeleted(0);
-        snapshot.setVersion(0L);
-        formSnapshotMapper.insert(snapshot);
-
-        log.info("Form published: id={}, formKey={}, physicalTable={}, version={}",
-                formId, entity.getFormKey(), physicalTableName, entity.getFormVersion());
-    }
-
-    /** 将发布时的管理员列表配置一起冻结，历史读取不再依赖现行配置。 */
-    private String freezeSnapshotDefinition(String formId, String definition) {
-        if (listConfigMapper == null) return definition;
-        String listConfig = getListConfig(formId);
-        if (listConfig == null || listConfig.isBlank()) return definition;
-        try {
-            ObjectNode frozen = (ObjectNode) objectMapper.readTree(definition);
-            frozen.set("listConfig", objectMapper.readTree(listConfig));
-            return objectMapper.writeValueAsString(frozen);
-        } catch (JsonProcessingException | ClassCastException e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "发布快照配置无效，请检查表单和列表配置后重试");
-        }
+        publishService.publish(formId);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void publishNewVersion(String formId, String definition) {
-        FormDefEntity entity = formDefMapper.selectById(formId);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        if (!FormStatusEnum.PUBLISHED.getCode().equals(entity.getStatus())
-                && !FormStatusEnum.DISABLED.getCode().equals(entity.getStatus())) {
-            throw new BaseException(FormErrorCode.FORM_NOT_PUBLISHED,
-                    "仅已发布或已停用表单可发布新版本");
-        }
-        if (entity.getPhysicalTableName() == null || entity.getPhysicalTableName().isBlank()) {
-            throw new BaseException(FormErrorCode.PUBLISH_FAILED, "表单缺少既有物理表，不能发布新版本");
-        }
-
-        validateLayoutDefinition(definition);
-        List<FieldSpec> fields = parseAndValidateFieldsFromDefinition(definition);
-        Set<String> fieldNames = fields.stream()
-                .map(FieldSpec::getFieldName)
-                .collect(java.util.stream.Collectors.toSet());
-        visibilityRules.parseAndValidate(definition, collectFieldDisplay(definition));
-        validateFormulaDependencies(definition, fieldNames);
-        fieldPermissionService.parse(definition);
-        validateFormEvents(definition);
-        validateFormIntegrations(definition);
-        validateDatasourceBindings(definition);
-        String frozenDefinition = freezeSnapshotDefinition(formId, definition);
-
-        // 先完成全部定义校验，再执行不可回滚的增量 DDL；新版本只允许复用原表。
-        // 明细表（TABLE）不产生主表列：结构未变化时允许随新版本保留（打印模板等
-        // 定义级配置需要能随版本发布），新增/变更明细表仍拒绝（F2-6 验收实测暴露）。
-        java.util.Map<String, String> previousTables = tableSignatures(getDefinitionById(formId));
-        for (FieldSpec field : fields) {
-            if (field.getFieldType() == FieldType.TABLE) {
-                String signature = tableSignature(definition, field.getFieldName());
-                if (!signature.equals(previousTables.get(field.getFieldName()))) {
-                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                            "新版本暂不支持新增或变更 TABLE 字段");
-                }
-                continue;
-            }
-            if (field.getFieldType() != FieldType.LABEL) {
-                dynamicTableManager.addColumn(entity.getPhysicalTableName(), field);
-            }
-        }
-
-        FormConfigEntity config = formConfigMapper.selectOne(
-                Wrappers.lambdaQuery(FormConfigEntity.class)
-                        .eq(FormConfigEntity::getFormId, formId)
-                        .isNull(FormConfigEntity::getParentTable));
-        if (config == null) {
-            throw new BaseException(FormErrorCode.CONFIG_NOT_FOUND, "表单配置不存在，不能发布新版本");
-        }
-        config.setDefinition(definition);
-        config.setUpdateTime(LocalDateTime.now());
-        formConfigMapper.updateById(config);
-
-        int newVersion = entity.getFormVersion() == null ? 1 : entity.getFormVersion() + 1;
-        entity.setFormVersion(newVersion);
-        entity.setStatus(FormStatusEnum.PUBLISHED.getCode());
-        entity.setUpdateTime(LocalDateTime.now());
-        formDefMapper.updateById(entity);
-
-        FormSnapshotEntity snapshot = new FormSnapshotEntity();
-        snapshot.setId(idGenerator.generate());
-        snapshot.setFormId(formId);
-        snapshot.setFormVersion(newVersion);
-        snapshot.setDefinition(frozenDefinition);
-        snapshot.setCreateTime(LocalDateTime.now());
-        snapshot.setUpdateTime(LocalDateTime.now());
-        snapshot.setDeleted(0);
-        snapshot.setVersion(0L);
-        formSnapshotMapper.insert(snapshot);
-
-        log.info("Form new version published: id={}, formKey={}, physicalTable={}, version={}",
-                formId, entity.getFormKey(), entity.getPhysicalTableName(), newVersion);
-    }
-
-    /** 解析定义中的全部 TABLE 字段结构签名（字段名 → 子字段 name:type 有序串）。 */
-    private java.util.Map<String, String> tableSignatures(String definitionJson) {
-        java.util.Map<String, String> result = new java.util.LinkedHashMap<>();
-        if (definitionJson == null || definitionJson.isBlank()) {
-            return result;
-        }
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson);
-            JsonNode fields = root == null ? null : root.get("fields");
-            if (fields == null || !fields.isArray()) {
-                return result;
-            }
-            for (JsonNode field : fields) {
-                if (!"TABLE".equals(field.path("type").asText())) {
-                    continue;
-                }
-                String name = field.path("name").asText(null);
-                if (name == null) {
-                    continue;
-                }
-                StringBuilder signature = new StringBuilder(name).append('|');
-                JsonNode subFields = field.get("subFields");
-                if (subFields != null && subFields.isArray()) {
-                    for (JsonNode sub : subFields) {
-                        signature.append(sub.path("name").asText("")).append(':')
-                                .append(sub.path("type").asText("TEXT")).append(',');
-                    }
-                }
-                result.put(name, signature.toString());
-            }
-            return result;
-        } catch (Exception e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单定义配置异常，请检查后重试");
-        }
-    }
-
-    /** 单个 TABLE 字段的结构签名；定义中不存在返回空串（视为新增明细表）。 */
-    private String tableSignature(String definitionJson, String fieldName) {
-        return tableSignatures(definitionJson).getOrDefault(fieldName, "");
+        publishService.publishNewVersion(formId, definition);
     }
 
     @Override
-    public FormDefDTO getFormDef(String id) {
-        FormDefEntity entity = formDefMapper.selectById(id);
-        return entity != null ? toDTO(entity) : null;
+    public FormDefVO getFormDef(String id) {
+        return queryService.getFormDef(id);
     }
 
     @Override
-    public FormDefDTO getFormDefByKey(String formKey) {
-        LambdaQueryWrapper<FormDefEntity> query = Wrappers.lambdaQuery(FormDefEntity.class)
-                .eq(FormDefEntity::getFormKey, formKey);
-        FormDefEntity entity = formDefMapper.selectOne(query);
-        return entity != null ? toDTO(entity) : null;
+    public FormDefVO getFormDefByKey(String formKey) {
+        return queryService.getFormDefByKey(formKey);
     }
 
     @Override
     public String getDefinition(String formKey) {
-        LambdaQueryWrapper<FormDefEntity> defQuery = Wrappers.lambdaQuery(FormDefEntity.class)
-                .eq(FormDefEntity::getFormKey, formKey);
-        FormDefEntity entity = formDefMapper.selectOne(defQuery);
-        if (entity == null) {
-            return null;
-        }
-        LambdaQueryWrapper<FormConfigEntity> configQuery = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, entity.getId())
-                .isNull(FormConfigEntity::getParentTable);
-        FormConfigEntity config = formConfigMapper.selectOne(configQuery);
-        return config != null ? config.getDefinition() : null;
+        return queryService.getDefinition(formKey);
     }
 
     @Override
     public String getDefinitionById(String formId) {
-        LambdaQueryWrapper<FormConfigEntity> configQuery = Wrappers.lambdaQuery(FormConfigEntity.class)
-                .eq(FormConfigEntity::getFormId, formId)
-                .isNull(FormConfigEntity::getParentTable);
-        FormConfigEntity config = formConfigMapper.selectOne(configQuery);
-        return config != null ? config.getDefinition() : null;
+        return queryService.getDefinitionById(formId);
     }
 
     @Override
     public String getSnapshotDefinitionByKey(String formKey, Integer formVersion) {
-        FormDefDTO dto = getFormDefByKey(formKey);
-        if (dto == null) {
-            return null;
-        }
-        return getSnapshot(dto.getId(), formVersion).getDefinition();
+        return queryService.getSnapshotDefinitionByKey(formKey, formVersion);
     }
 
     @Override
-    public PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword) {
-        return pageFormDefs(pageParam, keyword, null);
+    public PageResult<FormDefVO> pageFormDefs(PageParam pageParam, String keyword) {
+        return queryService.pageFormDefs(pageParam, keyword);
     }
 
     /** BF20261013-020：按表单类型过滤的分页查询（formType 为空不过滤）。 */
-    public PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword, String formType) {
-        // 构造查询条件：按 update_time 倒序 + 可选 name 模糊搜索 + 可选类型精确过滤
-        LambdaQueryWrapper<FormDefEntity> wrapper = Wrappers.lambdaQuery(FormDefEntity.class)
-                .orderByDesc(FormDefEntity::getUpdateTime);
-        if (keyword != null && !keyword.isBlank()) {
-            wrapper.like(FormDefEntity::getName, keyword.trim());
-        }
-        if (formType != null && !formType.isBlank()) {
-            wrapper.eq(FormDefEntity::getFormType, formType.trim());
-        }
-        // 走 MyBatis-Plus selectPage → @TableLogic / TenantLineHandler 自动生效
-        PageResult<FormDefEntity> entityPage = formDefMapper.selectPage(pageParam, wrapper);
-        // 转换 Entity → DTO
-        List<FormDefDTO> dtoList = entityPage.getRecords().stream()
-                .map(this::toDTO)
-                .toList();
-        resolveCreatorNames(entityPage.getRecords(), dtoList);
-        PageResult<FormDefDTO> result = new PageResult<>();
-        result.setRecords(dtoList);
-        result.setTotal(entityPage.getTotal());
-        result.setPageNum(entityPage.getPageNum());
-        result.setPageSize(entityPage.getPageSize());
-        return result;
-    }
-
-    /**
-     * 批量解析当前页创建人展示名（V012-BUG-015）：按 createBy 去重经
-     * {@link UserQueryFacade#getUserDisplayNames} 查询后逐行回填。
-     * 查询上下文缺失、失败或无解析结果时降级为 null，不阻断列表查询。
-     */
-    private void resolveCreatorNames(List<FormDefEntity> entities, List<FormDefDTO> dtoList) {
-        if (userQueryFacade == null) {
-            return;
-        }
-        Set<Long> ids = new HashSet<>();
-        for (FormDefEntity entity : entities) {
-            if (entity.getCreateBy() != null) {
-                ids.add(entity.getCreateBy());
-            }
-        }
-        if (ids.isEmpty()) {
-            return;
-        }
-        Map<Long, String> names;
-        try {
-            names = userQueryFacade.getUserDisplayNames(ids).orElse(Map.of());
-        } catch (Exception e) {
-            log.warn("批量解析表单创建人展示名失败，创建人列降级为空: {}", e.getMessage());
-            return;
-        }
-        for (int i = 0; i < entities.size(); i++) {
-            Long createBy = entities.get(i).getCreateBy();
-            if (createBy != null) {
-                dtoList.get(i).setCreateByName(names.get(createBy));
-            }
-        }
+    public PageResult<FormDefVO> pageFormDefs(PageParam pageParam, String keyword, String formType) {
+        return queryService.pageFormDefs(pageParam, keyword, formType);
     }
 
     @Override
-    public List<FormSnapshotDTO> listSnapshots(String formId) {
-        FormDefEntity entity = formDefMapper.selectById(formId);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        LambdaQueryWrapper<FormSnapshotEntity> query = Wrappers.lambdaQuery(FormSnapshotEntity.class)
-                .eq(FormSnapshotEntity::getFormId, formId)
-                .orderByDesc(FormSnapshotEntity::getFormVersion);
-        return formSnapshotMapper.selectList(query).stream()
-                .map(s -> FormSnapshotDTO.builder()
-                        .formVersion(s.getFormVersion())
-                        .createTime(s.getCreateTime())
-                        .build())
-                .toList();
+    public List<FormSnapshotVO> listSnapshots(String formId) {
+        return queryService.listSnapshots(formId);
     }
 
     @Override
-    public FormSnapshotDetailDTO getSnapshot(String formId, Integer formVersion) {
-        FormDefEntity entity = formDefMapper.selectById(formId);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        LambdaQueryWrapper<FormSnapshotEntity> query = Wrappers.lambdaQuery(FormSnapshotEntity.class)
-                .eq(FormSnapshotEntity::getFormId, formId)
-                .eq(FormSnapshotEntity::getFormVersion, formVersion);
-        FormSnapshotEntity snapshot = formSnapshotMapper.selectOne(query);
-        if (snapshot == null) {
-            throw new BaseException(FormErrorCode.SNAPSHOT_NOT_FOUND,
-                    "表单版本快照不存在: version=" + formVersion);
-        }
-        return FormSnapshotDetailDTO.builder()
-                .formVersion(snapshot.getFormVersion())
-                .createTime(snapshot.getCreateTime())
-                .definition(snapshot.getDefinition())
-                .build();
+    public FormSnapshotDetailVO getSnapshot(String formId, Integer formVersion) {
+        return queryService.getSnapshot(formId, formVersion);
     }
 
     @Override
     public FormDefEntity getById(String id) {
-        return formDefMapper.selectById(id);
+        return queryService.getById(id);
     }
 
     @Override
-    public List<FormDefDTO> listPublishedForCurrentUser() {
-        PageParam pageParam = new PageParam();
-        pageParam.setPageNum(1);
-        pageParam.setPageSize(200);
-        LambdaQueryWrapper<FormDefEntity> wrapper = Wrappers.<FormDefEntity>lambdaQuery()
-                .eq(FormDefEntity::getStatus, FormStatusEnum.PUBLISHED.getCode())
-                .orderByDesc(FormDefEntity::getUpdateTime);
-        PageResult<FormDefEntity> page = formDefMapper.selectPage(pageParam, wrapper);
-        return page.getRecords().stream()
-                .filter(this::isVisibleToCurrentUser)
-                .map(this::toDTO)
-                .toList();
+    public List<FormDefVO> listPublishedForCurrentUser() {
+        return queryService.listPublishedForCurrentUser();
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateVisibility(String formId, Collection<Long> userIds) {
-        FormDefEntity entity = formDefMapper.selectById(formId);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        List<Long> normalized = userIds == null ? List.of() : userIds.stream()
-                .filter(Objects::nonNull)
-                .distinct()
-                .sorted()
-                .toList();
-        if (normalized.stream().anyMatch(id -> id <= 0)) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR.getCode(),
-                    "可见范围用户 ID 无效");
-        }
-        try {
-            entity.setVisibilityScope(normalized.isEmpty()
-                    ? null
-                    : objectMapper.writeValueAsString(Map.of("userIds", normalized)));
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("序列化表单可见范围失败", e);
-        }
-        formDefMapper.updateById(entity);
-        log.info("Updated form visibility: formId={}, userCount={}", formId, normalized.size());
+        lifecycleService.updateVisibility(formId, userIds);
     }
 
     @Override
     public boolean isCurrentUserVisible(String formKey) {
-        FormDefEntity entity = formDefMapper.selectOne(Wrappers.<FormDefEntity>lambdaQuery()
-                .eq(FormDefEntity::getFormKey, formKey));
-        return entity != null && isVisibleToCurrentUser(entity);
+        return queryService.isCurrentUserVisible(formKey);
     }
 
-    private boolean isVisibleToCurrentUser(FormDefEntity entity) {
-        if (!FormStatusEnum.PUBLISHED.getCode().equals(entity.getStatus())
-                && !FormStatusEnum.DISABLED.getCode().equals(entity.getStatus())) {
-            return false;
-        }
-        LoginUser loginUser = LoginUserHolder.get();
-        if (loginUser == null || loginUser.getUserId() == null) {
-            return false;
-        }
-        String scope = entity.getVisibilityScope();
-        if (scope == null || scope.isBlank()) {
-            return true;
-        }
-        try {
-            JsonNode root = objectMapper.readTree(scope);
-            JsonNode ids = root == null ? null : root.get("userIds");
-            if (ids == null || !ids.isArray()) {
-                return false;
-            }
-            for (JsonNode id : ids) {
-                if (loginUser.getUserId().toString().equals(id.asText())) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (JsonProcessingException e) {
-            log.error("Invalid form visibility scope: formKey={}", entity.getFormKey(), e);
-            return false;
-        }
-    }
-
-    /**
-     * 0.1.7 #21：表单任何状态均可删除（软删）。物理表/快照/数据全部保留（deleted=1），
-     * 列表/详情/填报入口经 @TableLogic 自动过滤；删除粒度只区分表单（可删）与流程定义（禁删）。
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteDraft(String id) {
-        FormDefEntity entity = formDefMapper.selectById(id);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        formDefMapper.deleteById(id);
-        auditLifecycle(id, "DELETE", "表单删除（软删，状态 " + entity.getStatus() + "）");
-        log.info("Form soft-deleted: id={}, status={}", id, entity.getStatus());
+        lifecycleService.deleteDraft(id);
     }
 
     // ==================== I2：生命周期 / 列表配置 ====================
@@ -805,763 +173,45 @@ public class FormDefServiceImpl implements FormDefService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void disable(String id, String reason) {
-        FormDefEntity entity = formDefMapper.selectById(id);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        if (!FormStatusEnum.PUBLISHED.getCode().equals(entity.getStatus())) {
-            auditLifecycle(id, "DISABLE_DENIED", "状态 " + entity.getStatus() + " 不允许停用");
-            throw new BaseException(FormErrorCode.FORM_ALREADY_DRAFT.getCode(),
-                    "仅已发布表单可停用");
-        }
-        entity.setStatus(FormStatusEnum.DISABLED.getCode());
-        entity.setUpdateTime(LocalDateTime.now());
-        formDefMapper.updateById(entity);
-        auditLifecycle(id, "DISABLE", reason);
-        log.info("Form disabled: id={}, reason={}", id, reason);
+        lifecycleService.disable(id, reason);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void enable(String id, String reason) {
-        FormDefEntity entity = formDefMapper.selectById(id);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        if (!FormStatusEnum.DISABLED.getCode().equals(entity.getStatus())) {
-            auditLifecycle(id, "ENABLE_DENIED", "状态 " + entity.getStatus() + " 不允许启用");
-            throw new BaseException(FormErrorCode.FORM_ALREADY_PUBLISHED.getCode(),
-                    "仅已停用表单可启用");
-        }
-        entity.setStatus(FormStatusEnum.PUBLISHED.getCode());
-        entity.setUpdateTime(LocalDateTime.now());
-        formDefMapper.updateById(entity);
-        auditLifecycle(id, "ENABLE", reason);
-        log.info("Form enabled: id={}, reason={}", id, reason);
+        lifecycleService.enable(id, reason);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveListConfig(String formId, String configJson) {
-        FormDefEntity entity = formDefMapper.selectById(formId);
-        if (entity == null) {
-            throw new BaseException(FormErrorCode.FORM_NOT_FOUND);
-        }
-        validateListConfig(configJson);
-        LambdaQueryWrapper<com.sw.ck.form.entity.FormListConfigEntity> query =
-                Wrappers.lambdaQuery(com.sw.ck.form.entity.FormListConfigEntity.class)
-                        .eq(com.sw.ck.form.entity.FormListConfigEntity::getFormId, formId);
-        com.sw.ck.form.entity.FormListConfigEntity config = listConfigMapper.selectOne(query);
-        java.time.LocalDateTime now = LocalDateTime.now();
-        if (config == null) {
-            config = new com.sw.ck.form.entity.FormListConfigEntity();
-            config.setId(idGenerator.generate());
-            config.setFormId(formId);
-            config.setConfigJson(configJson);
-            config.setCreateTime(now);
-            config.setUpdateTime(now);
-            config.setDeleted(0);
-            config.setVersion(0L);
-            listConfigMapper.insert(config);
-        } else {
-            config.setConfigJson(configJson);
-            config.setUpdateTime(now);
-            listConfigMapper.updateById(config);
-        }
-        log.info("Saved form list config: formId={}", formId);
+        lifecycleService.saveListConfig(formId, configJson);
     }
 
     @Override
     public String getListConfig(String formId) {
-        LambdaQueryWrapper<com.sw.ck.form.entity.FormListConfigEntity> query =
-                Wrappers.lambdaQuery(com.sw.ck.form.entity.FormListConfigEntity.class)
-                        .eq(com.sw.ck.form.entity.FormListConfigEntity::getFormId, formId);
-        com.sw.ck.form.entity.FormListConfigEntity config = listConfigMapper.selectOne(query);
-        return config != null ? config.getConfigJson() : null;
-    }
-
-    /**
-     * 列表配置 JSON 结构校验（服务端权威；无权字段不得借配置进入响应）。
-     * 允许形状：{"columns":[{"name":..,"label":..,"width":..}..],
-     *            "filters":[{"name":..,"op":..}..],
-     *            "defaultSort":{"name":..,"desc":true|false},
-     *            "actions":["view","edit","delete","export"...]}
-     */
-    private void validateListConfig(String configJson) {
-        if (configJson == null || configJson.isBlank()) {
-            throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID, "列表配置不能为空");
-        }
-        try {
-            JsonNode root = objectMapper.readTree(configJson);
-            if (root == null || !root.isObject()) {
-                throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID, "列表配置必须是 JSON 对象");
-            }
-            JsonNode columns = root.get("columns");
-            if (columns == null || !columns.isArray() || columns.isEmpty()) {
-                throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID, "columns 必须是非空数组");
-            }
-            Set<String> seen = new HashSet<>();
-            for (JsonNode col : columns) {
-                String name = col.path("name").asText("");
-                if (name.isBlank() || !seen.add(name)) {
-                    throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID,
-                            "columns 存在缺失或重复的字段名: '" + name + "'");
-                }
-            }
-            JsonNode actions = root.get("actions");
-            if (actions != null) {
-                if (!actions.isArray()) {
-                    throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID, "actions 必须是数组");
-                }
-                Set<String> allowed = Set.of("view", "edit", "delete", "export", "import", "start-flow");
-                for (JsonNode action : actions) {
-                    if (!allowed.contains(action.asText())) {
-                        throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID,
-                                "不允许的列表动作: '" + action.asText() + "'");
-                    }
-                }
-            }
-            JsonNode filters = root.get("filters");
-            if (filters != null && !filters.isArray()) {
-                throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID, "filters 必须是数组");
-            }
-            JsonNode sort = root.get("defaultSort");
-            if (sort != null && !sort.isObject()) {
-                throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID, "defaultSort 必须是对象");
-            }
-        } catch (JsonProcessingException e) {
-            throw new BaseException(FormErrorCode.LIST_CONFIG_INVALID, "列表配置 JSON 解析失败");
-        }
-    }
-
-    private void auditLifecycle(String formId, String action, String reason) {
-        if (lifecycleAuditMapper == null) {
-            log.info("Form lifecycle (audit mapper absent): formId={}, action={}, reason={}",
-                    formId, action, reason);
-            return;
-        }
-        try {
-            com.sw.ck.form.entity.FormLifecycleAuditEntity audit =
-                    new com.sw.ck.form.entity.FormLifecycleAuditEntity();
-            audit.setId(idGenerator.generate());
-            audit.setFormId(formId);
-            audit.setAction(action);
-            audit.setReason(reason);
-            var loginUser = com.sw.ck.security.holder.LoginUserHolder.get();
-            audit.setOperatorId(loginUser == null ? null : loginUser.getUserId());
-            audit.setTenantId(loginUser == null || loginUser.getTenantId() == null
-                    ? 0L : loginUser.getTenantId());
-            audit.setDeleted(0);
-            audit.setVersion(0L);
-            java.time.LocalDateTime now = LocalDateTime.now();
-            audit.setCreateTime(now);
-            audit.setUpdateTime(now);
-            lifecycleAuditMapper.insert(audit);
-        } catch (Exception e) {
-            log.error("Failed to write lifecycle audit: formId={}, action={}", formId, action, e);
-        }
-    }
-
-    /**
-     * I2 发布校验：FORMULA 依赖（未知字段/循环）与 fieldPermissions 结构。
-     */
-    /** 保存和发布共用的事件形状闸门；历史定义缺少 events 时保持原义。 */
-    private void validateFormEvents(String definitionJson) {
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson);
-            JsonNode events = root == null ? null : root.get("events");
-            if (events == null || events.isNull()) {
-                return;
-            }
-            if (!events.isObject()) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单 events 必须是对象");
-            }
-            java.util.Iterator<java.util.Map.Entry<String, JsonNode>> fields = events.fields();
-            while (fields.hasNext()) {
-                java.util.Map.Entry<String, JsonNode> event = fields.next();
-                if (!Set.of("onLoad", "beforeSubmitHandler", "afterSubmitHandler").contains(event.getKey())) {
-                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                            "不支持的表单事件: " + event.getKey());
-                }
-                if (!event.getValue().isArray() || event.getValue().size() > 50) {
-                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                            "表单事件动作必须是数组且不超过 50 项: " + event.getKey());
-                }
-                Set<String> ids = new HashSet<>();
-                for (JsonNode action : event.getValue()) {
-                    String id = action.path("id").asText("").trim();
-                    String script = action.path("script").asText("");
-                    if (id.isEmpty() || id.length() > 128 || !ids.add(id)) {
-                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                                "表单事件动作 ID 为空、重复或过长: " + event.getKey());
-                    }
-                    if (!action.path("order").isNumber() || script.length() > 100_000) {
-                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                                "表单事件动作缺少有效顺序或脚本过长: " + id);
-                    }
-                    if (action.has("confirmMessage")
-                            && action.get("confirmMessage").asText("").length() > 500) {
-                        throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                                "表单事件确认说明过长: " + id);
-                    }
-                }
-            }
-        } catch (BaseException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
-        }
-    }
-
-    /**
-     * 表单允许集成清单闸门：结构合法、无重复，且（可取得当前租户时）每个标识都对应
-     * 本租户启用且已分类的能力。运行时仍按版本快照与当前能力状态复核，历史快照不恢复已撤销权力。
-     */
-    private void validateFormIntegrations(String definitionJson) {
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson);
-            JsonNode allowed = root == null ? null : root.get("allowedIntegrations");
-            if (allowed == null || allowed.isNull()) {
-                return;
-            }
-            if (!allowed.isArray() || allowed.size() > 50) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                        "表单允许集成清单必须是数组且不超过 50 项");
-            }
-            Set<String> seen = new HashSet<>();
-            LoginUser loginUser = LoginUserHolder.get();
-            Long tenantId = loginUser == null ? null : loginUser.getTenantId();
-            List<com.sw.ck.common.integration.ExternalCapability> enabled =
-                    (externalCapabilityFacade != null && tenantId != null)
-                            ? externalCapabilityFacade.listEnabled(tenantId)
-                            : null;
-            for (JsonNode node : allowed) {
-                if (node == null || !node.isTextual()) {
-                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                            "表单允许集成清单包含非文本项");
-                }
-                String capabilityId = node.asText("").trim();
-                if (!capabilityId.matches("^[A-Za-z_][A-Za-z0-9_]{0,63}$")) {
-                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                            "集成能力标识不合法: " + capabilityId);
-                }
-                if (!seen.add(capabilityId)) {
-                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                            "集成能力标识重复: " + capabilityId);
-                }
-                if (enabled != null && enabled.stream()
-                        .noneMatch(capability -> capabilityId.equals(capability.name()))) {
-                    throw new BaseException(FormErrorCode.INTEGRATION_UNAVAILABLE,
-                            "集成能力未登记、跨租户、已停用或未分类: " + capabilityId);
-                }
-            }
-        } catch (BaseException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
-        }
-    }
-
-    private void validateFormulaDependencies(String definitionJson, Set<String> fieldNames) {
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson);
-            JsonNode fieldsArray = root.isArray() ? root : root.get("fields");
-            if (fieldsArray == null || !fieldsArray.isArray()) {
-                return;
-            }
-            Map<String, String> expressions = new LinkedHashMap<>();
-            for (JsonNode field : fieldsArray) {
-                if ("FORMULA".equals(field.path("type").asText())) {
-                    expressions.put(field.path("name").asText(), field.path("expression").asText());
-                }
-            }
-            if (!expressions.isEmpty()) {
-                formulaEngine.validateDependencies(expressions, fieldNames);
-            }
-        } catch (JsonProcessingException e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
-        }
-    }
-
-    /**
-     * I2 发布校验：DATASOURCE 字段的 dsBinding 必须命中启用中的查询契约。
-     */
-    private void validateDatasourceBindings(String definitionJson) {
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson);
-            JsonNode fieldsArray = root.isArray() ? root : root.get("fields");
-            if (fieldsArray == null || !fieldsArray.isArray()) {
-                return;
-            }
-            boolean hasBinding = false;
-            for (JsonNode field : fieldsArray) {
-                JsonNode binding = field.path("dsBinding");
-                if (!binding.isObject()) {
-                    continue;
-                }
-                hasBinding = true;
-                if (extDataService == null) {
-                    throw new BaseException(FormErrorCode.EXT_QUERY_NOT_FOUND,
-                            "外部数据源服务未装配，无法发布 DATASOURCE 字段");
-                }
-                extDataService.validateBinding(
-                        binding.path("queryKey").asText(),
-                        binding.hasNonNull("version") ? binding.get("version").intValue() : null,
-                        binding.path("valueField").asText(),
-                        binding.path("displayField").asText());
-            }
-            if (hasBinding) {
-                log.info("Datasource bindings validated at publish");
-            }
-        } catch (JsonProcessingException e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 解析失败");
-        }
-    }
-
-    // ==================== 内部方法 ====================
-
-    private FormDefDTO toDTO(FormDefEntity entity) {
-        return FormDefDTO.builder()
-                .id(entity.getId())
-                .formKey(entity.getFormKey())
-                .name(entity.getName())
-                .logicalTableName(entity.getLogicalTableName())
-                .status(entity.getStatus())
-                .physicalTableName(entity.getPhysicalTableName())
-                .formVersion(entity.getFormVersion())
-                .description(entity.getDescription())
-                .visibilityScope(entity.getVisibilityScope())
-                .formType(entity.getFormType())
-                .appId(entity.getAppId())
-                .dirId(entity.getDirId())
-                .createTime(entity.getCreateTime())
-                .updateTime(entity.getUpdateTime())
-                .build();
+        return lifecycleService.getListConfig(formId);
     }
 
     @Override
-    public java.util.Set<String> filterVisibleFormKeys(java.util.Collection<String> formKeys) {
-        if (formKeys == null || formKeys.isEmpty()) {
-            return java.util.Set.of();
-        }
-        java.util.List<String> keys = formKeys.stream()
-                .filter(java.util.Objects::nonNull)
-                .distinct()
-                .toList();
-        if (keys.isEmpty()) {
-            return java.util.Set.of();
-        }
-        java.util.List<FormDefEntity> entities = formDefMapper.selectList(
-                Wrappers.<FormDefEntity>lambdaQuery().in(FormDefEntity::getFormKey, keys));
-        return entities.stream()
-                .filter(this::isVisibleToCurrentUser)
-                .map(FormDefEntity::getFormKey)
-                .collect(java.util.stream.Collectors.toSet());
+    public Set<String> filterVisibleFormKeys(Collection<String> formKeys) {
+        return queryService.filterVisibleFormKeys(formKeys);
     }
 
-    private static String trimToNull(String value) {
-        if (value == null) {
-            return null;
-        }
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    // ==================== definition 解析校验闸门（唯一闸门） ====================
-
-    /**
-     * 从 definition JSON 解析字段并执行全栈校验。
-     * <p>
-     * 期望格式：{@code {"fields": [...]}} 或顶层数组（兼容旧格式）。
-     * definition 是唯一字段真源——不再接受外部 fieldSpecs 入参。
-     * </p>
-     *
-     * <h3>校验项（任一不过抛对应 FormErrorCode）</h3>
-     * <ol>
-     *   <li>type 字面量 ∈ FieldType 且 enabled=true</li>
-     *   <li>列名过 ColumnValidation（白名单正则/保留字/前缀/长度）</li>
-     *   <li>同级重复列名拒绝</li>
-     *   <li>DICT 必须带 dictType</li>
-     *   <li>REFERENCE 必须带 targetFormId</li>
-     *   <li>TABLE 必须带 subFields；subFields 内不得再含 TABLE（禁递归）</li>
-     *   <li>subFields 内字段过全部上述校验</li>
-     * </ol>
-     *
-     * @param definitionJson config.definition JSON
-     * @return 校验通过的字段规格列表
-     * @throws BaseException 校验失败
-     */
+    // ==================== 包内契约保持（原包可见方法，委托校验闸门） ====================
 
     /**
      * 字段键 → 设计者可读显示名（R3b）：显隐规则校验失败时向设计者展示 label 而非内部键。
-     * 解析失败按空映射处理——此时字段校验本身会先行报错。
      */
     Map<String, String> collectFieldDisplay(String definitionJson) {
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson == null ? "{}" : definitionJson);
-            JsonNode fields = root == null ? null : root.get("fields");
-            if (fields == null && root != null && root.isArray()) {
-                fields = root;
-            }
-            return FormFieldEnrichmentService.collectFieldLabels(fields);
-        } catch (Exception e) {
-            return Map.of();
-        }
+        return definitionValidator.collectFieldDisplay(definitionJson);
     }
 
+    /**
+     * 从 definition JSON 解析字段并执行全栈校验（唯一闸门，详见
+     * {@link FormDefDefinitionValidator#parseAndValidateFieldsFromDefinition}）。
+     */
     List<FieldSpec> parseAndValidateFieldsFromDefinition(String definitionJson) {
-        if (definitionJson == null || definitionJson.isBlank() || "{}".equals(definitionJson.trim())) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "表单 definition 为空，不能发布");
-        }
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson);
-            if (root == null || root.isNull()) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 不能为 null");
-            }
-            JsonNode fieldsArray = root.get("fields");
-            if (fieldsArray == null || !fieldsArray.isArray()) {
-                // 兼容旧格式：顶层数组
-                if (root.isArray()) {
-                    fieldsArray = root;
-                } else {
-                    throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                            "definition 中缺少 fields 数组");
-                }
-            }
-            if (fieldsArray.isEmpty()) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition 的 fields 数组为空");
-            }
-            List<FieldSpec> fields = new ArrayList<>();
-            for (JsonNode node : fieldsArray) {
-                validateLayoutFieldNode(node);
-                fields.add(parseFieldNodeFromDefinition(node, false));
-            }
-            return fields;
-        } catch (JsonProcessingException e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "definition JSON 解析失败: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 从 definition JSON 的单字段节点解析为 FieldSpec（含全栈校验）。
-     *
-     * @param node        JSON 节点
-     * @param isSubField  是否在 TABLE subFields 内（用于递归禁止检查）
-     * @return FieldSpec
-     * @throws BaseException 校验失败
-     */
-    private FieldSpec parseFieldNodeFromDefinition(JsonNode node, boolean isSubField) {
-        validateLayoutFieldNode(node);
-
-        // —— 1. name ——
-        if (!node.has("name") || node.get("name").asText().isBlank()) {
-            throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING, "字段缺少 name");
-        }
-        String name = node.get("name").asText();
-
-        // —— 2. type ——
-        if (!node.has("type") || node.get("type").asText().isBlank()) {
-            throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN, "字段 '" + name + "' 缺少 type");
-        }
-        String typeStr = node.get("type").asText();
-        FieldType fieldType;
-        try {
-            fieldType = FieldType.valueOf(typeStr);
-        } catch (IllegalArgumentException e) {
-            throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
-                    "字段「" + name + "」使用了当前不支持的字段类型，请更换类型后重试");
-        }
-
-        // —— 3. enabled 检查 ——
-        if (!fieldType.isEnabled()) {
-            throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
-                    "字段「" + name + "」使用了暂未开放的字段类型，请更换类型后重试");
-        }
-
-        // —— 4. 列名 + 白名单校验 (跳过 TABLE / LABEL：均不产生物理列) ——
-        if (fieldType != FieldType.TABLE && fieldType != FieldType.LABEL) {
-            String physicalName = ColumnValidation.physicalColumnName(name, fieldType);
-            try {
-                ColumnValidation.validateColumnName(physicalName);
-            } catch (IllegalArgumentException e) {
-                throw new BaseException(FormErrorCode.INVALID_COLUMN_NAME,
-                        "存在不合法的字段标识，请按提示修改后重试");
-            }
-        }
-
-        // —— 5. 类型特定约束 ——
-        validateDefaultValueType(name, fieldType, node);
-        return switch (fieldType) {
-            case TEXT -> FieldSpec.text(name);
-            case RICH_TEXT -> FieldSpec.richText(name);
-            case NUMBER -> FieldSpec.number(name);
-            case DATE -> FieldSpec.date(name);
-            case BOOL -> FieldSpec.bool(name);
-            case DICT -> {
-                // BF20261013-009：source=custom 走自定义候选键值域，允许 dictType 为空；
-                // dict（缺省）仍必须带 dictType。multiple=true（下拉多选）列宽走 VARCHAR(1000)。
-                boolean customSource = "custom".equals(node.path("source").asText(""));
-                String dictType = node.path("dictType").asText("");
-                if (!customSource && dictType.isBlank()) {
-                    throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
-                            "DICT 字段 '" + name + "' 必须带 dictType");
-                }
-                yield FieldSpec.dict(name, dictType, node.path("multiple").asBoolean(false));
-            }
-            case REFERENCE -> {
-                if (!node.has("targetFormId") || node.get("targetFormId").asText().isBlank()) {
-                    throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
-                            "REFERENCE 字段 '" + name + "' 必须带 targetFormId");
-                }
-                yield FieldSpec.ref(name, node.get("targetFormId").asText());
-            }
-            case MULTISELECT -> FieldSpec.multiselect(name);
-            case ATTACHMENT -> FieldSpec.attachment(name);
-            case IMAGE -> FieldSpec.image(name);
-            case LABEL -> FieldSpec.label(name);
-            case TIME -> FieldSpec.time(name);
-            case USER -> FieldSpec.user(name, node.path("multiple").asBoolean(false));
-            case DEPT -> FieldSpec.dept(name, node.path("multiple").asBoolean(false));
-            case FORMULA -> {
-                if (!node.has("expression") || node.get("expression").asText().isBlank()) {
-                    throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
-                            "FORMULA 字段 '" + name + "' 必须带 expression");
-                }
-                yield FieldSpec.formula(name);
-            }
-            case DATASOURCE -> {
-                JsonNode binding = node.get("dsBinding");
-                if (binding == null || !binding.isObject()
-                        || binding.path("queryKey").asText("").isBlank()
-                        || binding.path("valueField").asText("").isBlank()
-                        || binding.path("displayField").asText("").isBlank()) {
-                    throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
-                            "DATASOURCE 字段 '" + name + "' 必须带 dsBinding{queryKey,version,valueField,displayField}");
-                }
-                JsonNode version = binding.get("version");
-                if (version != null && !version.canConvertToInt()) {
-                    throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
-                            "DATASOURCE 字段 '" + name + "' 的 dsBinding.version 必须是整数");
-                }
-                yield FieldSpec.datasource(name);
-            }
-            case TABLE -> {
-                // —— 递归禁止（C: TABLE 套 TABLE 硬拦截） ——
-                if (isSubField) {
-                    throw new BaseException(FormErrorCode.FIELD_NESTED_TABLE,
-                            "TABLE 字段 '" + name + "' 不能嵌套在另一个 TABLE 的 subFields 中（禁止递归）");
-                }
-                if (!node.has("subFields") || !node.get("subFields").isArray()
-                        || node.get("subFields").isEmpty()) {
-                    throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
-                            "TABLE 字段 '" + name + "' 必须带 subFields 且非空");
-                }
-                List<FieldSpec> subFields = new ArrayList<>();
-                for (JsonNode subNode : node.get("subFields")) {
-                    // 子字段必过全部校验 isSubField=true
-                    subFields.add(parseFieldNodeFromDefinition(subNode, true));
-                }
-                yield FieldSpec.table(name, subFields);
-            }
-            // disabled 占位成员 — 已在 enabled 检查中拦截，不会到达此处
-            case EMAIL, PHONE, URL, RATE, SLIDER ->
-                    throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
-                            "该字段类型暂未开放，请更换类型后重试");
-        };
-    }
-
-    /**
-     * 校验静态默认值与字段类型匹配（v0.0.2）。
-     * <p>
-     * 仅做类型匹配静态校验：TEXT/RICH_TEXT/DICT/DATE → 文本；NUMBER → 数值；
-     * BOOL → 布尔；MULTISELECT → 字符串数组；ATTACHMENT/IMAGE → 数组；
-     * LABEL/LINK 类非输入字段不允许默认值。类型不符按 1206 ATTR_MISSING 语义拒绝发布。
-     * </p>
-     */
-    private void validateDefaultValueType(String name, FieldType fieldType, JsonNode node) {
-        JsonNode defaultValue = node.get("defaultValue");
-        if (defaultValue == null || defaultValue.isNull()) {
-            return;
-        }
-        boolean valid = switch (fieldType) {
-            case TEXT, RICH_TEXT, DICT, DATE, TIME -> defaultValue.isTextual() || defaultValue.isNumber();
-            // USER/DEPT 单选默认=单个 ID；多选默认=ID 数组（P63）
-            case USER, DEPT -> node.path("multiple").asBoolean(false)
-                    ? defaultValue.isArray()
-                    : defaultValue.isTextual() || defaultValue.isNumber();
-            case NUMBER -> defaultValue.isNumber();
-            case BOOL -> defaultValue.isBoolean();
-            case MULTISELECT, ATTACHMENT, IMAGE -> defaultValue.isArray();
-            case LABEL, REFERENCE, TABLE, FORMULA, DATASOURCE -> false;
-            default -> defaultValue.isTextual();
-        };
-        if (!valid) {
-            throw new BaseException(FormErrorCode.FIELD_ATTR_MISSING,
-                    "字段 '" + name + "' 的默认值与类型 " + fieldType + " 不匹配");
-        }
-    }
-
-    /**
-     * 校验并拒绝 definition 中的非法 24 列布局值。
-     * <p>
-     * colSpan 缺省表示旧 definition，交给前端按字段类型补默认值；一旦携带就必须是
-     * 1—24 的整数。校验递归覆盖 TABLE 的 subFields，避免不同入口各自解释值域。
-     * </p>
-     */
-    private void validateLayoutDefinition(String definitionJson) {
-        if (definitionJson == null || definitionJson.isBlank() || "{}".equals(definitionJson.trim())) {
-            return;
-        }
-        try {
-            JsonNode root = objectMapper.readTree(definitionJson);
-            if (root == null || root.isNull()) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition JSON 不能为 null");
-            }
-            JsonNode fieldsArray = root.isArray() ? root : root.get("fields");
-            if (fieldsArray == null || !fieldsArray.isArray()) {
-                return;
-            }
-            for (JsonNode fieldNode : fieldsArray) {
-                validateLayoutFieldNode(fieldNode);
-            }
-        } catch (JsonProcessingException e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "definition JSON 解析失败: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 字段类型权威校验（Z8/G14a）：config 保存层拒绝未知与未启用类型。
-     * 未知类型用 FIELD_TYPE_UNKNOWN(1204)，未启用类型用 FIELD_TYPE_DISABLED(1205)，
-     * 与 publish 的 validFieldTypes 校验同口径（ColumnValidation 权威目录）。
-     */
-    private void validateFieldTypes(String definitionJson) {
-        if (definitionJson == null || definitionJson.isBlank() || "{}".equals(definitionJson.trim())) {
-            return;
-        }
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(definitionJson);
-        } catch (JsonProcessingException e) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "definition JSON 解析失败: " + e.getMessage());
-        }
-        JsonNode fieldsArray = (root == null || root.isNull()) ? null
-                : (root.isArray() ? root : root.get("fields"));
-        if (fieldsArray == null || !fieldsArray.isArray()) {
-            return;
-        }
-        for (JsonNode fieldNode : fieldsArray) {
-            String type = fieldNode.path("type").asText("");
-            if (type.isBlank()) {
-                throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
-                        "字段缺少 type: " + fieldNode.path("name").asText(""));
-            }
-            com.sw.ck.form.dynamic.FieldType fieldType;
-            try {
-                fieldType = com.sw.ck.form.dynamic.FieldType.valueOf(type);
-            } catch (IllegalArgumentException e) {
-                throw new BaseException(FormErrorCode.FIELD_TYPE_UNKNOWN,
-                        "字段类型未知: " + type);
-            }
-            if (!fieldType.isEnabled()) {
-                throw new BaseException(FormErrorCode.FIELD_TYPE_DISABLED,
-                        "字段类型暂不允许发布: " + type);
-            }
-        }
-    }
-
-    private void validateLayoutFieldNode(JsonNode node) {
-        if (node == null || !node.isObject()) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID, "definition 字段必须是对象");
-        }
-
-        JsonNode colSpan = node.get("colSpan");
-        if (colSpan != null && (!colSpan.isIntegralNumber()
-                || colSpan.intValue() < 1 || colSpan.intValue() > 24)) {
-            String name = node.path("name").asText("<unknown>");
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "字段 '" + name + "' 的 colSpan 必须是 1—24 的整数");
-        }
-
-        validateTextConstraints(node);
-
-        JsonNode subFields = node.get("subFields");
-        if (subFields != null && subFields.isArray()) {
-            for (JsonNode subField : subFields) {
-                validateLayoutFieldNode(subField);
-            }
-        }
-    }
-
-    private void validateTextConstraints(JsonNode node) {
-        String name = node.path("name").asText("<unknown>");
-        String type = node.path("type").asText("");
-        JsonNode min = node.get("minLength");
-        JsonNode max = node.get("length");
-        JsonNode pattern = node.get("pattern");
-        JsonNode message = node.get("patternMessage");
-        boolean configured = min != null || pattern != null || message != null;
-        if (configured && !("TEXT".equals(type) || "RICH_TEXT".equals(type))) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "字段「" + name + "」的长度或正则约束仅适用于文本字段");
-        }
-        int minValue = 0;
-        if (min != null && !min.isNull()) {
-            if (!min.isIntegralNumber() || !min.canConvertToInt()
-                    || min.asInt() < 0 || min.asInt() > 1_000_000) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                        "字段「" + name + "」的最小长度必须为 0—1000000 的整数");
-            }
-            minValue = min.asInt();
-        }
-        if (max != null && !max.isNull()) {
-            if (!max.isIntegralNumber() || !max.canConvertToInt()
-                    || max.asInt() < 0 || max.asInt() > 1_000_000) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                        "字段「" + name + "」的最大长度必须为 0—1000000 的整数");
-            }
-            if (max.asInt() > 0 && minValue > max.asInt()) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                        "字段「" + name + "」的最小长度不能大于最大长度");
-            }
-        }
-        if (message != null && !message.isNull()) {
-            if (!message.isTextual() || message.asText().length() > 200) {
-                throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                        "字段「" + name + "」的校验提示必须是不超过 200 个字符的文本");
-            }
-        }
-        if (pattern == null || pattern.isNull() || pattern.asText().isBlank()) {
-            return;
-        }
-        if (!pattern.isTextual() || pattern.asText().length() > 512) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "字段「" + name + "」的正则必须是不超过 512 个字符的文本");
-        }
-        try {
-            Pattern.compile(pattern.asText());
-        } catch (PatternSyntaxException invalid) {
-            throw new BaseException(FormErrorCode.DEFINITION_INVALID,
-                    "字段「" + name + "」的正则语法无效，请检查后重试");
-        }
-    }
-
-    /**
-     * 构建子表的 definition JSON（从父表单 fields 中提取指定 TABLE 字段的 subFields）。
-     */
-    private String buildSubTableDefinition(List<FieldSpec> masterFields, String tableFieldName) {
-        for (FieldSpec f : masterFields) {
-            if (f.getFieldType() == FieldType.TABLE && f.getFieldName().equals(tableFieldName)) {
-                try {
-                    return objectMapper.writeValueAsString(f.getSubFields());
-                } catch (JsonProcessingException e) {
-                    log.warn("Failed to serialize sub-table definition for '{}': {}", tableFieldName, e.getMessage());
-                    return "[]";
-                }
-            }
-        }
-        return "[]";
+        return definitionValidator.parseAndValidateFieldsFromDefinition(definitionJson);
     }
 }

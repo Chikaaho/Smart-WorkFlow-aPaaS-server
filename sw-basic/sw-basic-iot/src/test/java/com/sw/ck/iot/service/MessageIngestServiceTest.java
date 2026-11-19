@@ -2,6 +2,7 @@ package com.sw.ck.iot.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotCommand;
 import com.sw.ck.iot.entity.IotMessageLog;
@@ -17,11 +18,15 @@ import com.sw.ck.iot.mapper.IotProductMapper;
 import com.sw.ck.iot.mapper.IotPropertyRecordMapper;
 import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatchers;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -63,6 +68,9 @@ class MessageIngestServiceTest {
     @Mock
     private IotScriptService scriptService;
 
+    // 生产类已统一 @Autowired 字段注入（d53c7fb6）：改 @InjectMocks 按类型自动装配
+    // （mock 字段与生产 @Autowired 字段一一对应），等价原构造注入。
+    @InjectMocks
     private MessageIngestService service;
 
     private IotTopic topicCfg;
@@ -72,10 +80,6 @@ class MessageIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MessageIngestService(topicMapper, deviceMapper, messageLogMapper,
-                propertyRecordMapper, eventRecordMapper, commandMapper, productMapper,
-                thingModelMapper, ruleEngineService, scriptService);
-
         topicCfg = new IotTopic();
         topicCfg.setId(10L);
         topicCfg.setConnId(1L);
@@ -191,10 +195,10 @@ class MessageIngestServiceTest {
         assertEquals("SUCCESS", command.getStatus());
         assertEquals("{\"value\":\"first\"}", command.getResultJson());
         assertEquals(firstReplyTime, command.getReplyTime());
-        verify(commandMapper, org.mockito.Mockito.times(1)).updateById(any(IotCommand.class));
+        verify(commandMapper, Mockito.times(1)).updateById(any(IotCommand.class));
     }
 
     private static <T> T eq(T value) {
-        return org.mockito.ArgumentMatchers.eq(value);
+        return ArgumentMatchers.eq(value);
     }
 }

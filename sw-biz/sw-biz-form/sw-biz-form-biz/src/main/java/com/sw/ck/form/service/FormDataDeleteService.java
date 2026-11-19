@@ -1,27 +1,34 @@
 package com.sw.ck.form.service;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
 import com.sw.ck.form.entity.FormDefEntity;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.mapper.FormDefMapper;
+import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 表单数据软删除服务。
  *
@@ -51,42 +58,27 @@ import java.util.*;
  * 记录不存在或已软删时影响行数 = 0，视为成功不抛错。
  */
 @Service
+@Log4j2
 public class FormDataDeleteService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormDataDeleteService.class);
 
     /** 固定元数据表（由 Flyway 建，非动态宽表）：RESTRICT 反查需跨租户可见 */
     static final String FORM_CONFIG_TABLE = "sw_form_config";
 
-    private final FormDefService formDefService;
-    private final FormDefMapper formDefMapper;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
-
-    public FormDataDeleteService(FormDefService formDefService,
-                                  FormDefMapper formDefMapper,
-                                  JdbcTemplate jdbcTemplate,
-                                  ObjectMapper objectMapper) {
-        this.formDefService = formDefService;
-        this.formDefMapper = formDefMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /** P62 C1 关键数据保护（可选注入；未启用策略时为无操作）。 */
-    private com.sw.ck.form.txn.service.C1PolicyService c1PolicyService;
+    @Autowired(required = false)
+    private C1PolicyService c1PolicyService;
 
+    @Autowired(required = false)
     private FormFieldEnrichmentService enrichment;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setEnrichment(FormFieldEnrichmentService enrichment) {
-        this.enrichment = enrichment;
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setC1PolicyService(com.sw.ck.form.txn.service.C1PolicyService c1PolicyService) {
-        this.c1PolicyService = c1PolicyService;
-    }
 
     // ==================== 主入口 ====================
 
@@ -101,16 +93,16 @@ public class FormDataDeleteService {
         // —— Step 1: 获取当前用户 ——
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
         Long tenantId = loginUser.getTenantId();
 
-        // —— Step 2: 解析 formKey → FormDefDTO ——
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        // —— Step 2: 解析 formKey → FormDefVO ——
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
-        if (!"PUBLISHED".equals(formDef.getStatus())) {
+        if (!FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 未发布，不能操作");
         }
         if (enrichment != null) {
@@ -283,10 +275,10 @@ public class FormDataDeleteService {
      * <p>查不到时退化为中性表述，绝不把物理表名回显给用户。</p>
      */
     private String resolveFormNameByPhysicalTable(String physicalTableName) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             FormDefEntity entity = formDefMapper.selectOne(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<FormDefEntity>lambdaQuery()
+                    Wrappers.<FormDefEntity>lambdaQuery()
                             .eq(FormDefEntity::getPhysicalTableName, physicalTableName)
                             .last("LIMIT 1"));
             if (entity != null && entity.getName() != null && !entity.getName().isBlank()) {
@@ -322,7 +314,7 @@ public class FormDataDeleteService {
             if (fieldsArray != null && fieldsArray.isArray()) {
                 for (JsonNode fieldNode : fieldsArray) {
                     collectReferenceFieldName(fieldNode, targetFormKey,
-                            "type", "REFERENCE",
+                            "type", FieldType.REFERENCE.name(),
                             "targetFormId", "name", names);
                 }
                 return names;

@@ -2,23 +2,16 @@ package com.sw.ck.agent.orchestration;
 
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
-import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
 import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.langchain4j.agent.tool.ToolExecutionRequest;
-import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.response.ChatResponse;
+
+import dev.langchain4j.data.message.ChatMessage;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * 图解释执行引擎（M07-F02 Step8 第一版 + Step10 多变量执行上下文，纯 Java 无 Spring
@@ -26,7 +19,7 @@ import java.util.regex.Pattern;
  * <p>
  * 直接解释 {@link ProcessGraph#getElements()}（Step7 产物）：从唯一 START 节点出发，
  * 按 elements 顺序遍历节点与边，执行 LLM 节点（单跳调用，无工具无历史）/工具节点
- * （按名称精确定位单个 {@link ToolCallback} 直接调用）/条件分支节点（关键词子串匹配
+ * （按名称精确定位单个 {@code ToolCallback} 直接调用）/条件分支节点（关键词子串匹配
  * 选路），直到 END 节点，返回最终输出文本。
  * </p>
  * <p>
@@ -87,6 +80,18 @@ import java.util.regex.Pattern;
  * 运行时错误统一携带<b>错误分类</b>（{@code GraphExecutionException.category}，
  * 见 {@link #ERROR_CATEGORY_STEP_LIMIT} 等），第三方异常（模型/工具调用）在调用点
  * 包装为带分类的图执行异常，失败记录可结构化落库。
+ * </p>
+ * <p>
+ * <b>实现拆分（行为不变，公开契约不变）</b>：本类保留节点类型/config 键/错误分类
+ * 常量、公开嵌套数据类、run 主循环与轨迹读取；具体执行逻辑按职责拆至同包包级
+ * 协作类——{@link AgentGraphNodeConfigs}（config 读取）、{@link AgentGraphVariables}
+ * （变量读写/模板插值）、{@link AgentGraphRouting}（图导航与选路）、
+ * {@link AgentGraphLlmNodeRunner}（LLM 节点 + 工具循环）、
+ * {@link AgentGraphToolNodeRunner}（TOOL 节点）、
+ * {@link AgentGraphKnowledgeNodeRunner}（知识检索）、
+ * {@link AgentGraphHumanSubgraphHandler}（人工/子图节点）、
+ * {@link AgentGraphTraceRecorder}（轨迹收尾与事件发射）。公开静态工具方法以同签名
+ * 委托保持调用方零改动。
  * </p>
  *
  * @see GraphExecutionException
@@ -217,11 +222,6 @@ public class AgentGraphInterpreter {
     /** LLM 节点 config 键：用户 Prompt 模板（String，可选，支持 {{variableName}} 占位符，空白 = 退化为 inputVar 原文） */
     public static final String CONFIG_KEY_USER_PROMPT_TEMPLATE = "userPromptTemplate";
 
-    /** 用户 Prompt 模板占位符正则：{{variableName}}，变量名按 Java 标识符规则（首字
-     * 母/下划线，后续字母数字下划线），一次性纯字符串替换（不做二次展开，避免变量值注入）。 */
-    private static final Pattern PLACEHOLDER_PATTERN =
-            Pattern.compile("\\{\\{([A-Za-z_][A-Za-z0-9_]*)}}");
-
     /**
      * 默认变量名（旧图语义锚点）：graph 入参写入该变量；未指定变量名的节点读写该
      * 变量（Step8 单一 currentText 语义）；CONDITION/END 未指定 inputVar 时分别基于
@@ -278,9 +278,6 @@ public class AgentGraphInterpreter {
     /** 未分类兜底（理论不可达：全部抛出点均已带分类） */
     public static final String ERROR_CATEGORY_UNKNOWN = "UNKNOWN";
 
-    /** 工具入参 JSON 编码（Jackson，替代旧 spring-ai JsonParser） */
-    private static final ObjectMapper JSON = new ObjectMapper();
-
     /** 根分支路径（非 FORK 分支的 branchId；FORK 扇出后按出边顺序追加 "-<下标>"） */
     private static final String ROOT_BRANCH_ID = "0";
 
@@ -299,6 +296,12 @@ public class AgentGraphInterpreter {
 
     /** 执行步数硬上限（防死循环兜底，调用方按 elements 节点数 × 2 计算） */
     private final int maxSteps;
+
+    /** LLM 节点执行协作类（模型调用 + 节点内工具循环） */
+    private final AgentGraphLlmNodeRunner llmNodeRunner;
+
+    /** TOOL 节点执行协作类（白名单工具定位与直接调用） */
+    private final AgentGraphToolNodeRunner toolNodeRunner;
 
     /** 本次执行的节点轨迹（Step12 采集，每次 run 重建；由调用方读取落库，本类不持 Mapper） */
     private List<NodeExecutionTrace> traces;
@@ -335,6 +338,8 @@ public class AgentGraphInterpreter {
         this.knowledgeRetrievalService = knowledgeRetrievalService;
         this.tenantId = tenantId;
         this.maxSteps = maxSteps;
+        this.llmNodeRunner = new AgentGraphLlmNodeRunner(modelRuntimeService, toolCallbackFactory, tenantId);
+        this.toolNodeRunner = new AgentGraphToolNodeRunner(toolCallbackFactory, tenantId);
     }
 
     // ==================== G3：人工节点暂停/恢复与子图调用 ====================
@@ -364,6 +369,12 @@ public class AgentGraphInterpreter {
         public Map<String, Integer> joinCounts = new HashMap<>();
         /** 子图暂停链：父节点 id → 子图暂停状态（G3-5：父执行等待人工后恢复子图） */
         public Map<String, PauseState> subgraphPauseStates = new HashMap<>();
+        /**
+         * 本层执行行 id（1.1.3/P72：人工暂停时由执行服务写入、恢复轮凭它复用同一执行行，
+         * 对齐顶层 V3「恢复前后同一条执行」语义；随暂停状态一并序列化进 pause_state_json）。
+         * 顶层执行的行 id 不走本字段（受理行 result_execution_id 即顶层结果行）。
+         */
+        public Long executionRowId;
     }
 
     /** 活跃执行点快照（nodeId + 分支路径）。 */
@@ -450,6 +461,9 @@ public class AgentGraphInterpreter {
         public int depth;
     }
 
+    /** 人工超时决策标记（生命周期服务提交；解释器匹配 timeoutKeyword 边）。 */
+    public static final String HUMAN_TIMEOUT_DECISION = "__TIMEOUT__";
+
     /**
      * 解释执行整图：从唯一 START 出发维护一组活跃执行点，每轮取队首活跃点执行一步
      * （FORK 扇出多分支并存、JOIN 聚合、LOOP 迭代计数），任一活跃点到达 END 即终止
@@ -491,7 +505,7 @@ public class AgentGraphInterpreter {
      */
     public String run(ProcessGraph graph, Map<String, String> inputs, RunOptions options) {
         List<GraphElement> elements = graph.getElements();
-        validateRequiredInputs(elements, inputs);
+        AgentGraphRouting.validateRequiredInputs(elements, inputs);
         PauseState resume = options == null ? null : options.resumeState;
         // 命名变量表（Step10）：初始为结构化入参（旧接口 = 仅默认变量 input）。
         // 未指定变量名的节点读写默认变量，旧图（无变量名字段）行为与 Step8 一致。
@@ -517,7 +531,7 @@ public class AgentGraphInterpreter {
                 activePoints.add(new ActiveExecutionPoint(saved.nodeId, saved.branchPath));
             }
         } else {
-            activePoints.add(new ActiveExecutionPoint(findStart(elements).getId(), ROOT_BRANCH_ID));
+            activePoints.add(new ActiveExecutionPoint(AgentGraphRouting.findStart(elements).getId(), ROOT_BRANCH_ID));
         }
         // LOOP 迭代计数（按节点 id）与 JOIN 到达计数（按节点 id）
         Map<String, Integer> loopIterationCounts = new HashMap<>();
@@ -533,7 +547,7 @@ public class AgentGraphInterpreter {
         // 上抛）。轨迹由调用方（执行 Service）经 getTraces() 读取落库——解释器只采集
         // 不持久化，保持纯 Java 无 Mapper 依赖（方向文档 §5.4）。
         // CopyOnWriteArrayList：执行超时取消时主线程可安全读取已产生的轨迹
-        traces = new java.util.concurrent.CopyOnWriteArrayList<>();
+        traces = new CopyOnWriteArrayList<>();
         long traceSeq = 0;
         int steps = 0;
         while (!activePoints.isEmpty()) {
@@ -543,19 +557,19 @@ public class AgentGraphInterpreter {
             ActiveExecutionPoint point = activePoints.remove(0);
             String currentId = point.nodeId;
             long stepStartNanos = System.nanoTime();
-            GraphElement current = findNode(currentId, elements);
+            GraphElement current = AgentGraphRouting.findNode(currentId, elements);
             NodeExecutionTrace trace = new NodeExecutionTrace(++traceSeq, point.branchPath,
                     current.getId(), current.getType());
             traces.add(trace);
             // G1-7：节点开始事件（生命周期执行经 AgentExecutionEventContext 实时落事件表）
-            emitNodeEvent("NODE_STARTED", trace);
+            AgentGraphTraceRecorder.emitNodeEvent("NODE_STARTED", trace);
             try {
                 // 任一活跃点到达 END → 立即终止全部执行（其余分支停止推进），返回该 END
                 // 节点 config.inputVar 读取值（缺失/空白 = 默认变量，Step8 语义）
                 if (NODE_TYPE_END.equals(current.getType())) {
-                    finishTrace(trace, stepStartNanos, variables);
+                    AgentGraphTraceRecorder.finishTrace(trace, stepStartNanos, variables);
                     finalVariables = new HashMap<>(variables);
-                    return readVariable(current, variables, CONFIG_KEY_INPUT_VAR);
+                    return AgentGraphVariables.readVariable(current, variables, CONFIG_KEY_INPUT_VAR);
                 }
                 // 全局步数上限（跨所有活跃点累计）：死循环 / JOIN 挂起死锁统一由超限兜底
                 if (++steps > maxSteps) {
@@ -563,30 +577,32 @@ public class AgentGraphInterpreter {
                             "执行步数超限，图可能存在环路");
                 }
                 switch (current.getType()) {
-                    case NODE_TYPE_LLM -> writeOutput(current, variables,
-                            callLlmNode(current, readInput(current, variables), variables));
+                    case NODE_TYPE_LLM -> AgentGraphVariables.writeOutput(current, variables,
+                            llmNodeRunner.callLlmNode(current,
+                                    AgentGraphVariables.readInput(current, variables), variables, traces),
+                            nodeOutputs);
                     case NODE_TYPE_TOOL -> {
                         // F1S2-G1：工具节点真实入参/输出写入轨迹（节点卡片可见）
-                        String toolInput = readInput(current, variables);
+                        String toolInput = AgentGraphVariables.readInput(current, variables);
                         trace.setInputText(toolInput);
-                        String toolOutput = callToolNode(current, toolInput);
+                        String toolOutput = toolNodeRunner.callToolNode(current, toolInput);
                         trace.setOutputText(toolOutput);
-                        writeOutput(current, variables, toolOutput);
+                        AgentGraphVariables.writeOutput(current, variables, toolOutput, nodeOutputs);
                     }
-                    case NODE_TYPE_KNOWLEDGE -> writeOutput(current, variables,
-                            retrieveKnowledge(knowledgeRetrievalService, current,
-                                    readInput(current, variables), trace));
-                    case NODE_TYPE_HUMAN -> executeHumanNode(current, variables, options, trace,
-                            activePoints, point, loopIterationCounts, joinArrivalCounts);
-                    case NODE_TYPE_SUBGRAPH -> executeSubgraphNode(current, variables, options, trace,
-                            activePoints, point, loopIterationCounts, joinArrivalCounts);
+                    case NODE_TYPE_KNOWLEDGE -> AgentGraphVariables.writeOutput(current, variables,
+                            AgentGraphKnowledgeNodeRunner.retrieveKnowledge(knowledgeRetrievalService, current,
+                                    AgentGraphVariables.readInput(current, variables), trace), nodeOutputs);
+                    case NODE_TYPE_HUMAN -> AgentGraphHumanSubgraphHandler.executeHumanNode(current, variables,
+                            options, trace, activePoints, point, loopIterationCounts, joinArrivalCounts);
+                    case NODE_TYPE_SUBGRAPH -> AgentGraphHumanSubgraphHandler.executeSubgraphNode(current, variables,
+                            options, trace, activePoints, point, loopIterationCounts, joinArrivalCounts);
                     // START/CONDITION 为纯路由点：START 不写变量（入参已在初始变量表），
                     // CONDITION 只读匹配文本（inputVar）不写变量
                     case NODE_TYPE_START, NODE_TYPE_CONDITION -> { }
                     case NODE_TYPE_LOOP -> {
                         // 按节点 id 迭代计数 +1，超限抛错；否则沿唯一出边进循环体
                         int iteration = loopIterationCounts.merge(current.getId(), 1, Integer::sum);
-                        if (iteration > maxIterationsOf(current)) {
+                        if (iteration > AgentGraphNodeConfigs.maxIterationsOf(current)) {
                             throw new GraphExecutionException(ERROR_CATEGORY_LOOP_LIMIT,
                                     "循环迭代次数超限: " + current.getId());
                         }
@@ -596,8 +612,8 @@ public class AgentGraphInterpreter {
                         // 到达计数 +1；未达静态入边数 → 本活跃点挂起（不入队），等待其余分支；
                         // 达到 → 合成单个活跃点沿唯一出边继续（路由段统一处理）
                         int arrived = joinArrivalCounts.merge(current.getId(), 1, Integer::sum);
-                        if (arrived < incomingEdgeCount(current, elements)) {
-                            finishTrace(trace, stepStartNanos, variables);
+                        if (arrived < AgentGraphRouting.incomingEdgeCount(current, elements)) {
+                            AgentGraphTraceRecorder.finishTrace(trace, stepStartNanos, variables);
                             continue;
                         }
                     }
@@ -609,29 +625,30 @@ public class AgentGraphInterpreter {
                 // 单选一；LOOP/JOIN/START/LLM/TOOL 出边唯一约束由 nextNodeId 强制）
                 if (NODE_TYPE_FORK.equals(current.getType())) {
                     int branchIndex = 0;
-                    for (GraphElement edge : outgoingEdges(current, elements)) {
+                    for (GraphElement edge : AgentGraphRouting.outgoingEdges(current, elements)) {
                         activePoints.add(new ActiveExecutionPoint(edge.getTarget(),
                                 point.branchPath + "-" + branchIndex++));
                     }
                 } else if (NODE_TYPE_HUMAN.equals(current.getType())) {
                     // G3：人工节点按决策按钮的出边关键词路由（TIMEOUT 走超时关键词）
-                    HumanDecision decision = findDecision(options, current.getId());
+                    HumanDecision decision = AgentGraphHumanSubgraphHandler.findDecision(options, current.getId());
                     activePoints.add(new ActiveExecutionPoint(
-                            routeHumanNode(current, decision, elements), point.branchPath));
+                            AgentGraphHumanSubgraphHandler.routeHumanNode(current, decision, elements),
+                            point.branchPath));
                 } else {
                     activePoints.add(new ActiveExecutionPoint(
-                            nextNodeId(current, elements, variables), point.branchPath));
+                            AgentGraphRouting.nextNodeId(current, elements, variables), point.branchPath));
                 }
-                finishTrace(trace, stepStartNanos, variables);
+                AgentGraphTraceRecorder.finishTrace(trace, stepStartNanos, variables);
             } catch (HumanPauseException pause) {
                 // G3 暂停不是失败：轨迹保留 WAITING 状态后上抛，由生命周期服务落等待态
-                finishTrace(trace, stepStartNanos, variables);
+                AgentGraphTraceRecorder.finishTrace(trace, stepStartNanos, variables);
                 throw pause;
             } catch (RuntimeException e) {
                 // 本步失败：节点轨迹仍完整留痕（耗时 + 失败时点变量快照），再上抛
-                trace.setStatus("FAILED");
+                trace.setStatus(AgentExecutionOutcomeEnum.FAILED.getCode());
                 trace.setErrorMessage(e.getMessage());
-                finishTrace(trace, stepStartNanos, variables);
+                AgentGraphTraceRecorder.finishTrace(trace, stepStartNanos, variables);
                 throw e;
             }
         }
@@ -653,83 +670,6 @@ public class AgentGraphInterpreter {
         return traces == null ? List.of() : List.copyOf(traces);
     }
 
-    /** 完成一条节点轨迹：节点级耗时（出队到本步结束）+ 该时点变量表快照 */
-    private void finishTrace(NodeExecutionTrace trace, long stepStartNanos,
-                             Map<String, String> variables) {
-        trace.nodeLatencyMs = (System.nanoTime() - stepStartNanos) / 1_000_000;
-        trace.endTime = LocalDateTime.now();
-        trace.variableSnapshot = new HashMap<>(variables);
-        // G1-7：节点结束事件（耗时/入参/出参摘要/失败原因，大字段截断）
-        emitNodeEvent("NODE_FINISHED", trace);
-    }
-
-    /** G1-7 节点事件载荷：STARTED 只带身份，FINISHED 带状态、耗时与出入参摘要。 */
-    private void emitNodeEvent(String type, NodeExecutionTrace trace) {
-        if (AgentExecutionEventContext.get() == null) {
-            return;
-        }
-        Map<String, Object> payload = new java.util.LinkedHashMap<>();
-        payload.put("nodeId", trace.getNodeId());
-        payload.put("nodeType", trace.getNodeType());
-        payload.put("branchId", trace.getBranchId());
-        if ("NODE_FINISHED".equals(type)) {
-            payload.put("status", trace.getStatus());
-            payload.put("latencyMs", trace.getNodeLatencyMs());
-            payload.put("input", truncateForEvent(trace.getInputText(), 2000));
-            payload.put("output", truncateForEvent(trace.getOutputText(), 2000));
-            payload.put("errorMessage", truncateForEvent(trace.getErrorMessage(), 1000));
-            if (trace.getChildExecutionId() != null) {
-                payload.put("childExecutionId", trace.getChildExecutionId());
-            }
-        }
-        try {
-            AgentExecutionEventContext.emitNode(type, trace.getNodeId(), JSON.writeValueAsString(payload));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
-            AgentExecutionEventContext.emitNode(type, trace.getNodeId(), null);
-        }
-    }
-
-    /** 事件载荷大字段截断（避免事件表/轮询被长文本拖慢）。 */
-    private static String truncateForEvent(String value, int max) {
-        if (value == null) return null;
-        return value.length() <= max ? value : value.substring(0, max) + "…(truncated)";
-    }
-
-    /**
-     * G1-4 必填入参校验：开始节点 config.params 中 required=true 的参数必须在
-     * {@code inputs} 中存在且非空白；缺失抛 INPUT_MISSING 并列出全部缺失参数名。
-     * 未声明参数（旧图）= 不校验，行为不变。
-     */
-    private void validateRequiredInputs(List<GraphElement> elements, Map<String, String> inputs) {
-        GraphElement start;
-        try {
-            start = findStart(elements);
-        } catch (GraphExecutionException noStart) {
-            return; // 拓扑错误由执行前校验/主循环统一报出
-        }
-        Map<String, Object> config = start.getConfig();
-        if (config == null) return;
-        Object raw = config.get(CONFIG_KEY_INPUT_PARAMS);
-        if (!(raw instanceof List<?> params)) return;
-        List<String> missing = new ArrayList<>();
-        for (Object item : params) {
-            if (!(item instanceof Map<?, ?> param)) continue;
-            boolean required = Boolean.TRUE.equals(param.get("required"));
-            if (!required) continue;
-            Object nameValue = param.get("name");
-            String name = nameValue == null ? "" : String.valueOf(nameValue).trim();
-            if (name.isEmpty()) continue;
-            String value = inputs == null ? null : inputs.get(name);
-            if (value == null || value.isBlank()) {
-                missing.add(name);
-            }
-        }
-        if (!missing.isEmpty()) {
-            throw new GraphExecutionException(ERROR_CATEGORY_INPUT_MISSING,
-                    "缺少必填参数: " + String.join(", ", missing));
-        }
-    }
-
     /** 执行结束时的全局变量表快照（G1-4 END 输出声明解析用；未完成执行时为空）。 */
     public Map<String, String> getFinalVariables() {
         return finalVariables == null ? Map.of() : Map.copyOf(finalVariables);
@@ -741,848 +681,55 @@ public class AgentGraphInterpreter {
         return outputs == null ? Map.of() : Map.copyOf(outputs);
     }
 
-    // ==================== G3 人工节点 / 子图节点 ====================
+    // ==================== 公开静态工具（实现拆至协作类，同签名委托，调用方零改动） ====================
 
-    /** 人工超时决策标记（生命周期服务提交；解释器匹配 timeoutKeyword 边）。 */
-    public static final String HUMAN_TIMEOUT_DECISION = "__TIMEOUT__";
-
-    private HumanDecision findDecision(RunOptions options, String nodeId) {
-        if (options == null || options.decisions == null) return null;
-        for (HumanDecision decision : options.decisions) {
-            if (decision != null && nodeId.equals(decision.nodeId)) return decision;
-        }
-        return null;
+    /** config 读取正整数（实现见 {@link AgentGraphNodeConfigs#configInt}）。 */
+    public static int configInt(GraphElement node, String key, int defaultValue) {
+        return AgentGraphNodeConfigs.configInt(node, key, defaultValue);
     }
 
-    /** HUMAN 节点执行：无决策 → 构造暂停状态抛 HumanPauseException；有决策 → 应用填写内容。 */
-    private void executeHumanNode(GraphElement node, Map<String, String> variables,
-                                  RunOptions options, NodeExecutionTrace trace,
-                                  List<ActiveExecutionPoint> activePoints,
-                                  ActiveExecutionPoint point,
-                                  Map<String, Integer> loopCounts,
-                                  Map<String, Integer> joinCounts) {
-        HumanDecision decision = findDecision(options, node.getId());
-        if (decision == null) {
-            trace.setStatus("WAITING");
-            PauseState state = new PauseState();
-            state.activePoints.add(new ActivePointState(point.nodeId, point.branchPath));
-            for (ActiveExecutionPoint remaining : activePoints) {
-                state.activePoints.add(new ActivePointState(remaining.nodeId, remaining.branchPath));
-            }
-            state.variables = new HashMap<>(variables);
-            state.loopCounts = new HashMap<>(loopCounts);
-            state.joinCounts = new HashMap<>(joinCounts);
-            throw new HumanPauseException(state, buildHumanTaskSpec(node, variables));
-        }
-        if (decision.values != null) {
-            decision.values.forEach((key, value) -> {
-                if (key != null && value != null) variables.put(key, value);
-            });
-        }
-        trace.setInputText(decision.decision);
-        trace.setOutputText(decision.decision);
+    /** Double 配置读取（实现见 {@link AgentGraphNodeConfigs#configDouble}）。 */
+    public static double configDouble(GraphElement node, String key, double defaultValue) {
+        return AgentGraphNodeConfigs.configDouble(node, key, defaultValue);
     }
 
-    /** HUMAN 节点路由：按钮 keyword = 出边关键词；TIMEOUT 走 timeoutKeyword；无匹配抛错。 */
-    private String routeHumanNode(GraphElement node, HumanDecision decision,
-                                  List<GraphElement> elements) {
-        String keyword = decision == null || decision.decision == null ? "" : decision.decision;
-        if (HUMAN_TIMEOUT_DECISION.equals(keyword)) {
-            String timeoutKeyword = configString(node, CONFIG_KEY_TIMEOUT_KEYWORD);
-            if (timeoutKeyword == null || timeoutKeyword.isBlank()) {
-                throw new GraphExecutionException(ERROR_CATEGORY_HUMAN_TIMEOUT,
-                        "人工节点等待超时且未配置超时分支: " + node.getId());
-            }
-            keyword = timeoutKeyword;
-        }
-        GraphElement defaultEdge = null;
-        for (GraphElement edge : outgoingEdges(node, elements)) {
-            String edgeKeyword = keywordOf(edge);
-            if (edgeKeyword == null || edgeKeyword.isBlank()) {
-                if (defaultEdge == null) defaultEdge = edge;
-                continue;
-            }
-            if (edgeKeyword.equals(keyword)) return edge.getTarget();
-        }
-        if (defaultEdge != null) return defaultEdge.getTarget();
-        throw new GraphExecutionException(ERROR_CATEGORY_CONDITION_NO_MATCH,
-                "人工节点无匹配决策分支: " + keyword + "（节点 " + node.getId() + "）");
-    }
-
-    /** 构造人工任务定义（说明按当前变量插值）。 */
-    private HumanTaskSpec buildHumanTaskSpec(GraphElement node, Map<String, String> variables) {
-        HumanTaskSpec spec = new HumanTaskSpec();
-        spec.humanNodeId = node.getId();
-        String instructions = configString(node, CONFIG_KEY_INSTRUCTIONS);
-        spec.instructions = instructions == null ? ""
-                : interpolateTemplate(instructions, node, variables);
-        spec.fields = configMapList(node, CONFIG_KEY_FIELDS);
-        spec.buttons = configMapList(node, CONFIG_KEY_BUTTONS);
-        spec.assigneeUserIds = configLongList(node, CONFIG_KEY_ASSIGNEE_USERS);
-        spec.assigneeRoleCodes = configStringValues(node, CONFIG_KEY_ASSIGNEE_ROLES);
-        spec.timeoutSeconds = configInteger(node, CONFIG_KEY_TIMEOUT_SECONDS);
-        spec.timeoutKeyword = configString(node, CONFIG_KEY_TIMEOUT_KEYWORD);
-        return spec;
-    }
-
-    /** SUBGRAPH 节点执行：调用子图（固定版本）并按映射回写父变量。 */
-    private void executeSubgraphNode(GraphElement node, Map<String, String> variables,
-                                     RunOptions options, NodeExecutionTrace trace,
-                                     List<ActiveExecutionPoint> activePoints,
-                                     ActiveExecutionPoint point,
-                                     Map<String, Integer> loopCounts,
-                                     Map<String, Integer> joinCounts) {
-        if (options == null || options.subgraphRunner == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "子图运行器未配置: " + node.getId());
-        }
-        Long graphDefId = configLong(node, CONFIG_KEY_SUBGRAPH_ID);
-        Integer version = configInteger(node, CONFIG_KEY_SUBGRAPH_VERSION);
-        if (graphDefId == null || version == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "子图节点缺少 graphDefId/graphDefVersion: " + node.getId());
-        }
-        Map<String, String> subInputs = new java.util.LinkedHashMap<>();
-        List<Map<String, Object>> inputMappings = configMapList(node, CONFIG_KEY_SUBGRAPH_INPUTS);
-        if (!inputMappings.isEmpty()) {
-            for (Map<String, Object> mapping : inputMappings) {
-                String name = stringValue(mapping.get("name"));
-                String source = stringValue(mapping.get("source"));
-                if (name.isEmpty() || source.isEmpty()) continue;
-                String value = variables.get(source);
-                if (value == null) {
-                    throw new GraphExecutionException(ERROR_CATEGORY_UNDEFINED_VARIABLE,
-                            "子图入参映射引用了未定义变量: " + source + "（节点 " + node.getId() + "）");
-                }
-                subInputs.put(name, value);
-            }
-        } else {
-            subInputs.put(DEFAULT_VARIABLE_NAME,
-                    variables.getOrDefault(DEFAULT_VARIABLE_NAME, ""));
-        }
-        SubgraphCall call = new SubgraphCall(graphDefId, version, subInputs);
-        if (options.resumeState != null && options.resumeState.subgraphPauseStates != null) {
-            call.resumeState = options.resumeState.subgraphPauseStates.get(node.getId());
-        }
-        call.decisions = options.decisions;
-        SubgraphResult result;
-        try {
-            result = options.subgraphRunner.run(call);
-        } catch (HumanPauseException childPause) {
-            // G3-5：子图内人工节点暂停——父执行同样进入等待，保存子图暂停链
-            trace.setStatus("WAITING");
-            PauseState parentState = new PauseState();
-            parentState.activePoints.add(new ActivePointState(point.nodeId, point.branchPath));
-            for (ActiveExecutionPoint remaining : activePoints) {
-                parentState.activePoints.add(new ActivePointState(remaining.nodeId, remaining.branchPath));
-            }
-            parentState.variables = new HashMap<>(variables);
-            parentState.loopCounts = new HashMap<>(loopCounts);
-            parentState.joinCounts = new HashMap<>(joinCounts);
-            if (options.resumeState != null && options.resumeState.subgraphPauseStates != null) {
-                parentState.subgraphPauseStates.putAll(options.resumeState.subgraphPauseStates);
-            }
-            parentState.subgraphPauseStates.put(node.getId(), childPause.getPauseState());
-            throw new HumanPauseException(parentState, childPause.getTaskSpec());
-        }
-        if (result == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "子图运行无返回: " + node.getId());
-        }
-        List<Map<String, Object>> outputMappings = configMapList(node, CONFIG_KEY_SUBGRAPH_OUTPUTS);
-        if (!outputMappings.isEmpty()) {
-            for (Map<String, Object> mapping : outputMappings) {
-                String name = stringValue(mapping.get("name"));
-                String source = stringValue(mapping.get("source"));
-                if (name.isEmpty() || source.isEmpty()) continue;
-                String value = result.outputs.get(source);
-                if (value != null) variables.put(name, value);
-            }
-        } else {
-            result.outputs.forEach((key, value) -> {
-                if (key != null && value != null) variables.put(key, value);
-            });
-        }
-        try {
-            trace.setInputText(JSON.writeValueAsString(subInputs));
-            trace.setOutputText(JSON.writeValueAsString(result.outputs));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException ignored) {
-            // 轨迹文本仅展示用途，序列化失败不阻断执行
-        }
-        trace.setChildExecutionId(result.childExecutionId);
-    }
-
-    private static String stringValue(Object value) {
-        return value == null ? "" : String.valueOf(value).trim();
-    }
-
-    private List<Map<String, Object>> configMapList(GraphElement node, String key) {
-        if (node.getConfig() == null) return List.of();
-        Object raw = node.getConfig().get(key);
-        if (!(raw instanceof List<?> list)) return List.of();
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (Object item : list) {
-            if (item instanceof Map<?, ?> map) {
-                Map<String, Object> copy = new java.util.LinkedHashMap<>();
-                map.forEach((k, v) -> {
-                    if (k != null) copy.put(String.valueOf(k), v);
-                });
-                result.add(copy);
-            }
-        }
-        return result;
-    }
-
-    private List<Long> configLongList(GraphElement node, String key) {
-        if (node.getConfig() == null) return List.of();
-        Object raw = node.getConfig().get(key);
-        if (!(raw instanceof List<?> list)) return List.of();
-        List<Long> result = new ArrayList<>();
-        for (Object item : list) {
-            if (item instanceof Number number) result.add(number.longValue());
-            else if (item instanceof String text && !text.isBlank()) {
-                try {
-                    result.add(Long.parseLong(text.trim()));
-                } catch (NumberFormatException ignore) {
-                    // 非法项忽略（发布校验负责拦截）
-                }
-            }
-        }
-        return result;
-    }
-
-    private List<String> configStringValues(GraphElement node, String key) {
-        if (node.getConfig() == null) return List.of();
-        Object raw = node.getConfig().get(key);
-        if (!(raw instanceof List<?> list)) return List.of();
-        List<String> result = new ArrayList<>();
-        for (Object item : list) {
-            if (item != null && !String.valueOf(item).isBlank()) result.add(String.valueOf(item).trim());
-        }
-        return result;
-    }
-
-    private Long configLong(GraphElement node, String key) {
-        if (node.getConfig() == null) return null;
-        Object value = node.getConfig().get(key);
-        if (value instanceof Number number) return number.longValue();
-        if (value instanceof String text && !text.isBlank()) {
-            try {
-                return Long.parseLong(text.trim());
-            } catch (NumberFormatException ignore) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    private Integer configInteger(GraphElement node, String key) {
-        Long value = configLong(node, key);
-        return value == null ? null : value.intValue();
-    }
-
-    // ==================== LLM 节点 ====================
-
-    /**
-     * LLM 节点执行：config.agentModelConfigId → 解密 Key → {@code ChatModelFactory.build}
-     * → 按 config.systemPrompt / config.userPromptTemplate 组装消息列表单跳调用（不带工具、
-     * 不带历史）→ 返回输出（由调用方写入 outputVar 指定变量）。
-     * <p>
-     * <b>Prompt 契约（M07-F02-02 新增）</b>：
-     * <ul>
-     *   <li>config.systemPrompt（可选）：空白 = 不注入 SystemMessage；非空白整体作为
-     *       SystemMessage（不做变量插值——系统 Prompt 用于角色/规则/背景，与变量无关）</li>
-     *   <li>config.userPromptTemplate（可选）：空白/缺失 = 退化为 inputVar 原文（历史行为）；
-     *       配置后按 {{variableName}} 做一次性纯字符串插值；未定义变量抛 UNDEFINED_VARIABLE；
-     *       变量值按普通文本替换，不再次解析其中的 {{...}}（避免二次展开 / 表达式注入）</li>
-     * </ul>
-     * 历史图（无 systemPrompt/userPromptTemplate）行为 = 仅 UserMessage(inputVar 值)，
-     * 与 Step8/10/11/12 完全一致（零迁移）。
-     *
-     * @param node      当前 LLM 节点
-     * @param text      inputVar 读出的原始值（未配置 userPromptTemplate 时直接作为用户消息）
-     * @param variables 当前变量表（供 userPromptTemplate 插值使用）
-     */
-    private String callLlmNode(GraphElement node, String text, Map<String, String> variables) {
-        Long modelConfigId = requireConfigId(node, CONFIG_KEY_AGENT_MODEL_CONFIG_ID);
-        try {
-            // F1 阶段 1：经运行时服务解析（启停校验 + LangChain4j 单例复用 + 模板装配；
-            // D022-05：429 时组内密钥轮换，与编排入口同语义）
-            // === Prompt 契约组装 ===
-            String systemPrompt = configString(node, CONFIG_KEY_SYSTEM_PROMPT);
-            String userPromptTemplate = configString(node, CONFIG_KEY_USER_PROMPT_TEMPLATE);
-            List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
-            if (systemPrompt != null && !systemPrompt.isBlank()) {
-                messages.add(SystemMessage.from(systemPrompt));
-            }
-            String userText;
-            if (userPromptTemplate == null || userPromptTemplate.isBlank()) {
-                // 历史行为：直接用 inputVar 值作为用户消息（旧图零迁移关键）
-                userText = text;
-            } else {
-                userText = interpolateTemplate(userPromptTemplate, node, variables);
-            }
-            messages.add(UserMessage.from(userText));
-            NodeExecutionTrace currentTrace = traces.get(traces.size() - 1);
-            // F1S2-G1：节点真实输入（模板插值后的用户消息）
-            currentTrace.setInputText(userText);
-            // 阶段 2：节点可挂工具，模型请求工具时在节点内完成工具调用循环
-            return executeChatWithTools(modelRuntimeService, toolCallbackFactory, tenantId,
-                    node, modelConfigId, messages, currentTrace);
-        } catch (GraphExecutionException e) {
-            // 自有异常（未返回文本等）已带分类，原样上抛
-            throw e;
-        } catch (BaseException e) {
-            // 运行时服务拒绝（模型/供应商停用或不存在）：归入模型调用失败分类
-            throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                    e.getMessage(), e);
-        } catch (Exception e) {
-            // 第三方异常（解密失败/模型网络超时/429/未识别响应等）：包装为带分类的
-            // 图执行异常（Step12 错误分类维度），message 沿用 cause 最深非空文本，
-            // errorMessage 摘要语义不变
-            throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                    e.getMessage(), e);
-        }
+    /** config 读取字符串列表（实现见 {@link AgentGraphNodeConfigs#configStringList}）。 */
+    public static List<String> configStringList(GraphElement node, String key) {
+        return AgentGraphNodeConfigs.configStringList(node, key);
     }
 
     /**
-     * 知识检索节点（阶段 3，图执行与单步调试共用）：读取 knowledgeBaseId/topK/
-     * similarityThreshold，检索结果按"文档 + 相似度 + 分片正文"拼成文本写入输出变量，
-     * 供下游 LLM 的 userPromptTemplate 直接引用。空结果写固定提示，避免下游模型把
-     * 空字符串误当上下文。
+     * 解析节点 config 中的数值 id（{@code agentModelConfigId} 等，实现与完整说明见
+     * {@link AgentGraphNodeConfigs#parseConfigLong}）。
      */
+    public static Long parseConfigLong(Object value) {
+        return AgentGraphNodeConfigs.parseConfigLong(value);
+    }
+
+    /**
+     * 读取边的条件关键词（执行契约键 {@code config.keyword}，实现见
+     * {@link AgentGraphNodeConfigs#keywordOf}）。
+     */
+    public static String keywordOf(GraphElement edge) {
+        return AgentGraphNodeConfigs.keywordOf(edge);
+    }
+
+    /** 知识检索节点执行（图执行与单步调试共用；实现见 {@link AgentGraphKnowledgeNodeRunner}）。 */
     static String retrieveKnowledge(KnowledgeRetrievalService service, GraphElement node,
                                     String query, NodeExecutionTrace trace) {
-        trace.setInputText(query);
-        if (service == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "知识检索服务未装配，无法执行 KNOWLEDGE 节点: " + node.getId());
-        }
-        Long kbId = parseConfigLong(node.getConfig() == null
-                ? null : node.getConfig().get(CONFIG_KEY_KNOWLEDGE_BASE_ID));
-        if (kbId == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "KNOWLEDGE 节点缺少知识库引用: " + node.getId());
-        }
-        int topK = configInt(node, CONFIG_KEY_TOP_K, DEFAULT_KNOWLEDGE_TOP_K);
-        double threshold = configDouble(node, CONFIG_KEY_SIMILARITY_THRESHOLD, 0.0);
-        java.util.List<KnowledgeHitDTO> hits;
-        try {
-            hits = service.retrieve(kbId, query, topK, threshold);
-        } catch (GraphExecutionException e) {
-            throw e;
-        } catch (BaseException e) {
-            throw new GraphExecutionException(ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED,
-                    e.getMessage(), e);
-        } catch (Exception e) {
-            throw new GraphExecutionException(ERROR_CATEGORY_KNOWLEDGE_RETRIEVAL_FAILED,
-                    e.getMessage(), e);
-        }
-        String output = formatKnowledgeHits(hits);
-        trace.setOutputText(output);
-        return output;
+        return AgentGraphKnowledgeNodeRunner.retrieveKnowledge(service, node, query, trace);
     }
 
-    private static String formatKnowledgeHits(java.util.List<KnowledgeHitDTO> hits) {
-        if (hits == null || hits.isEmpty()) {
-            return "未检索到相关内容。";
-        }
-        StringBuilder sb = new StringBuilder();
-        int index = 1;
-        for (KnowledgeHitDTO hit : hits) {
-            if (sb.length() > 0) {
-                sb.append("\n\n---\n\n");
-            }
-            sb.append('[').append(index++).append("] 文档：")
-                    .append(hit.getDocumentName() == null ? "-" : hit.getDocumentName())
-                    .append("（相似度 ").append(String.format(java.util.Locale.ROOT, "%.3f",
-                            hit.getSimilarity() == null ? 0.0 : hit.getSimilarity()))
-                    .append("）\n").append(hit.getContent());
-        }
-        return sb.toString();
-    }
-
-    /** Double 配置读取（Number/数字字符串；null/非法 → 默认值）。 */
-    public static double configDouble(GraphElement node, String key, double defaultValue) {
-        Object value = node.getConfig() == null ? null : node.getConfig().get(key);
-        if (value instanceof Number number) {
-            return number.doubleValue();
-        }
-        if (value instanceof String text && !text.isBlank()) {
-            try {
-                return Double.parseDouble(text.trim());
-            } catch (NumberFormatException ignored) {
-                return defaultValue;
-            }
-        }
-        return defaultValue;
-    }
-
-
-    /**
-     * 模型调用 + 节点内工具循环（阶段 2，图执行与单步调试共用）：
-     * 按 config.toolNames 取启用工具规格随请求下发；模型返回工具请求时逐个执行并把
-     * 结果回喂模型，直到模型给出最终文本或轮次超限。每次工具调用的入参与输出写入
-     * 当前节点轨迹。
-     */
+    /** 模型调用 + 节点内工具循环（图执行与单步调试共用；实现见 {@link AgentGraphLlmNodeRunner}）。 */
     static String executeChatWithTools(AgentModelRuntimeService runtime,
                                        AgentToolCallbackFactory factory,
                                        Long tenantId,
                                        GraphElement node,
                                        Long modelConfigId,
-                                       List<dev.langchain4j.data.message.ChatMessage> messages,
+                                       List<ChatMessage> messages,
                                        NodeExecutionTrace trace) {
-        List<String> toolNames = configStringList(node, CONFIG_KEY_TOOL_NAMES);
-        List<AgentToolCallbackFactory.ToolHandle> handles = new ArrayList<>();
-        if (!toolNames.isEmpty()) {
-            if (factory == null) {
-                throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                        "工具工厂未装配，无法执行 LLM 节点工具: " + node.getId());
-            }
-            List<AgentToolCallbackFactory.ToolHandle> available = factory.buildToolCallbacks(tenantId);
-            for (String toolName : toolNames) {
-                AgentToolCallbackFactory.ToolHandle handle = available.stream()
-                        .filter(h -> toolName.equals(h.specification().name()))
-                        .findFirst()
-                        .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                                "LLM 节点引用的工具不存在或未启用: " + toolName));
-                handles.add(handle);
-            }
-        }
-        List<dev.langchain4j.agent.tool.ToolSpecification> specs = handles.stream()
-                .map(AgentToolCallbackFactory.ToolHandle::specification)
-                .toList();
-        int maxRounds = configInt(node, CONFIG_KEY_MAX_TOOL_ROUNDS, DEFAULT_MAX_TOOL_ROUNDS);
-        long inputTokens = 0L;
-        long outputTokens = 0L;
-        boolean inputSeen = false;
-        boolean outputSeen = false;
-        int rounds = 0;
-        while (true) {
-            // 增量回调在 langchain4j 传输线程触发，读取线程绑定上下文取不到生命周期监听器；
-            // 在解释器线程先捕获监听器，增量到达时直接投递，避免线程本地查找静默丢失。
-            final AgentExecutionEventContext.Listener lifecycleListener =
-                    AgentExecutionEventContext.get();
-            ChatResponse response = lifecycleListener == null
-                    ? runtime.chatWithRotation(modelConfigId, messages, specs)
-                    : runtime.chatStreamingWithRotation(modelConfigId, messages, specs,
-                            delta -> lifecycleListener.accept("MODEL_DELTA", null, delta));
-            dev.langchain4j.model.output.TokenUsage usage =
-                    response.metadata() != null ? response.metadata().tokenUsage() : null;
-            if (usage != null && usage.inputTokenCount() != null) {
-                inputTokens += usage.inputTokenCount();
-                inputSeen = true;
-            }
-            if (usage != null && usage.outputTokenCount() != null) {
-                outputTokens += usage.outputTokenCount();
-                outputSeen = true;
-            }
-            var ai = response.aiMessage();
-            if (ai == null) {
-                throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                        "LLM 节点未返回消息: " + node.getId());
-            }
-            if (!ai.hasToolExecutionRequests()) {
-                String output = ai.text();
-                if (output == null) {
-                    throw new GraphExecutionException(ERROR_CATEGORY_MODEL_CALL_FAILED,
-                            "LLM 节点未返回文本: " + node.getId());
-                }
-                trace.setInputTokens(inputSeen ? inputTokens : null);
-                trace.setOutputTokens(outputSeen ? outputTokens : null);
-                // F1S2-G1：节点真实输出 = 模型最终回答（含工具循环后的收敛结果）
-                trace.setOutputText(output);
-                return output;
-            }
-            if (++rounds > maxRounds) {
-                throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                        "工具调用轮次超过上限 " + maxRounds + ": " + node.getId());
-            }
-            messages.add(ai);
-            for (ToolExecutionRequest request : ai.toolExecutionRequests()) {
-                AgentToolCallbackFactory.ToolHandle handle = handles.stream()
-                        .filter(h -> request.name().equals(h.specification().name()))
-                        .findFirst()
-                        .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                                "模型请求了未挂载的工具: " + request.name()));
-                String result;
-                try {
-                    result = handle.executor().execute(request, null);
-                } catch (Exception e) {
-                    // 工具执行失败回喂错误文本，让模型自行收敛；不中断整个节点
-                    result = "工具执行失败: " + e.getMessage();
-                }
-                String decoded = decodeIfJsonString(result);
-                trace.addToolCall(new ToolCallTrace(request.name(), request.arguments(), decoded));
-                messages.add(dev.langchain4j.data.message.ToolExecutionResultMessage
-                        .from(request, decoded));
-            }
-        }
-    }
-
-    /** config 读取字符串列表（支持 List&lt;String&gt; 与逗号分隔字符串；空/缺失返回空列表）。 */
-    public static List<String> configStringList(GraphElement node, String key) {
-        Object value = node.getConfig() == null ? null : node.getConfig().get(key);
-        List<String> result = new ArrayList<>();
-        if (value instanceof List<?> list) {
-            for (Object item : list) {
-                if (item instanceof String s && !s.isBlank()) {
-                    result.add(s.trim());
-                }
-            }
-        } else if (value instanceof String s && !s.isBlank()) {
-            for (String part : s.split(",")) {
-                if (!part.isBlank()) {
-                    result.add(part.trim());
-                }
-            }
-        }
-        return result;
-    }
-
-    /** config 读取正整数（缺失/非法用默认值；最小 1）。 */
-    public static int configInt(GraphElement node, String key, int defaultValue) {
-        Long parsed = parseConfigLong(node.getConfig() == null ? null : node.getConfig().get(key));
-        return parsed == null ? defaultValue : (int) Math.max(1L, Math.min(parsed, 50L));
-    }
-
-    // ==================== TOOL 节点 ====================
-
-    /**
-     * TOOL 节点执行：config.toolName → 白名单装载结果中按名称精确匹配单个
-     * {@link ToolCallback} → 以入参文本（inputVar 变量值，由调用方解析）为入参直接
-     * 调用 → 返回文本（由调用方写入 outputVar 指定变量）。
-     * <p>
-     * 与 F01 的区别：F01 把全部启用工具注入 LLM 由模型自行决定；本节点由图的拓扑
-     * 决定调用哪个工具，只定位这一个回调并直接调用。每次执行即时装载（工厂非启动
-     * 缓存语义：白名单配置变更即时生效）。
-     * </p>
-     */
-    private String callToolNode(GraphElement node, String text) {
-        String toolName = requireConfigString(node, CONFIG_KEY_TOOL_NAME);
-        if (toolCallbackFactory == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                    "工具工厂未装配，无法执行 TOOL 节点: " + toolName);
-        }
-        AgentToolCallbackFactory.ToolHandle target = toolCallbackFactory.buildToolCallbacks(tenantId).stream()
-                .filter(handle -> toolName.equals(handle.specification().name()))
-                .findFirst()
-                .orElseThrow(() -> new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                        "TOOL 节点引用的工具不存在或未启用: " + toolName));
-        // 工具回调契约（与 F01 一致，工厂回执 §3 实测）：FunctionToolCallback 的 call()
-        // 入参为 JSON 字符串字面量（LLM 按 {"type":"string"} schema 发送），白名单方法
-        // 收到 JSON 编码字符串；返回值同样经 JSON 编码（实测 "echo:你好" → "\"echo:你好\""）。
-        // 解释器把累积文本 JSON 编码后传入，并把返回的编码文本解码还原为纯文本后覆盖
-        // 累积文本（图执行上下文是给下游节点/最终输出使用的用户可读文本，与 F01 中
-        // LLM 直接消费编码文本的用途不同）。
-        try {
-            // 执行器契约：arguments 为 JSON 编码字符串（与旧 FunctionToolCallback 的
-            // call(JsonParser.toJson(text)) 语义一致），返回值经 JSON 编码
-            ToolExecutionRequest request = ToolExecutionRequest.builder()
-                    .id("graph-tool-" + node.getId())
-                    .name(toolName)
-                    .arguments(JSON.writeValueAsString(text))
-                    .build();
-            String result = target.executor().execute(request, null);
-            String decoded = decodeIfJsonString(result);
-            if (decoded == null) {
-                throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                        "TOOL 节点未返回文本: " + node.getId());
-            }
-            return decoded;
-        } catch (GraphExecutionException e) {
-            throw e;
-        } catch (Exception e) {
-            // 第三方异常（工具执行抛错等）：包装为带分类的图执行异常（Step12 错误分类维度）
-            throw new GraphExecutionException(ERROR_CATEGORY_TOOL_CALL_FAILED,
-                    e.getMessage(), e);
-        }
-    }
-
-    // ==================== 多变量执行上下文（Step10） ====================
-
-    /**
-     * 读取节点输入文本：config.{@code inputVar} 指定的变量值（缺失/空白 = 默认变量
-     * {@value #DEFAULT_VARIABLE_NAME}）。
-     *
-     * @throws GraphExecutionException 变量未定义（从未写入且非默认变量）——未定义
-     * 变量引用为运行时错误，不做执行前数据流静态校验（方向文档已确认）
-     */
-    private String readInput(GraphElement node, Map<String, String> variables) {
-        return readVariable(node, variables, CONFIG_KEY_INPUT_VAR);
-    }
-
-    /**
-     * 按变量名键读取变量值：config 键缺失/空白 = 默认变量；变量不存在抛运行时错误。
-     * 默认变量恒存在（run 开头写入请求入参），因此旧图（无变量名字段）永不触发。
-     */
-    private String readVariable(GraphElement node, Map<String, String> variables, String varKey) {
-        String varName = resolveVarName(node, varKey);
-        String value = variables.get(varName);
-        if (value == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_UNDEFINED_VARIABLE,
-                    "引用了未定义的变量: " + varName + "（节点 " + node.getId() + "）");
-        }
-        return value;
-    }
-
-    /**
-     * 写入节点输出：config.{@code outputVar} 指定结果写入的变量（缺失/空白 = 默认变量，
-     * 覆盖语义与 Step8 单文本版一致；指定新变量名 = 创建变量）。LLM/TOOL 结果恒为
-     * 非空文本，变量值类型全为 String（非文本类型不在本 Step 范围）。
-     */
-    private void writeOutput(GraphElement node, Map<String, String> variables, String output) {
-        String varName = resolveVarName(node, CONFIG_KEY_OUTPUT_VAR);
-        variables.put(varName, output);
-        // G1-4：节点作用域输出留档（END 输出声明 source = nodeId.var 解析用；
-        // 全局变量表仍是最后写入覆盖语义，作用域表按节点独立记录）
-        nodeOutputs.computeIfAbsent(node.getId(), key -> new HashMap<>()).put(varName, output);
-    }
-
-    /**
-     * 解析节点 config 中的变量名键：config 缺失 / 键缺失 / 值非 String / 空白 → 默认
-     * 变量（与 {@link #keywordOf} 同款宽松语义：旧图无变量名字段即落默认变量，零迁移）。
-     */
-    private String resolveVarName(GraphElement node, String varKey) {
-        Map<String, Object> config = node.getConfig();
-        if (config == null) {
-            return DEFAULT_VARIABLE_NAME;
-        }
-        Object value = config.get(varKey);
-        if (!(value instanceof String s) || s.isBlank()) {
-            return DEFAULT_VARIABLE_NAME;
-        }
-        return s;
-    }
-
-    /**
-     * 读取节点 config 中的 String 型可选键（与 {@link #requireConfigString} 不同：
-     * 缺失/非 String 返回 null 而非抛错，供 systemPrompt / userPromptTemplate 等可选契约使用）。
-     */
-    private String configString(GraphElement node, String key) {
-        Map<String, Object> cfg = node.getConfig();
-        if (cfg == null) {
-            return null;
-        }
-        Object v = cfg.get(key);
-        if (!(v instanceof String s)) {
-            return null;
-        }
-        return s;
-    }
-
-    /**
-     * 对模板中的 {@code {{variableName}}} 占位符做一次性纯字符串插值（M07-F02-02）。
-     * 变量名按 Java 标识符规则（{@code [A-Za-z_][A-Za-z0-9_]*}）匹配；未定义变量抛
-     * {@link GraphExecutionException}（分类 {@link #ERROR_CATEGORY_UNDEFINED_VARIABLE}）；
-     * 变量值按普通文本替换（{@link Matcher#quoteReplacement}），不再次解析其中的
-     * {@code {{...}}}，避免二次展开 / 表达式注入。
-     * <p>
-     * 不匹配占位符模式的文本（如 {@code "{{ invalid name }}"} 含空格 /
-     * {@code "{{123numeric}}"}} 非标识符开头）原样保留，不抛错。
-     */
-    private String interpolateTemplate(String template, GraphElement node,
-                                       Map<String, String> variables) {
-        Matcher m = PLACEHOLDER_PATTERN.matcher(template);
-        StringBuilder sb = new StringBuilder(template.length());
-        while (m.find()) {
-            String varName = m.group(1);
-            String value = variables.get(varName);
-            if (value == null) {
-                throw new GraphExecutionException(ERROR_CATEGORY_UNDEFINED_VARIABLE,
-                        "引用了未定义的变量: " + varName + "（节点 " + node.getId() + "）");
-            }
-            m.appendReplacement(sb, Matcher.quoteReplacement(value));
-        }
-        m.appendTail(sb);
-        return sb.toString();
-    }
-
-    // ==================== 条件分支与选路 ====================
-
-    /**
-     * 确定下一节点 id：CONDITION 节点按 §2-C 关键词子串匹配（elements 原始顺序即优先级，
-     * 不排序），匹配文本 = CONDITION 节点 config.{@code inputVar} 指定的变量值（缺失/
-     * 空白 = 默认变量，Step10 语义）；其余节点（含 LOOP/JOIN，出边唯一约束保持生效）
-     * 取唯一出边。
-     *
-     * @throws GraphExecutionException 条件无匹配且无默认边 / 默认边不唯一 / 出边数量非法 /
-     *                                 未定义变量引用
-     */
-    private String nextNodeId(GraphElement current, List<GraphElement> elements,
-                              Map<String, String> variables) {
-        List<GraphElement> edges = outgoingEdges(current, elements);
-        if (NODE_TYPE_CONDITION.equals(current.getType())) {
-            // 匹配文本 = CONDITION 节点 inputVar 指定的变量值（缺失 = 默认变量）
-            String matchText = readInput(current, variables);
-            // 按 elements 出现顺序逐条匹配关键词，取第一个命中（不排序，原始顺序即优先级）
-            for (GraphElement edge : edges) {
-                String keyword = keywordOf(edge);
-                if (keyword != null && matchText.contains(keyword)) {
-                    return edge.getTarget();
-                }
-            }
-            // 未命中 → 唯一无 keyword 边为默认边；默认边不存在 → 图设计缺陷，不静默吞掉
-            List<GraphElement> defaultEdges = edges.stream()
-                    .filter(e -> keywordOf(e) == null)
-                    .toList();
-            if (defaultEdges.size() == 1) {
-                return defaultEdges.get(0).getTarget();
-            }
-            if (defaultEdges.isEmpty()) {
-                throw new GraphExecutionException(ERROR_CATEGORY_CONDITION_NO_MATCH,
-                        "条件分支无匹配且无默认边: " + current.getId());
-            }
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "条件分支默认边不唯一: " + current.getId());
-        }
-        // 非条件节点：必须且只能有一条出边（START/END/LLM/TOOL/LOOP/JOIN；FORK 不
-        // 经此方法，由 run() 路由段按全部出边扇出）
-        if (edges.isEmpty()) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "节点没有出边，无法继续执行: " + current.getId());
-        }
-        if (edges.size() > 1) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "非条件节点的出边不唯一: " + current.getId());
-        }
-        return edges.get(0).getTarget();
-    }
-
-    /**
-     * 读取边的条件关键词（执行契约键 {@code config.keyword}）：无 config / 键缺失 /
-     * 值非 String / 空串均视为"无关键词"（该边为默认边候选）。
-     */
-    public static String keywordOf(GraphElement edge) {
-        Map<String, Object> config = edge.getConfig();
-        if (config == null) {
-            return null;
-        }
-        Object keyword = config.get(CONFIG_KEY_KEYWORD);
-        if (!(keyword instanceof String s) || s.isBlank()) {
-            return null;
-        }
-        return s;
-    }
-
-    /** 当前节点的出边列表（kind=edge 且 source == 节点 id），按 elements 出现顺序 */
-    private List<GraphElement> outgoingEdges(GraphElement node, List<GraphElement> elements) {
-        List<GraphElement> edges = new ArrayList<>();
-        for (GraphElement element : elements) {
-            if ("edge".equals(element.getKind()) && node.getId().equals(element.getSource())) {
-                edges.add(element);
-            }
-        }
-        return edges;
-    }
-
-    /** 当前节点的入边数（JOIN 静态入边数 = 汇合分支数），按 target == 节点 id 统计 */
-    private int incomingEdgeCount(GraphElement node, List<GraphElement> elements) {
-        int count = 0;
-        for (GraphElement element : elements) {
-            if ("edge".equals(element.getKind()) && node.getId().equals(element.getTarget())) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    /**
-     * LOOP 节点迭代上限：config.{@value #CONFIG_KEY_MAX_ITERATIONS}（Number → int；
-     * 缺失/非数值 = 默认 {@value #DEFAULT_MAX_ITERATIONS}；<1 由执行前校验拦截，若被
-     * 直接构造绕过校验，首次到达（计数 1）即触发"循环迭代次数超限"，fail-fast 不静默）。
-     */
-    private int maxIterationsOf(GraphElement node) {
-        Map<String, Object> config = node.getConfig();
-        if (config == null) {
-            return DEFAULT_MAX_ITERATIONS;
-        }
-        Long parsed = parseConfigLong(config.get(CONFIG_KEY_MAX_ITERATIONS));
-        if (parsed == null) {
-            return DEFAULT_MAX_ITERATIONS;
-        }
-        return parsed.intValue();
-    }
-
-    // ==================== 内部辅助 ====================
-
-    /** 定位唯一 START 节点（执行前校验已保证唯一，此处防御性兜底） */
-    private GraphElement findStart(List<GraphElement> elements) {
-        for (GraphElement element : elements) {
-            if ("node".equals(element.getKind()) && NODE_TYPE_START.equals(element.getType())) {
-                return element;
-            }
-        }
-        throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID, "图中不存在 START 节点");
-    }
-
-    /**
-     * 工具返回解码：JSON 字符串字面量（如 {@code "hello"}）解码还原为纯文本；
-     * 非 JSON 字符串（如外部工具返回的裸文本/JSON 对象）原样保留，不做转换。
-     */
-    static String decodeIfJsonString(String result) {
-        if (result == null) {
-            return null;
-        }
-        try {
-            return JSON.readValue(result, String.class);
-        } catch (Exception e) {
-            return result;
-        }
-    }
-
-    /** 按 id 定位节点（防御：边引用了不存在的节点） */
-    private GraphElement findNode(String id, List<GraphElement> elements) {
-        for (GraphElement element : elements) {
-            if ("node".equals(element.getKind()) && id.equals(element.getId())) {
-                return element;
-            }
-        }
-        throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID, "边引用了不存在的节点: " + id);
-    }
-
-    /**
-     * 解析节点 config 中的数值 id（{@code agentModelConfigId} 等）。
-     * <p>
-     * 接受 {@link Number} 与十进制数字字符串：项目全局 Jackson 对 Long 启用
-     * ToStringSerializer（防 JS 精度丢失），graph_json 落库后 id 一律是字符串形态；
-     * 仅收 Number 会让任何含 LLM 节点的已发布图都无法执行（F1 阶段 1 真实联调发现）。
-     * 空白或非数字 → null（由调用方决定错误语义）。
-     * </p>
-     */
-    public static Long parseConfigLong(Object value) {
-        if (value instanceof Number n) {
-            return n.longValue();
-        }
-        if (value instanceof String s && !s.isBlank()) {
-            try {
-                return Long.parseLong(s.trim());
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    /** 读取节点 config 中的 Long 型必填键（缺失/非数值 → 运行时错误，防御性兜底） */
-    private Long requireConfigId(GraphElement node, String key) {
-        Map<String, Object> config = node.getConfig();
-        Long parsed = config == null ? null : parseConfigLong(config.get(key));
-        if (parsed == null) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "节点缺少 " + key + ": " + node.getId());
-        }
-        return parsed;
-    }
-
-    /** 读取节点 config 中的 String 型必填键（缺失/空白 → 运行时错误，防御性兜底） */
-    private String requireConfigString(GraphElement node, String key) {
-        Map<String, Object> config = node.getConfig();
-        if (config == null || !(config.get(key) instanceof String s) || s.isBlank()) {
-            throw new GraphExecutionException(ERROR_CATEGORY_TOPOLOGY_INVALID,
-                    "节点缺少 " + key + ": " + node.getId());
-        }
-        return s;
+        return AgentGraphLlmNodeRunner.executeChatWithTools(runtime, factory, tenantId,
+                node, modelConfigId, messages, trace);
     }
 
     /**
@@ -1675,7 +822,7 @@ public class AgentGraphInterpreter {
         private Long childExecutionId;
 
         /** 该节点内 LLM 工具调用轨迹（阶段 2；非工具调用节点为空列表） */
-        private final java.util.List<ToolCallTrace> toolCalls = new java.util.ArrayList<>();
+        private final List<ToolCallTrace> toolCalls = new ArrayList<>();
 
         public NodeExecutionTrace(long nodeSeq, String branchId, String nodeId, String nodeType) {
             this.nodeSeq = nodeSeq;
@@ -1786,7 +933,7 @@ public class AgentGraphInterpreter {
             this.childExecutionId = childExecutionId;
         }
 
-        public java.util.List<ToolCallTrace> getToolCalls() {
+        public List<ToolCallTrace> getToolCalls() {
             return toolCalls;
         }
 
@@ -1820,19 +967,6 @@ public class AgentGraphInterpreter {
 
         public String getResult() {
             return result;
-        }
-    }
-
-    /** 活跃执行点（Step11 多活跃点模型 + Step12 分支路径）：节点 id + 分支路径 */
-    private static class ActiveExecutionPoint {
-
-        private final String nodeId;
-
-        private final String branchPath;
-
-        ActiveExecutionPoint(String nodeId, String branchPath) {
-            this.nodeId = nodeId;
-            this.branchPath = branchPath;
         }
     }
 }

@@ -3,6 +3,7 @@ package com.sw.ck.form.dynamic;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -218,7 +219,7 @@ class DynamicTableSqlGateTest {
             if (read(path).contains(TABLE_NAME_PATTERN_LITERAL)) {
                 // Windows 下 Path.toString 为反斜杠，规范化后与正斜杠断言恒等比较
                 owners.add(moduleRoot().relativize(path).toString()
-                        .replace(java.io.File.separatorChar, '/'));
+                        .replace(File.separatorChar, '/'));
             }
         }
         assertEquals(List.of("src/main/java/com/sw/ck/form/dynamic/DynamicTableSql.java"), owners,

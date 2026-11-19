@@ -1,9 +1,13 @@
 package com.sw.ck.agent.entity;
 
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /** 异步图执行受理记录。执行意图先持久化，再由有界调度器领取。 */
 @Data
@@ -28,7 +32,7 @@ public class AgentGraphExecutionRequest extends BaseEntity {
     private String errorCategory;
     private String errorMessage;
     private Long latencyMs;
-    private java.time.LocalDateTime startedAt;
-    private java.time.LocalDateTime finishedAt;
-    private java.time.LocalDateTime cancelRequestedAt;
+    private LocalDateTime startedAt;
+    private LocalDateTime finishedAt;
+    private LocalDateTime cancelRequestedAt;
 }

@@ -1,11 +1,16 @@
 package com.sw.ck.system.security;
 
-import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.log4j.Log4j2;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.OAEPParameterSpec;
 import javax.crypto.spec.PSource;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
@@ -16,18 +21,23 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.security.interfaces.RSAPrivateCrtKey;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.spec.RSAPublicKeySpec;
 
 /**
  * RSA 登录密码密钥管理器（P45）。
  * <p>
- * - 仅从 {@link LoginSecurityProperties} 读取外部注入的 PKCS#8 私钥，无任何默认可用密钥；
- *   未配置或密钥强度不足 2048 位时启动期 fail-fast。
+ * - 仅从 {@link LoginSecurityProperties} 给出的私钥文件路径读取 PKCS#8 私钥，
+ *   配置文件与代码里都不承载私钥本体，无任何默认可用密钥；路径未配置、文件不可读或
+ *   密钥强度不足 2048 位时启动期 fail-fast。
  * - 加密算法与前端 WebCrypto 对齐：RSA-OAEP，摘要 SHA-256，MGF1 也必须显式指定 SHA-256
  *  （SunJCE 对 {@code OAEPWithSHA-256AndMGF1Padding} 默认 MGF1 用 SHA-1，与 WebCrypto 不兼容，
  *   必须用 {@link OAEPParameterSpec} 显式声明）。
  * - 解密一律以挑战绑定的密钥版本为准，不信任客户端任意指定版本。
  */
-@Slf4j
+@Log4j2
 @Component
 public class RsaLoginKeyManager {
 
@@ -35,37 +45,44 @@ public class RsaLoginKeyManager {
     /** OAEP(SHA-256) 下 2048 位密钥的单次加密明文上限：modulus - 2*hashLen - 2 */
     private static final int MAX_PLAINTEXT_BYTES = 190;
 
-    private final LoginSecurityProperties properties;
+    @Autowired
+    private LoginSecurityProperties properties;
 
     private final Map<String, PrivateKey> privateKeys = new HashMap<>();
     private final Map<String, String> publicKeysBase64 = new HashMap<>();
 
-    public RsaLoginKeyManager(LoginSecurityProperties properties) {
-        this.properties = properties;
-        // 构造期完成密钥装载与 fail-fast 校验（不依赖 @PostConstruct，保证任何装配方式下都不会带空密钥表上线）
-        init();
-    }
-
+    // 初始化期完成密钥装载与 fail-fast 校验，保证任何装配方式下都不会带空密钥表上线
+    @PostConstruct
     void init() {
-        Map<String, String> configured = new HashMap<>(properties.getRsaExtraKeys());
+        Map<String, String> configured = new HashMap<>(properties.getRsaExtraKeyFiles());
         String activeVersion = properties.getRsaKeyVersion();
         if (configured.containsKey(activeVersion)) {
             throw new IllegalStateException(
-                    "登录 RSA 密钥配置冲突：版本 " + activeVersion + " 同时出现在 rsa-extra-keys 与 rsa-key-version");
+                    "登录 RSA 密钥配置冲突：版本 " + activeVersion
+                            + " 同时出现在 rsa-extra-key-files 与 rsa-key-version");
         }
-        configured.put(activeVersion, properties.getRsaPrivateKey());
+        configured.put(activeVersion, properties.getRsaPrivateKeyFile());
 
         boolean anyConfigured = false;
         for (Map.Entry<String, String> entry : configured.entrySet()) {
             String version = entry.getKey();
-            String pem = entry.getValue() == null ? "" : entry.getValue().trim();
+            String path = entry.getValue() == null ? "" : entry.getValue().trim();
+            if (path.isEmpty()) {
+                if (version.equals(activeVersion)) {
+                    throw new IllegalStateException(
+                            "登录 RSA 私钥未配置：必须提供 sw.security.login.rsa-private-key-file"
+                                    + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY_FILE 指向的 PKCS#8 PEM 文件），"
+                                    + "不允许默认私钥上线");
+                }
+                // 轮换窗口外的空条目（env 占位）直接忽略
+                continue;
+            }
+            String pem = readKeyFile(version, path);
             if (pem.isEmpty()) {
                 if (version.equals(activeVersion)) {
                     throw new IllegalStateException(
-                            "登录 RSA 私钥未配置：必须经外部安全配置注入 sw.security.login.rsa-private-key"
-                                    + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY），不允许默认私钥上线");
+                            "登录 RSA 私钥未配置：文件 " + path + " 内容为空，不允许默认私钥上线");
                 }
-                // 轮换窗口外的空条目（env 占位）直接忽略
                 continue;
             }
             anyConfigured = true;
@@ -80,10 +97,26 @@ public class RsaLoginKeyManager {
         }
         if (!anyConfigured) {
             throw new IllegalStateException(
-                    "登录 RSA 私钥未配置：必须经外部安全配置注入 sw.security.login.rsa-private-key"
-                            + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY），不允许默认私钥上线");
+                    "登录 RSA 私钥未配置：必须提供 sw.security.login.rsa-private-key-file"
+                            + "（如环境变量 SW_LOGIN_RSA_PRIVATE_KEY_FILE 指向的 PKCS#8 PEM 文件），"
+                            + "不允许默认私钥上线");
         }
         log.info("登录 RSA 密钥装载完成: activeVersion={}, versions={}", activeVersion, privateKeys.keySet());
+    }
+
+    /**
+     * 读取私钥文件。失败只暴露路径与失败原因（不含文件内容），避免私钥进入日志。
+     */
+    private String readKeyFile(String version, String path) {
+        Path file = Path.of(path);
+        if (!Files.isReadable(file)) {
+            throw new IllegalStateException("登录 RSA 私钥文件不可读：版本 " + version + "，路径 " + path);
+        }
+        try {
+            return Files.readString(file, StandardCharsets.UTF_8).trim();
+        } catch (IOException e) {
+            throw new IllegalStateException("登录 RSA 私钥文件读取失败：版本 " + version + "，路径 " + path, e);
+        }
     }
 
     /** 当前生效版本标识（新挑战一律绑定该版本） */
@@ -120,7 +153,7 @@ public class RsaLoginKeyManager {
             // MGF1 显式 SHA-256：与 WebCrypto RSA-OAEP(SHA-256) 对齐（见类注释）
             cipher.init(Cipher.DECRYPT_MODE, privateKey, new OAEPParameterSpec(
                     "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT));
-            return new String(cipher.doFinal(ciphertext), java.nio.charset.StandardCharsets.UTF_8);
+            return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new PasswordDecryptException("解密失败: " + e.getClass().getSimpleName());
         }
@@ -135,7 +168,7 @@ public class RsaLoginKeyManager {
     public static String sha256Hex(String input) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexFormat.of().formatHex(digest.digest(input.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException("SHA-256 不可用", e);
         }
@@ -157,7 +190,7 @@ public class RsaLoginKeyManager {
 
     private int keyBits(PrivateKey privateKey) {
         try {
-            return ((java.security.interfaces.RSAPrivateKey) privateKey).getModulus().bitLength();
+            return ((RSAPrivateKey) privateKey).getModulus().bitLength();
         } catch (ClassCastException e) {
             throw new IllegalStateException("登录私钥必须是 RSA 私钥", e);
         }
@@ -165,10 +198,10 @@ public class RsaLoginKeyManager {
 
     private String derivePublicKeyBase64(PrivateKey privateKey) {
         try {
-            java.security.interfaces.RSAPrivateCrtKey crt =
-                    (java.security.interfaces.RSAPrivateCrtKey) privateKey;
-            java.security.KeyFactory factory = java.security.KeyFactory.getInstance("RSA");
-            PublicKey publicKey = factory.generatePublic(new java.security.spec.RSAPublicKeySpec(
+            RSAPrivateCrtKey crt =
+                    (RSAPrivateCrtKey) privateKey;
+            KeyFactory factory = KeyFactory.getInstance("RSA");
+            PublicKey publicKey = factory.generatePublic(new RSAPublicKeySpec(
                     crt.getModulus(), crt.getPublicExponent()));
             return Base64.getEncoder().encodeToString(publicKey.getEncoded());
         } catch (ClassCastException e) {

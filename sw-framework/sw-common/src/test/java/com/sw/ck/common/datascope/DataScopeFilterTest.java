@@ -1,8 +1,10 @@
 package com.sw.ck.common.datascope;
 
 import com.sw.ck.common.security.LoginContextProvider;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 
 import java.util.List;
 import java.util.Set;
@@ -139,7 +141,7 @@ class DataScopeFilterTest {
         DataScopeFilter filter = DataScopeFilter.resolve(loginContext, deptScopeProvider);
 
         assertThat(filter.getDeptIds()).isEmpty();
-        verify(deptScopeProvider, never()).listChildDeptIds(org.mockito.ArgumentMatchers.any());
+        verify(deptScopeProvider, never()).listChildDeptIds(ArgumentMatchers.any());
     }
 
     // ==================== CUSTOM ====================

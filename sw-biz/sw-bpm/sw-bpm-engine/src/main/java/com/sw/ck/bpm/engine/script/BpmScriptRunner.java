@@ -1,15 +1,19 @@
 package com.sw.ck.bpm.engine.script;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
+
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Engine;
+import org.graalvm.polyglot.EnvironmentAccess;
 import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.PolyglotException;
 import org.graalvm.polyglot.ResourceLimits;
 import org.graalvm.polyglot.Value;
 import org.graalvm.polyglot.io.IOAccess;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.graalvm.polyglot.proxy.ProxyExecutable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -20,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * P64 受控判断脚本运行器（ADR-P64-001 §3；BPM 独立只读判断上下文，不复用 iot 宿主函数）。
  * <p>
@@ -43,9 +48,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </p>
  */
 @Component
+@Log4j2
 public class BpmScriptRunner {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmScriptRunner.class);
 
     public static final long MAX_STATEMENTS = 500_000L;
     public static final long DEFAULT_TIMEOUT_MS = 5_000L;
@@ -78,22 +82,33 @@ public class BpmScriptRunner {
             "processInstanceId", "processDefKey", "businessKey", "formKey",
             "initiatorId", "tenantId", "currentNodeKey", "roundNo");
 
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /**
      * BF20261019-02：可共享的 Polyglot {@link Engine}（worker 进程专用）。共享后语言初始化
      * 与 JS 内建编译只付一次；进程内路径（validate/单测）保持 null = 每次 Context 独立 Engine。
+     * <p>1.1.3 修复：宿主 Spring 上下文不注册 Engine bean（1.1.2 的 Spring 构造器即单参
+     * (ObjectMapper) 版本）；d53c7fb6 转字段注入后误成必注依赖，导致应用无法启动。
+     * 恢复可选注入（required = false）——宿主保持 null，worker 子进程经
+     * {@link #forStandalone(ObjectMapper, Engine)} 显式提供。</p>
      */
-    private final Engine sharedEngine;
+    @Autowired(required = false)
+    private Engine sharedEngine;
 
-    @org.springframework.beans.factory.annotation.Autowired
-    public BpmScriptRunner(ObjectMapper objectMapper) {
-        this(objectMapper, null);
+    /** 非 Spring 场景（worker 子进程/单测）显式提供 ObjectMapper。 */
+    public static BpmScriptRunner forStandalone(ObjectMapper objectMapper) {
+        BpmScriptRunner runner = new BpmScriptRunner();
+        runner.objectMapper = objectMapper;
+        return runner;
     }
 
-    public BpmScriptRunner(ObjectMapper objectMapper, Engine sharedEngine) {
-        this.objectMapper = objectMapper;
-        this.sharedEngine = sharedEngine;
+    /** 非 Spring 场景（worker 子进程）显式提供 ObjectMapper 与共享 Engine。 */
+    public static BpmScriptRunner forStandalone(ObjectMapper objectMapper, Engine engine) {
+        BpmScriptRunner runner = new BpmScriptRunner();
+        runner.objectMapper = objectMapper;
+        runner.sharedEngine = engine;
+        return runner;
     }
 
     /**
@@ -179,7 +194,7 @@ public class BpmScriptRunner {
                     .allowCreateProcess(false)
                     .allowNativeAccess(false)
                     .allowCreateThread(false)
-                    .allowEnvironmentAccess(org.graalvm.polyglot.EnvironmentAccess.NONE)
+                    .allowEnvironmentAccess(EnvironmentAccess.NONE)
                     .resourceLimits(ResourceLimits.newBuilder()
                             .statementLimit(MAX_STATEMENTS, null)
                             .onLimit(event -> statementLimitTripped.set(true))
@@ -207,7 +222,7 @@ public class BpmScriptRunner {
             watcher.start();
 
             Value bindings = context.getBindings("js");
-            org.graalvm.polyglot.proxy.ProxyExecutable reader = args -> {
+            ProxyExecutable reader = args -> {
                 String name = requireNameArg(args, FN_READ_VARIABLE);
                 return readVariable(ctx, writes, ctxData, snapshot, name);
             };
@@ -215,7 +230,7 @@ public class BpmScriptRunner {
             bindings.putMember(FN_READ_VARIABLE_OWNER, reader);
             bindings.putMember(FN_READ_VARIABLE_ALIAS, reader);
 
-            org.graalvm.polyglot.proxy.ProxyExecutable writer = args -> {
+            ProxyExecutable writer = args -> {
                 if (args.length < 2) {
                     throw new RuntimeException(FN_WRITE_VARIABLE + "(变量名, 变量值) 需要两个参数");
                 }
@@ -227,21 +242,21 @@ public class BpmScriptRunner {
             bindings.putMember(FN_WRITE_VARIABLE, writer);
             bindings.putMember(FN_WRITE_VARIABLE_ALIAS, writer);
 
-            org.graalvm.polyglot.proxy.ProxyExecutable deptLeader = args -> {
+            ProxyExecutable deptLeader = args -> {
                 long deptId = requireDeptId(args, FN_DEPT_LEADER);
                 return ctxData.deptLeaderMap().get(deptId);
             };
             bindings.putMember(FN_DEPT_LEADER, deptLeader);
             bindings.putMember(FN_DEPT_LEADER_ALIAS, deptLeader);
 
-            org.graalvm.polyglot.proxy.ProxyExecutable deptSupervisor = args -> {
+            ProxyExecutable deptSupervisor = args -> {
                 long deptId = requireDeptId(args, FN_DEPT_SUPERVISOR);
                 return resolveSupervisor(ctxData, deptId);
             };
             bindings.putMember(FN_DEPT_SUPERVISOR, deptSupervisor);
             bindings.putMember(FN_DEPT_SUPERVISOR_ALIAS, deptSupervisor);
 
-            org.graalvm.polyglot.proxy.ProxyExecutable parentDept = args -> {
+            ProxyExecutable parentDept = args -> {
                 long deptId = requireDeptId(args, FN_PARENT_DEPT);
                 Long parent = ctxData.deptParentMap().get(deptId);
                 return parent == null || parent == 0L ? null : parent;
@@ -256,7 +271,7 @@ public class BpmScriptRunner {
             finished.set(true);
             watcher.interrupt();
             return classify(out, elapsed(begin), writes);
-        } catch (org.graalvm.polyglot.PolyglotException e) {
+        } catch (PolyglotException e) {
             finished.set(true);
             long duration = elapsed(begin);
             if (statementLimitTripped.get() || e.isResourceExhausted()) {
@@ -279,7 +294,7 @@ public class BpmScriptRunner {
             if (context != null) {
                 try {
                     context.close();
-                } catch (org.graalvm.polyglot.PolyglotException ignore) {
+                } catch (PolyglotException ignore) {
                     // 已取消/超限的 Context 关闭会重抛原异常，忽略
                 }
             }
@@ -458,7 +473,7 @@ public class BpmScriptRunner {
             }
             List<Object> items = new ArrayList<>((int) size);
             for (long i = 0; i < size; i++) {
-                org.graalvm.polyglot.Value item = out.getArrayElement(i);
+                Value item = out.getArrayElement(i);
                 if (item == null || item.isNull()) {
                     continue;
                 }

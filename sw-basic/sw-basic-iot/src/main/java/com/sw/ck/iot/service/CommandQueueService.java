@@ -2,6 +2,7 @@ package com.sw.ck.iot.service;
 
 import com.sw.ck.iot.entity.IotDeviceCommand;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -129,7 +130,7 @@ public interface CommandQueueService {
      *
      * @return true = 本次领取成功（调用方负责发送并回写结果）
      */
-    boolean claimQueuedForSend(Long commandId, java.time.LocalDateTime staleBefore);
+    boolean claimQueuedForSend(Long commandId, LocalDateTime staleBefore);
 
     /**
      * 原子领取可重试的 FAILED 命令（重试预算内、未过期）。
@@ -162,7 +163,7 @@ public interface CommandQueueService {
      *
      * @return true = 本次回收成功（调用方随后走统一重试路径）
      */
-    boolean reclaimStaleSending(Long commandId, java.time.LocalDateTime staleBefore);
+    boolean reclaimStaleSending(Long commandId, LocalDateTime staleBefore);
 
     /**
      * 检查幂等键是否已存在。

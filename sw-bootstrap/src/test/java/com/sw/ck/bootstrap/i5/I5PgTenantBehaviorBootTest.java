@@ -1,27 +1,46 @@
 package com.sw.ck.bootstrap.i5;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
+import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
 import com.sw.ck.system.sso.SsoAuthService;
+import com.sw.ck.system.sso.SsoRejectionException;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -60,22 +79,22 @@ class I5PgTenantBehaviorBootTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "i5-pg-test-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "i5-pg-test-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("i5-pg-test", props));
+                            new MapPropertySource("i5-pg-test", props));
                     context.getEnvironment().getSystemProperties().put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("i5PgTestLoginContextProvider", provider);
                 })
                 .run();
@@ -155,7 +174,7 @@ class I5PgTenantBehaviorBootTest {
         try {
             Exception ex = null;
             try {
-                var svc = app.getBean(com.sw.ck.form.service.FormDefService.class);
+                var svc = app.getBean(FormDefService.class);
                 svc.createDraft(formKey, "dup", null, "dup");
             } catch (Exception e) {
                 ex = e;
@@ -174,7 +193,7 @@ class I5PgTenantBehaviorBootTest {
     private String createAndPublish(String formKey, LoginUser actor, String name, String defJson) {
         LoginUserHolder.set(actor);
         try {
-            var svc = app.getBean(com.sw.ck.form.service.FormDefService.class);
+            var svc = app.getBean(FormDefService.class);
             var def = svc.createDraft(formKey, name, null, "I5 G1a2");
             String id = def.getId();
             svc.saveConfig(id, defJson);
@@ -195,14 +214,14 @@ class I5PgTenantBehaviorBootTest {
         Integer roleBefore = jdbc.queryForObject("SELECT COUNT(*) FROM sys_user_role WHERE deleted=0", Integer.class);
 
         // session/cache 零增量基线（与并发批次同时间窗；真实 Redis 回读）
-        org.springframework.data.redis.core.StringRedisTemplate redis =
-                app.getBean(org.springframework.data.redis.core.StringRedisTemplate.class);
-        java.util.Set<String> sessionKeysBefore = redis.keys("sw:security:login-user:*");
+        StringRedisTemplate redis =
+                app.getBean(StringRedisTemplate.class);
+        Set<String> sessionKeysBefore = redis.keys("sw:security:login-user:*");
         boolean user1SessionBefore = redis.hasKey("sw:security:login-user:1");
         boolean user9001SessionBefore = redis.hasKey("sw:security:login-user:9001");
         System.out.println("[G6a1] sessionBefore keys=" + sessionKeysBefore.size()
                 + " user1=" + user1SessionBefore + " user9001=" + user9001SessionBefore
-                + " at=" + java.time.LocalDateTime.now());
+                + " at=" + LocalDateTime.now());
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         AtomicReference<String> r0 = new AtomicReference<>();
@@ -244,15 +263,15 @@ class I5PgTenantBehaviorBootTest {
 
         // session/cache 零增量核对（并发后同窗回读）：bind 不创建任何会话。
         // 断言「无新增键」而非集合相等：并发窗口内遗留键自然过期（TTL）属正常噪声
-        java.util.Set<String> sessionKeysAfter = redis.keys("sw:security:login-user:*");
+        Set<String> sessionKeysAfter = redis.keys("sw:security:login-user:*");
         boolean user1SessionAfter = redis.hasKey("sw:security:login-user:1");
         boolean user9001SessionAfter = redis.hasKey("sw:security:login-user:9001");
-        java.util.Set<String> addedKeys = new java.util.HashSet<>(sessionKeysAfter);
+        Set<String> addedKeys = new HashSet<>(sessionKeysAfter);
         addedKeys.removeAll(sessionKeysBefore);
         System.out.println("[G6a1] sessionAfter keys=" + sessionKeysAfter.size()
                 + " addedKeys=" + addedKeys
                 + " user1=" + user1SessionAfter + " user9001=" + user9001SessionAfter
-                + " at=" + java.time.LocalDateTime.now());
+                + " at=" + LocalDateTime.now());
         assertThat(addedKeys).as("并发绑定不得新增任何会话键").isEmpty();
         // 只断言“不得新增”：并发前已存在的会话键可能在本窗口内自然过期（TTL），
         // 集合相等断言会把过期误判成新会话（本轮全量偶发实证）。
@@ -267,7 +286,7 @@ class I5PgTenantBehaviorBootTest {
             barrier.await();
             app.getBean(SsoAuthService.class).bind(provider, actor.getUserId(), externalId);
             return "OK:" + actor.getTenantId();
-        } catch (com.sw.ck.system.sso.SsoRejectionException e) {
+        } catch (SsoRejectionException e) {
             return "DENIED(SsoRejectionException):" + e.getErrorKey();
         } catch (Exception e) {
             return "UNEXPECTED(" + e.getClass().getSimpleName() + "):" + e.getMessage();
@@ -346,7 +365,7 @@ class I5PgTenantBehaviorBootTest {
     }
 
     private Map<String, String> authHeaders(String appId, String ts, String nonce, String sig) {
-        Map<String, String> h = new java.util.LinkedHashMap<>();
+        Map<String, String> h = new LinkedHashMap<>();
         h.put("X-App-Id", appId);
         h.put("X-Timestamp", ts);
         h.put("X-Nonce", nonce);
@@ -360,9 +379,9 @@ class I5PgTenantBehaviorBootTest {
 
     private static String hmacSha256(String key, String material) {
         try {
-            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-            mac.init(new javax.crypto.spec.SecretKeySpec(key.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
-            return java.util.HexFormat.of().formatHex(mac.doFinal(material.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return HexFormat.of().formatHex(mac.doFinal(material.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -377,9 +396,9 @@ class I5PgTenantBehaviorBootTest {
 
     private static String sha256(String text) {
         try {
-            return java.util.HexFormat.of().formatHex(
-                    java.security.MessageDigest.getInstance("SHA-256")
-                            .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(text.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -391,15 +410,6 @@ class I5PgTenantBehaviorBootTest {
         return clean.substring(0, Math.min(160, clean.length()));
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator g = java.security.KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
-            return java.util.Base64.getEncoder().encodeToString(g.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     @AfterAll
     static void tearDown() {

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,11 @@ class UserWorkspaceServiceImplTest {
         todo.setDefaultSpan(1);
         todo.setStatus(0);
         when(cardTypeService.listAvailable()).thenReturn(List.of(todo));
-        service = new UserWorkspaceServiceImpl(workspaceMapper, objectMapper, cardTypeService);
+        service = new UserWorkspaceServiceImpl();
+        // 生产类已统一字段注入：单测经反射注入 mock（与 WorkspaceCardTypeServiceImplTest 同法）
+        ReflectionTestUtils.setField(service, "workspaceMapper", workspaceMapper);
+        ReflectionTestUtils.setField(service, "cardTypeService", cardTypeService);
+        ReflectionTestUtils.setField(service, "objectMapper", objectMapper);
 
         LoginUser user = new LoginUser();
         user.setUserId(77L);

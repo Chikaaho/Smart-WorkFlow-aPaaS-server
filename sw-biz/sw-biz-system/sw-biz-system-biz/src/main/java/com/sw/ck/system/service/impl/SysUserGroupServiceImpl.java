@@ -2,6 +2,7 @@ package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.StringUtils;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -15,9 +16,13 @@ import com.sw.ck.system.mapper.SysUserGroupMapper;
 import com.sw.ck.system.mapper.SysUserGroupMemberMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.service.SysUserGroupService;
+
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -40,28 +45,19 @@ public class SysUserGroupServiceImpl
         extends BaseServiceImpl<SysUserGroupMapper, SysUserGroup>
         implements SysUserGroupService {
 
-    private final SysUserGroupMemberMapper sysUserGroupMemberMapper;
-    private final SysUserMapper sysUserMapper;
-    private final LoginContextProvider loginContextProvider;
-
-    public SysUserGroupServiceImpl(SysUserGroupMemberMapper sysUserGroupMemberMapper, SysUserMapper sysUserMapper) {
-        this(sysUserGroupMemberMapper, sysUserMapper, null);
-    }
-
-    @org.springframework.beans.factory.annotation.Autowired
-    public SysUserGroupServiceImpl(SysUserGroupMemberMapper sysUserGroupMemberMapper, SysUserMapper sysUserMapper,
-                                    LoginContextProvider loginContextProvider) {
-        this.sysUserGroupMemberMapper = sysUserGroupMemberMapper;
-        this.sysUserMapper = sysUserMapper;
-        this.loginContextProvider = loginContextProvider;
-    }
+    @Autowired
+    private SysUserGroupMemberMapper sysUserGroupMemberMapper;
+    @Autowired
+    private SysUserMapper sysUserMapper;
+    @Autowired
+    private LoginContextProvider loginContextProvider;
 
     // ─── 主记录 ────────────────────────────────────────────────
 
     @Override
     public PageResult<SysUserGroup> page(PageParam pageParam, SysUserGroup query) {
         return PageResult.of(baseMapper.selectGroupPage(
-                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
+                new Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
                 query,
                 isSuperAdmin(),
                 currentScopeTypeName(),
@@ -202,7 +198,7 @@ public class SysUserGroupServiceImpl
     public PageResult<SysUser> memberCandidates(PageParam pageParam, String keyword) {
         // 数据范围在 Mapper SQL 内以成员部门 EXISTS 语义限定；仅返回启用用户（status=0）
         return PageResult.of(baseMapper.selectMemberCandidates(
-                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
+                new Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
                 keyword,
                 isSuperAdmin(),
                 currentScopeTypeName(),
@@ -276,11 +272,11 @@ public class SysUserGroupServiceImpl
         return loginContextProvider != null ? loginContextProvider.getTenantId() : null;
     }
 
-    private java.util.List<Long> currentCustomDeptIds() {
+    private List<Long> currentCustomDeptIds() {
         if (loginContextProvider == null || loginContextProvider.getCustomDeptIds() == null) {
-            return java.util.List.of();
+            return List.of();
         }
-        return new java.util.ArrayList<>(loginContextProvider.getCustomDeptIds());
+        return new ArrayList<>(loginContextProvider.getCustomDeptIds());
     }
 
     private void insertMembers(Long groupId, List<Long> userIds) {

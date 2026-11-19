@@ -1,41 +1,39 @@
 package com.sw.ck.bpm.engine.delegate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.NodeActionAuditPort;
 import com.sw.ck.bpm.api.participant.NodeParticipantContext;
 import com.sw.ck.bpm.engine.participant.ParticipantResolverRegistry;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.notify.api.NotifyBizType;
 import com.sw.ck.notify.api.NotifyChannel;
 import com.sw.ck.notify.api.NotifyFacade;
+import com.sw.ck.notify.api.NotifyRoutingService;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
-import com.sw.ck.notify.api.NotifyRoutingService;
 import com.sw.ck.notify.api.NotifyTemplateSelection;
+
+import java.util.List;
+
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.delegate.DelegateExecution;
 import org.flowable.engine.delegate.JavaDelegate;
-import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-
-import java.util.List;
+import com.sw.ck.bpm.api.common.BpmNotifyLinkTypeEnum;
 
 /** 抄送节点委托：全量解析收件人、经 NotifyFacade 发送、逐人落审计。 */
 @Component("copyNodeDelegate")
 public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegate {
 
-    private final NotifyFacade notifyFacade;
-    private final NotifyRoutingService notifyRoutingService;
-    private final NodeActionAuditPort auditPort;
-
-    public CopyNodeDelegate(RepositoryService repositoryService, ObjectMapper objectMapper,
-                            ParticipantResolverRegistry participantResolverRegistry,
-                            NotifyFacade notifyFacade, NotifyRoutingService notifyRoutingService,
-                            ObjectProvider<NodeActionAuditPort> auditPort) {
-        super(repositoryService, objectMapper, participantResolverRegistry);
-        this.notifyFacade = notifyFacade;
-        this.notifyRoutingService = notifyRoutingService;
-        this.auditPort = auditPort.getIfAvailable();
-    }
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private NotifyRoutingService notifyRoutingService;
+    @Autowired(required = false)
+    private NodeActionAuditPort auditPort;
 
     @Override
     public void execute(DelegateExecution execution) {
@@ -70,23 +68,23 @@ public class CopyNodeDelegate extends NodeDelegateSupport implements JavaDelegat
                                     + execution.getCurrentActivityId() + ":" + recipient + ":" + channel.name())
                             .eventType(eventType).occurrenceNo(1L)
                             .templateId(template.getTemplateId()).templateVersion(template.getTemplateVersion())
-                            .linkType("WF_PROCESS").linkId(execution.getProcessInstanceId()).build())
+                            .linkType(BpmNotifyLinkTypeEnum.WF_PROCESS.getCode()).linkId(execution.getProcessInstanceId()).build())
                             .orElseThrow(() -> new IllegalStateException("抄送投递结果缺失"));
                     if (!"SUCCESS".equals(result.getStatus())) {
-                        status = result.getStatus() == null ? "FAILED" : result.getStatus();
+                        status = result.getStatus() == null ? CommandStatusEnum.FAILED.getCode() : result.getStatus();
                         reason = result.getFailureReason();
                         if (shouldBlock(config)) {
-                            throw new com.sw.ck.common.exception.BaseException(
-                                    com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
+                            throw new BaseException(
+                                    BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
                                     reason == null ? "抄送投递失败" : reason);
                         }
                     }
                 }
             } catch (Exception e) {
-                status = "FAILED";
+                status = CommandStatusEnum.FAILED.getCode();
                 reason = e.getMessage();
-                if (shouldBlock(config)) throw new com.sw.ck.common.exception.BaseException(
-                        com.sw.ck.bpm.api.exception.BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
+                if (shouldBlock(config)) throw new BaseException(
+                        BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
                         reason == null ? "抄送投递失败" : reason);
             } finally {
                 if (auditPort != null) auditPort.recordCopy(execution.getProcessInstanceId(),

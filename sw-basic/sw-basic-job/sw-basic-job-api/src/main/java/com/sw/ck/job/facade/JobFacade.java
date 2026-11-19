@@ -1,6 +1,6 @@
 package com.sw.ck.job.facade;
 
-import com.sw.ck.job.dto.JobInfoDTO;
+import com.sw.ck.job.vo.JobInfoVO;
 
 import java.util.Optional;
 
@@ -23,7 +23,7 @@ public interface JobFacade {
      * @param jobId 任务 ID
      * @return present = 任务定义；empty = 该 ID 不存在任务定义（查询目标缺失）
      */
-    Optional<JobInfoDTO> getById(Long jobId);
+    Optional<JobInfoVO> getById(Long jobId);
 
     /**
      * 按名称查询任务定义。
@@ -31,5 +31,5 @@ public interface JobFacade {
      * @param jobName 任务名称
      * @return present = 任务定义；empty = 该名称不存在任务定义（查询目标缺失）
      */
-    Optional<JobInfoDTO> getByJobName(String jobName);
+    Optional<JobInfoVO> getByJobName(String jobName);
 }

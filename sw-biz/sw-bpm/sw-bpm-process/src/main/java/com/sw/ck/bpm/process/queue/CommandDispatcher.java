@@ -1,26 +1,36 @@
 package com.sw.ck.bpm.process.queue;
 
+import com.sw.ck.bpm.process.entity.BatchStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.spi.UserDetailsProvider;
-import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
 /**
  * 命令调度器：持久化队列的默认消费者。
  * <p>
@@ -36,16 +46,18 @@ import java.util.concurrent.TimeUnit;
  * </p>
  */
 @Component
+@Log4j2
 public class CommandDispatcher {
 
-    private static final Logger log = LoggerFactory.getLogger(CommandDispatcher.class);
-
-    private final BpmCommandQueue commandQueue;
-    private final Map<CommandTypeEnum, BpmCommandHandler> handlers;
-    private final UserDetailsProvider userDetailsProvider;
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private List<BpmCommandHandler> handlerList;
+    private Map<CommandTypeEnum, BpmCommandHandler> handlers;
+    @Autowired(required = false)
+    private UserDetailsProvider userDetailsProvider;
 
     private static final String P0_PERMISSION = "workflow:p0:dispatch";
-
 
     @Value("${sw.bpm.command.poll-interval-millis:500}")
     private long pollIntervalMillis;
@@ -73,18 +85,12 @@ public class CommandDispatcher {
     @Value("${sw.bpm.command.dispatch-workers:3}")
     private int dispatchWorkers;
 
-    private java.util.concurrent.ExecutorService dispatchPool;
+    private ExecutorService dispatchPool;
 
-    /**
-     * Spring 生产构造器：消费前通过正式身份 SPI 回查最新权限，避免受理时快照绕过撤权。
-     */
-    @org.springframework.beans.factory.annotation.Autowired
-    public CommandDispatcher(BpmCommandQueue commandQueue, List<BpmCommandHandler> handlers,
-                             UserDetailsProvider userDetailsProvider) {
-        this.commandQueue = commandQueue;
-        this.userDetailsProvider = userDetailsProvider;
-        java.util.HashMap<CommandTypeEnum, BpmCommandHandler> registry = new java.util.HashMap<>();
-        for (BpmCommandHandler handler : handlers) {
+    @PostConstruct
+    public void start() {
+        HashMap<CommandTypeEnum, BpmCommandHandler> registry = new HashMap<>();
+        for (BpmCommandHandler handler : handlerList) {
             for (CommandTypeEnum type : handler.types()) {
                 BpmCommandHandler previous = registry.put(type, handler);
                 if (previous != null) {
@@ -92,18 +98,7 @@ public class CommandDispatcher {
                 }
             }
         }
-        this.handlers = java.util.Collections.unmodifiableMap(registry);
-    }
-
-    /**
-     * 保留无 SPI 的隔离测试构造器；生产由 Spring 使用三参构造器。
-     */
-    public CommandDispatcher(BpmCommandQueue commandQueue, List<BpmCommandHandler> handlers) {
-        this(commandQueue, handlers, null);
-    }
-
-    @PostConstruct
-    public void start() {
+        this.handlers = Collections.unmodifiableMap(registry);
         scheduler = Executors.newScheduledThreadPool(2, runnable -> {
             Thread thread = new Thread(runnable, "bpm-command-dispatcher");
             thread.setDaemon(true);
@@ -161,7 +156,7 @@ public class CommandDispatcher {
 
     private void dispatchLane(CommandChannelEnum channel, int limit) {
         commandQueue.reclaimStale(LocalDateTime.now().minusSeconds(staleSeconds));
-        java.util.List<CommandEnvelope> claimed = commandQueue.claimDue(List.of(channel), limit);
+        List<CommandEnvelope> claimed = commandQueue.claimDue(List.of(channel), limit);
         if (claimed.isEmpty()) {
             return;
         }
@@ -169,15 +164,15 @@ public class CommandDispatcher {
             claimed.forEach(this::dispatchOne);
             return;
         }
-        java.util.List<java.util.concurrent.Future<?>> futures =
-                new java.util.ArrayList<>(claimed.size());
+        List<Future<?>> futures =
+                new ArrayList<>(claimed.size());
         for (CommandEnvelope envelope : claimed) {
             futures.add(dispatchPool.submit(() -> dispatchOne(envelope)));
         }
-        for (java.util.concurrent.Future<?> future : futures) {
+        for (Future<?> future : futures) {
             try {
                 future.get();
-            } catch (java.util.concurrent.ExecutionException e) {
+            } catch (ExecutionException e) {
                 log.error("命令并行消费异常: {}", String.valueOf(e.getCause()), e);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -270,9 +265,9 @@ public class CommandDispatcher {
 
     private boolean ownsClaim(CommandEnvelope envelope) {
         if (envelope.getClaimToken() == null || envelope.getClaimToken().isBlank()) return false;
-        try (var ignored = com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (var ignored = TenantLineSuspension.suspended()) {
             return commandQueue.findById(envelope.getCommandId()).filter(current ->
-                    "PROCESSING".equals(current.getStatus())
+                    BatchStatusEnum.PROCESSING.getCode().equals(current.getStatus())
                             && Objects.equals(current.getClaimToken(), envelope.getClaimToken())
                             && Objects.equals(current.getTenantId(), envelope.getTenantId())
                             && Objects.equals(current.getInitiatorId(), envelope.getInitiatorId())).isPresent();

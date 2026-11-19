@@ -1,7 +1,11 @@
 package com.sw.ck.notify.service;
 
+import com.sw.ck.common.page.PageParam;
+import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.service.BaseService;
+import com.sw.ck.notify.dto.NotifyBatchItemFailure;
 import com.sw.ck.notify.dto.NotifyBatchSendReq;
+import com.sw.ck.notify.dto.NotifyBatchSendResp;
 import com.sw.ck.notify.entity.NotifyMessage;
 
 import java.util.List;
@@ -71,7 +75,7 @@ public interface NotifyMessageService extends BaseService<NotifyMessage> {
      * @return {@code phase=SEND_RESULT} 的结果，四项计数满足
      *         {@code totalCount == successCount + failureCount + processingCount}
      */
-    com.sw.ck.notify.dto.NotifyBatchSendResp batchSendWithOutcome(NotifyBatchSendReq req);
+    NotifyBatchSendResp batchSendWithOutcome(NotifyBatchSendReq req);
 
     /**
      * 请求中直接指定、但在本租户内不可投递的接收对象明细（不存在 / 跨租户 / 已停用 / 已删除）。
@@ -79,7 +83,7 @@ public interface NotifyMessageService extends BaseService<NotifyMessage> {
      * <p>渠道批量与站内信批量共用同一判定，保证两条路径的「总量 = 成功 + 失败 + 处理中」
      * 都对照同一个请求集合，不因路由不同而少报被丢弃的对象。</p>
      */
-    java.util.List<com.sw.ck.notify.dto.NotifyBatchItemFailure> invalidRecipientFailures(NotifyBatchSendReq req);
+    List<NotifyBatchItemFailure> invalidRecipientFailures(NotifyBatchSendReq req);
 
     /**
      * 解析批量发送接收人数（去重后，不含实际发送）。
@@ -88,7 +92,7 @@ public interface NotifyMessageService extends BaseService<NotifyMessage> {
      * @return 去重后的接收人数
      */
     /** 渠道批量投递用：解析并去重后的有效接收人（服务端校验对象有效性）。 */
-    java.util.List<Long> resolveRecipientUserIds(NotifyBatchSendReq req);
+    List<Long> resolveRecipientUserIds(NotifyBatchSendReq req);
 
     int resolveCount(NotifyBatchSendReq req);
 
@@ -119,7 +123,7 @@ public interface NotifyMessageService extends BaseService<NotifyMessage> {
                                  Long recipientId, String channel);
 
     /** 收件箱服务端真分页（稳定排序：create_time desc, id desc）。 */
-    com.sw.ck.common.page.PageResult<NotifyMessage> pageInbox(com.sw.ck.common.page.PageParam pageParam,
+    PageResult<NotifyMessage> pageInbox(PageParam pageParam,
             Long recipientId, Boolean read, String eventType, String keyword);
 
     /** 当前用户未读数。 */

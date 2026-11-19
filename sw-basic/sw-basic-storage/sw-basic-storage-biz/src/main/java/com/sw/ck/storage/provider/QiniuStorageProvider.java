@@ -12,7 +12,7 @@ import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.config.StorageProperties;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -23,7 +23,7 @@ import java.io.InputStream;
  * 使用七牛云 SDK 7.x (com.qiniu)，支持 UploadManager + Auth + BucketManager。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 @RequiredArgsConstructor
 public class QiniuStorageProvider implements StorageProvider {

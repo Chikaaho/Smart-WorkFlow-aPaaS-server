@@ -1,6 +1,7 @@
 package com.sw.ck.notify.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.SendNotifyCommand;
@@ -12,8 +13,11 @@ import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.entity.NotifySendAttempt;
 import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
 import com.sw.ck.notify.service.NotifyMessageService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.trace.DiagnosticText;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -22,11 +26,14 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.api.NotifyBizType;
+import com.sw.ck.notify.api.NotifyDeliveryStatusEnum;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
 /**
  * 通知门面实现（I6 收敛版）。
  * <p>
@@ -40,46 +47,26 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @Service
+@Log4j2
 public class NotifyFacadeImpl implements NotifyFacade {
-
-    private static final Logger log = LoggerFactory.getLogger(NotifyFacadeImpl.class);
 
     private static final String NON_RETRYABLE = "NON_RETRYABLE";
     private static final String RETRYABLE = "RETRYABLE";
 
-    private final NotifyMessageService notifyMessageService;
-    private final Map<NotifyChannel, NotifyChannelAdapter> adapters;
-    private final NotifySendAttemptMapper attemptMapper;
-    private final TenantWorkAdmission tenantWorkAdmission;
-
-    /** 兼容既有单元/集成测试及直接调用方；未显式注册第三方渠道，尝试流水不记录。 */
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService) {
-        this(notifyMessageService, List.of(), null);
-    }
-
-    /** 兼容两参构造（既有测试）；尝试流水不记录。 */
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
-                            List<NotifyChannelAdapter> adapters) {
-        this(notifyMessageService, adapters, null);
-    }
-
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
-                            List<NotifyChannelAdapter> adapters,
-                            NotifySendAttemptMapper attemptMapper) {
-        this(notifyMessageService, adapters, attemptMapper, (tenantId, claim) -> {
-            throw new IllegalStateException("外部通知缺少租户认领契约");
-        });
-    }
-
     @Autowired
-    public NotifyFacadeImpl(NotifyMessageService notifyMessageService,
-                            List<NotifyChannelAdapter> adapters,
-                            NotifySendAttemptMapper attemptMapper,
-                            TenantWorkAdmission tenantWorkAdmission) {
-        this.notifyMessageService = notifyMessageService;
-        this.attemptMapper = attemptMapper;
-        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
-        this.adapters = adapters == null ? Map.of() : adapters.stream()
+    private NotifyMessageService notifyMessageService;
+    @Autowired
+    private List<NotifyChannelAdapter> adapterList;
+    private Map<NotifyChannel, NotifyChannelAdapter> adapters;
+    /** 窄测试上下文可缺省；生产装配尝试流水 Mapper。 */
+    @Autowired(required = false)
+    private NotifySendAttemptMapper attemptMapper;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
+
+    @PostConstruct
+    void initAdapters() {
+        this.adapters = adapterList == null ? Map.of() : adapterList.stream()
                 .collect(Collectors.toUnmodifiableMap(NotifyFacadeImpl::channelOf,
                         Function.identity(), (left, right) -> {
                             throw new IllegalStateException("通知渠道适配器重复: " + channelOf(left));
@@ -105,14 +92,14 @@ public class NotifyFacadeImpl implements NotifyFacade {
         notifyMessageService.save(msg);
         // 站内信入口恒成功：结果镜像落库行语义，持久化失败仍抛。
         return Optional.of(NotifySendResult.builder().channel(NotifyChannel.IN_APP)
-                .status("SUCCESS").build());
+                .status(NotifySendStatusEnum.SUCCESS.getCode()).build());
     }
 
     @Override
     public Optional<NotifySendResult> send(NotifySendRequest request) {
         if (request == null || request.getChannel() == null) {
             return Optional.of(NotifySendResult.builder().channel(NotifyChannel.IN_APP)
-                    .status("FAILED").failureReason("通知请求或渠道为空").build());
+                    .status(NotifySendStatusEnum.FAILED.getCode()).failureReason("通知请求或渠道为空").build());
         }
         NotifySendResult forged = forgedTenantGuard(request);
         if (forged != null) {
@@ -129,7 +116,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
         }
         if (request.getChannel() == NotifyChannel.IN_APP) {
             NotifySendResult result = NotifySendResult.builder()
-                    .channel(NotifyChannel.IN_APP).status("SUCCESS").build();
+                    .channel(NotifyChannel.IN_APP).status(NotifySendStatusEnum.SUCCESS.getCode()).build();
             persistDelivery(request, result);
             return Optional.of(result);
         }
@@ -150,24 +137,24 @@ public class NotifyFacadeImpl implements NotifyFacade {
     public Optional<NotifySendResult> attemptDelivery(NotifySendRequest request) {
         if (request == null || request.getChannel() == null) {
             return Optional.of(NotifySendResult.builder().channel(NotifyChannel.IN_APP)
-                    .status("FAILED").failureReason("通知请求或渠道为空").build());
+                    .status(NotifySendStatusEnum.FAILED.getCode()).failureReason("通知请求或渠道为空").build());
         }
         NotifySendResult forged = forgedTenantGuard(request);
         if (forged != null) {
             return Optional.of(forged);
         }
         if (request.getChannel() == NotifyChannel.IN_APP) {
-            return Optional.of(NotifySendResult.builder().channel(NotifyChannel.IN_APP).status("SUCCESS").build());
+            return Optional.of(NotifySendResult.builder().channel(NotifyChannel.IN_APP).status(NotifySendStatusEnum.SUCCESS.getCode()).build());
         }
         NotifyChannelAdapter adapter = adapters.get(request.getChannel());
         if (adapter == null) {
-            return Optional.of(NotifySendResult.builder().channel(request.getChannel()).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(request.getChannel()).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("未配置生产渠道适配器").build());
         }
         try {
             Optional<NotifySendResult> delivered = adapter.send(request);
             if (delivered.isEmpty()) {
-                return Optional.of(NotifySendResult.builder().channel(request.getChannel()).status("FAILED")
+                return Optional.of(NotifySendResult.builder().channel(request.getChannel()).status(NotifySendStatusEnum.FAILED.getCode())
                         .failureReason("渠道适配器未返回结果").build());
             }
             NotifySendResult result = delivered.orElseThrow();
@@ -180,9 +167,9 @@ public class NotifyFacadeImpl implements NotifyFacade {
             }
             return Optional.of(result);
         } catch (Exception e) {
-            return Optional.of(NotifySendResult.builder().channel(request.getChannel()).status("FAILED")
+            return Optional.of(NotifySendResult.builder().channel(request.getChannel()).status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("投递失败："
-                            + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 300)).build());
+                            + DiagnosticText.sanitize(e.getMessage(), 300)).build());
         }
     }
 
@@ -190,13 +177,13 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     /** 方向 §3.6 反向护栏：登录上下文存在时请求租户不得与之冲突；返回非空即拒绝。 */
     private NotifySendResult forgedTenantGuard(NotifySendRequest request) {
-        com.sw.ck.security.holder.LoginUser principal = com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser principal = LoginUserHolder.get();
         if (principal != null && principal.getTenantId() != null
                 && request.getTenantId() != null
                 && !principal.getTenantId().equals(request.getTenantId())) {
             log.warn("通知租户伪造拒绝: loginTenant={}, requestTenant={}", principal.getTenantId(), request.getTenantId());
             return NotifySendResult.builder().channel(request.getChannel())
-                    .status("FAILED")
+                    .status(NotifySendStatusEnum.FAILED.getCode())
                     .failureReason("请求租户与认证租户不一致，拒绝写入")
                     .build();
         }
@@ -217,7 +204,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
     private NotifySendResult mirrorResult(NotifyChannel channel, NotifyMessage existing) {
         return NotifySendResult.builder()
                 .channel(channel)
-                .status(existing.getDeliveryStatus() == null ? "PENDING" : existing.getDeliveryStatus())
+                .status(existing.getDeliveryStatus() == null ? NotifyDeliveryStatusEnum.PENDING.getCode() : existing.getDeliveryStatus())
                 .externalMessageId(existing.getExternalMessageId())
                 .failureReason(existing.getFailureReason())
                 .build();
@@ -227,7 +214,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
     public Optional<NotifySendResult> recordIntent(NotifySendRequest request) {
         if (request == null || request.getChannel() == null) {
             return Optional.of(NotifySendResult.builder().channel(NotifyChannel.IN_APP)
-                    .status("FAILED").failureReason("通知请求或渠道为空").build());
+                    .status(NotifySendStatusEnum.FAILED.getCode()).failureReason("通知请求或渠道为空").build());
         }
         NotifySendResult forged = forgedTenantGuard(request);
         if (forged != null) {
@@ -246,7 +233,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
         if (request.getChannel() == NotifyChannel.IN_APP) {
             // 站内信行即投递结果：无外部渠道，登记即终态
             NotifySendResult result = NotifySendResult.builder()
-                    .channel(NotifyChannel.IN_APP).status("SUCCESS").build();
+                    .channel(NotifyChannel.IN_APP).status(NotifySendStatusEnum.SUCCESS.getCode()).build();
             return Optional.of(persistDelivery(request, result));
         }
         return Optional.of(persistPendingIntent(request));
@@ -254,7 +241,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     /** 未投递的持久意图判据：仅 recordIntent 会产生 PENDING 状态行。 */
     private static boolean isUndeliveredIntent(NotifyMessage message) {
-        return "PENDING".equals(message.getDeliveryStatus());
+        return NotifyDeliveryStatusEnum.PENDING.getCode().equals(message.getDeliveryStatus());
     }
 
     /**
@@ -267,7 +254,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     private NotifyMessage persistPendingRow(NotifySendRequest request) {
         NotifyMessage msg = newIntentRow(request);
-        msg.setDeliveryStatus("PENDING");
+        msg.setDeliveryStatus(NotifyDeliveryStatusEnum.PENDING.getCode());
         msg.setFailureClass(RETRYABLE);
         // 立即到期：提交后加速未执行时，恢复调度可在下一轮直接领取
         msg.setNextRetryTime(LocalDateTime.now());
@@ -303,13 +290,13 @@ public class NotifyFacadeImpl implements NotifyFacade {
         }
         int claimed = tenantWorkAdmission.claim(message.getTenantId(), () -> notifyMessageService.getBaseMapper().update(null,
                 Wrappers.<NotifyMessage>lambdaUpdate()
-                        .set(NotifyMessage::getDeliveryStatus, "RESENDING")
+                        .set(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.RESENDING.getCode())
                         .setSql("retry_count = retry_count + 1")
                         // 领取即刷新租约时间：进程崩溃后恢复调度据此回收（wrapper 更新不自动填充）
                         .set(NotifyMessage::getUpdateTime, LocalDateTime.now())
                         .eq(NotifyMessage::getId, message.getId())
                         .eq(NotifyMessage::getTenantId, message.getTenantId())
-                        .eq(NotifyMessage::getDeliveryStatus, "PENDING")));
+                        .eq(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.PENDING.getCode())));
         if (claimed == 0) {
             NotifyMessage latest = findByIdentityRow(request);
             return latest == null ? mirrorResult(request.getChannel(), message)
@@ -321,7 +308,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
     /** 投递结果回写到既有意图行 + 尝试流水（不新建第二条业务通知）。 */
     private NotifySendResult writeBackIntent(NotifyMessage message, NotifySendRequest request,
                                              NotifySendResult result) {
-        String status = result.getStatus() == null ? "FAILED" : result.getStatus();
+        String status = result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus();
         String failureClass = failureClassOf(result);
         int claimNumber = (message.getRetryCount() == null ? 0 : message.getRetryCount()) + 1;
         int written = notifyMessageService.getBaseMapper().update(null,
@@ -334,7 +321,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
                         .set(NotifyMessage::getUpdateTime, LocalDateTime.now())
                         .eq(NotifyMessage::getId, message.getId())
                         .eq(NotifyMessage::getTenantId, message.getTenantId())
-                        .eq(NotifyMessage::getDeliveryStatus, "RESENDING")
+                        .eq(NotifyMessage::getDeliveryStatus, NotifyDeliveryStatusEnum.RESENDING.getCode())
                         .eq(NotifyMessage::getRetryCount, claimNumber));
         recordAttempt(message.getId(), claimNumber, request.getChannel().name(), result, failureClass, message.getTenantId());
         if (written == 0) {
@@ -355,12 +342,12 @@ public class NotifyFacadeImpl implements NotifyFacade {
         msg.setRecipientId(request.getRecipientId());
         msg.setTitle(request.getTitle());
         msg.setContent(request.getContent());
-        msg.setBizType(request.getBizType() == null ? "SYSTEM" : request.getBizType().name());
+        msg.setBizType(request.getBizType() == null ? NotifyBizType.SYSTEM.name() : request.getBizType().name());
         msg.setBizId(request.getBizId());
         msg.setIsRead(false);
         msg.setChannel(request.getChannel().name());
         msg.setIdempotencyKey(request.getIdempotencyKey());
-        msg.setEventType(hasText(request.getEventType()) ? request.getEventType() : "SYSTEM");
+        msg.setEventType(hasText(request.getEventType()) ? request.getEventType() : NotifyBizType.SYSTEM.name());
         msg.setOccurrenceNo(request.getOccurrenceNo() == null ? 1L : request.getOccurrenceNo());
         msg.setTemplateId(request.getTemplateId());
         msg.setTemplateVersion(request.getTemplateVersion());
@@ -373,13 +360,13 @@ public class NotifyFacadeImpl implements NotifyFacade {
 
     private NotifySendResult persistDelivery(NotifySendRequest request, NotifySendResult result) {
         // 方向 §3.6 反向护栏二：持久化层防御性复核（登录权威租户优先）。
-        String status = result.getStatus() == null ? "FAILED" : result.getStatus();
+        String status = result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus();
         String failureClass = failureClassOf(result);
         NotifyMessage msg = new NotifyMessage();
         msg.setRecipientId(request.getRecipientId());
         msg.setTitle(request.getTitle());
         msg.setContent(request.getContent());
-        msg.setBizType(request.getBizType() == null ? "SYSTEM" : request.getBizType().name());
+        msg.setBizType(request.getBizType() == null ? NotifyBizType.SYSTEM.name() : request.getBizType().name());
         msg.setBizId(request.getBizId());
         msg.setIsRead(false);
         msg.setChannel(request.getChannel().name());
@@ -387,7 +374,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
         msg.setExternalMessageId(result.getExternalMessageId());
         msg.setFailureReason(result.getFailureReason());
         msg.setIdempotencyKey(request.getIdempotencyKey());
-        msg.setEventType(hasText(request.getEventType()) ? request.getEventType() : "SYSTEM");
+        msg.setEventType(hasText(request.getEventType()) ? request.getEventType() : NotifyBizType.SYSTEM.name());
         msg.setOccurrenceNo(request.getOccurrenceNo() == null ? 1L : request.getOccurrenceNo());
         msg.setTemplateId(request.getTemplateId());
         msg.setTemplateVersion(request.getTemplateVersion());
@@ -452,7 +439,7 @@ public class NotifyFacadeImpl implements NotifyFacade {
             attempt.setMessageId(messageId);
             attempt.setAttemptNo(attemptNo);
             attempt.setChannel(channel);
-            attempt.setStatus(result.getStatus() == null ? "FAILED" : result.getStatus());
+            attempt.setStatus(result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus());
             attempt.setFailureReason(result.getFailureReason());
             attempt.setExternalMessageId(result.getExternalMessageId());
             if (failureClass != null) {

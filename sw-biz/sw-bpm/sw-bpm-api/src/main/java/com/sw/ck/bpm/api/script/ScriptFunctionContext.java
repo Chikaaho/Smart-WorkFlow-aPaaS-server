@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.api.script;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -26,11 +28,11 @@ public record ScriptFunctionContext(
 
     public ScriptFunctionContext {
         deptParentMap = deptParentMap == null ? Map.of()
-                : java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(deptParentMap));
+                : Collections.unmodifiableMap(new LinkedHashMap<>(deptParentMap));
         deptLeaderMap = deptLeaderMap == null ? Map.of()
-                : java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(deptLeaderMap));
+                : Collections.unmodifiableMap(new LinkedHashMap<>(deptLeaderMap));
         instanceVariables = instanceVariables == null ? Map.of()
-                : java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(instanceVariables));
+                : Collections.unmodifiableMap(new LinkedHashMap<>(instanceVariables));
     }
 
     /** 是否无任何函数数据（宿主可跳过组织目录构建）。 */

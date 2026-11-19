@@ -1,5 +1,7 @@
 package com.sw.ck.iot.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
 
 /**
  * 产品与物模型服务：草稿 → 校验 → 发布；设备与流程引用已发布版本。
@@ -21,17 +24,12 @@ import java.util.List;
 @Service
 public class IotProductService {
 
-    private final IotProductMapper productMapper;
-    private final IotThingModelMapper thingModelMapper;
-    private final IotDeviceMapper deviceMapper;
-
-    public IotProductService(IotProductMapper productMapper,
-                             IotThingModelMapper thingModelMapper,
-                             IotDeviceMapper deviceMapper) {
-        this.productMapper = productMapper;
-        this.thingModelMapper = thingModelMapper;
-        this.deviceMapper = deviceMapper;
-    }
+    @Autowired
+    private IotProductMapper productMapper;
+    @Autowired
+    private IotThingModelMapper thingModelMapper;
+    @Autowired
+    private IotDeviceMapper deviceMapper;
 
     public List<IotProduct> list() {
         return productMapper.selectList(new LambdaQueryWrapper<>());
@@ -118,7 +116,7 @@ public class IotProductService {
      */
     public List<IotDevice> listProcessEligibleDevices() {
         return deviceMapper.selectList(new LambdaQueryWrapper<IotDevice>()
-                .eq(IotDevice::getManageStatus, "PUBLISHED")
+                .eq(IotDevice::getManageStatus, IotPublishStatusEnum.PUBLISHED.getCode())
                 .eq(IotDevice::getProcessAccessEnabled, 1));
     }
 

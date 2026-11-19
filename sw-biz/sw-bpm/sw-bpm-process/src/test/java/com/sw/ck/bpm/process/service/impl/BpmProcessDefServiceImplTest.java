@@ -3,6 +3,7 @@ package com.sw.ck.bpm.process.service.impl;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.facade.BpmDeployFacade;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -12,6 +13,7 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.form.api.form.FormDefinitionService;
+
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +26,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -80,7 +83,7 @@ class BpmProcessDefServiceImplTest {
         void getBpmnXml_shouldDelegateToFacade() {
             BpmProcessDef def = createPublishedDef();
             when(mapper.selectById(1L)).thenReturn(def);
-            when(bpmDeployFacade.getBpmnXml("proc-def-1")).thenReturn(java.util.Optional.of("<xml/>"));
+            when(bpmDeployFacade.getBpmnXml("proc-def-1")).thenReturn(Optional.of("<xml/>"));
 
             String result = service.getBpmnXml(1L);
 

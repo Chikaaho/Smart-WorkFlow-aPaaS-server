@@ -2,6 +2,7 @@ package com.sw.ck.security.jwt;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
+
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -10,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.UUID;
 
 /**
  * 基于 jjwt 的默认实现：token 只携带 userId（subject）、随机 jti 与签发/过期时间，
@@ -38,7 +40,7 @@ public class JwtTokenProviderImpl implements JwtTokenProvider {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 // 同秒唯一性（G6c1a）：见类注释，缺 jti 时同秒签发会产出相同 token
-                .id(java.util.UUID.randomUUID().toString())
+                .id(UUID.randomUUID().toString())
                 .issuedAt(now)
                 .expiration(expiration)
                 .signWith(secretKey())

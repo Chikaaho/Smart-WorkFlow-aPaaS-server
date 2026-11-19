@@ -1,5 +1,9 @@
 package com.sw.ck.iot.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.iot.entity.IotDeviceCommand;
@@ -12,14 +16,20 @@ import com.sw.ck.iot.service.DeviceReceiptService;
 import com.sw.ck.iot.service.IotAuditService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Set;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
 /**
  * {@link DeviceReceiptService} 实现：守卫裁决全部经真实命令行状态机与审计落地。
  * <p>
@@ -30,9 +40,8 @@ import java.util.Set;
  * </p>
  */
 @Service
+@Log4j2
 public class DeviceReceiptServiceImpl implements DeviceReceiptService {
-
-    private static final Logger log = LoggerFactory.getLogger(DeviceReceiptServiceImpl.class);
 
     /** 与 TxnActionController/BpmCommandController 相同的注解权限手法；服务内复校防内部绕过。 */
     public static final String VERIFY_PERMISSION = "iot:command:verify";
@@ -41,20 +50,15 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
     private static final Set<String> DETERMINED = Set.of("SUCCESS", "FAILED", "EXPIRED");
     private static final Set<String> OUTCOMES = Set.of("SUCCESS", "FAILED");
 
-    private final IotDeviceCommandMapper commandMapper;
-    private final CommandQueueService commandQueueService;
-    private final IotAuditService auditService;
+    @Autowired
+    private IotDeviceCommandMapper commandMapper;
+    @Autowired
+    private CommandQueueService commandQueueService;
+    @Autowired
+    private IotAuditService auditService;
 
     @Value("${sw.iot.receipt.secret:}")
     private String receiptSecret;
-
-    public DeviceReceiptServiceImpl(IotDeviceCommandMapper commandMapper,
-                                    CommandQueueService commandQueueService,
-                                    IotAuditService auditService) {
-        this.commandMapper = commandMapper;
-        this.commandQueueService = commandQueueService;
-        this.auditService = auditService;
-    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -66,8 +70,8 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
         }
         // 回执通道无登录态（外部传输对端，来源由 HMAC 守卫承担）：全程挂起租户拦截，
         // 命令行 tenant_id 自承载租户语义、主键定位命令行（与补偿调度跨租户扫描同一手法）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return applyReceiptSuspended(receipt);
         }
     }
@@ -178,7 +182,7 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
         patch.setStatus("SUCCESS".equals(outcome) ? "SUCCESS" : "FAILED");
         patch.setResult(serializeResult(source, requestId, output, verifyDetail));
         int updated = commandMapper.update(patch,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotDeviceCommand>lambdaUpdate()
+                Wrappers.<IotDeviceCommand>lambdaUpdate()
                         .eq(IotDeviceCommand::getId, command.getId())
                         .eq(IotDeviceCommand::getStatus, command.getStatus()));
         if (updated > 0) {
@@ -191,11 +195,11 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
     private void applyOutcome(IotDeviceCommand command, String outcome, String output,
                               String source, String requestId, String verifyDetail) {
         if ("SUCCESS".equals(outcome)) {
-            command.setStatus("SUCCESS");
+            command.setStatus(IotCommandStatusEnum.SUCCESS.getCode());
             command.setResult(serializeResult(source, requestId, output, verifyDetail));
             command.setLastError(null);
         } else {
-            command.setStatus("FAILED");
+            command.setStatus(IotCommandStatusEnum.FAILED.getCode());
             command.setResult(serializeResult(source, requestId, output, verifyDetail));
             command.setLastError("由 " + source + " 收敛为 FAILED");
         }
@@ -239,10 +243,10 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
 
     private static String hmacSha256(String secret, String message) {
         try {
-            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-            mac.init(new javax.crypto.spec.SecretKeySpec(
-                    secret.getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
-            byte[] hash = mac.doFinal(message.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(
+                    secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] hash = mac.doFinal(message.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder();
             for (byte b : hash) {
                 sb.append(String.format("%02x", b));
@@ -254,9 +258,9 @@ public class DeviceReceiptServiceImpl implements DeviceReceiptService {
     }
 
     private static boolean constantTimeEquals(String a, String b) {
-        return java.security.MessageDigest.isEqual(
-                a.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                b.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return MessageDigest.isEqual(
+                a.getBytes(StandardCharsets.UTF_8),
+                b.getBytes(StandardCharsets.UTF_8));
     }
 
     private void requireVerifier() {

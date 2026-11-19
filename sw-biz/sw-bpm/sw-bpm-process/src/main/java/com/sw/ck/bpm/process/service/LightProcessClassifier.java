@@ -1,12 +1,15 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.stereotype.Component;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 生产轻流程判定（P62 资源保障）。
  * <p>
@@ -18,17 +21,14 @@ import org.springframework.stereotype.Component;
  * </p>
  */
 @Component
+@Log4j2
 public class LightProcessClassifier {
 
-    private static final Logger log = LoggerFactory.getLogger(LightProcessClassifier.class);
     private static final String TXN_ACTION_MARKER = "\"TXN_ACTION\"";
     private static final String STATUS_PUBLISHED = "PUBLISHED";
 
-    private final BpmProcessDefMapper processDefMapper;
-
-    public LightProcessClassifier(BpmProcessDefMapper processDefMapper) {
-        this.processDefMapper = processDefMapper;
-    }
+    @Autowired
+    private BpmProcessDefMapper processDefMapper;
 
     /**
      * 判定绑定流程是否生产轻流程。
@@ -43,7 +43,7 @@ public class LightProcessClassifier {
         }
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             BpmProcessDef def = processDefMapper.selectOne(
-                    com.baomidou.mybatisplus.core.toolkit.Wrappers.<BpmProcessDef>lambdaQuery()
+                    Wrappers.<BpmProcessDef>lambdaQuery()
                             .eq(BpmProcessDef::getTenantId, tenantId)
                             .eq(BpmProcessDef::getProcessKey, processDefKey)
                             .eq(BpmProcessDef::getStatus, STATUS_PUBLISHED)

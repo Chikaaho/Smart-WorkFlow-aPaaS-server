@@ -1,23 +1,32 @@
 package com.sw.ck.bpm.process.port;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.dto.StartCommand;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.entity.ResourceClassEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
+import com.sw.ck.bpm.process.service.LightProcessClassifier;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService;
+import com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket;
+import com.sw.ck.bpm.process.service.ResourceReleaseService;
 import com.sw.ck.form.api.event.FormSubmittedEvent;
 import com.sw.ck.form.api.port.FlowStartPort;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * {@link FlowStartPort} 默认实现：表单提交事务内持久化流程发起受理。
  * <p>
@@ -26,27 +35,19 @@ import java.util.Optional;
  * </p>
  */
 @Service
+@Log4j2
 public class FlowStartPortImpl implements FlowStartPort {
 
-    private static final Logger log = LoggerFactory.getLogger(FlowStartPortImpl.class);
-
-    private final BpmFormBindingService bindingService;
-    private final BpmCommandQueue commandQueue;
-    private final ObjectMapper objectMapper;
-    private final com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService;
-    private final com.sw.ck.bpm.process.service.LightProcessClassifier lightProcessClassifier;
-
-    public FlowStartPortImpl(BpmFormBindingService bindingService,
-                             BpmCommandQueue commandQueue,
-                             ObjectMapper objectMapper,
-                             com.sw.ck.bpm.process.service.ResourceAdmissionService admissionService,
-                             com.sw.ck.bpm.process.service.LightProcessClassifier lightProcessClassifier) {
-        this.bindingService = bindingService;
-        this.commandQueue = commandQueue;
-        this.objectMapper = objectMapper;
-        this.admissionService = admissionService;
-        this.lightProcessClassifier = lightProcessClassifier;
-    }
+    @Autowired
+    private BpmFormBindingService bindingService;
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private ResourceAdmissionService admissionService;
+    @Autowired
+    private LightProcessClassifier lightProcessClassifier;
 
     @Override
     public Optional<Long> acceptFlowStart(FormSubmittedEvent event) {
@@ -82,15 +83,15 @@ public class FlowStartPortImpl implements FlowStartPort {
         // 普通流程=FLOW_STARTED。
         boolean light = lightProcessClassifier.isLightProcess(event.getTenantId(), resolvedProcessDefKey);
         envelope.setCompletionPoint(light
-                ? com.sw.ck.bpm.process.service.ResourceReleaseService.COMPLETION_POINT_TARGET_DONE
+                ? ResourceReleaseService.COMPLETION_POINT_TARGET_DONE
                 : "FLOW_STARTED");
         try {
             Optional<Long> accepted = Optional.of(commandQueue.enqueue(envelope));
-            com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
+            AdmissionTicket ticket =
                     admissionService.admit(event.getTenantId(),
-                            com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, 1, commandKey);
+                            ResourceClassEnum.PROD, 1, commandKey);
             if (ticket != null) {
-                envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode());
+                envelope.setResourceClass(ResourceClassEnum.PROD.getCode());
                 envelope.setResourceUnits(1);
                 envelope.setResourceSegment(ticket.segment());
                 envelope.setPolicyVersion(ticket.policyVersion());
@@ -179,14 +180,14 @@ public class FlowStartPortImpl implements FlowStartPort {
         envelope.setPayload(toPayload(payload, recordId));
         boolean light = lightProcessClassifier.isLightProcess(tenantId, resolvedProcessDefKey);
         envelope.setCompletionPoint(light
-                ? com.sw.ck.bpm.process.service.ResourceReleaseService.COMPLETION_POINT_TARGET_DONE
+                ? ResourceReleaseService.COMPLETION_POINT_TARGET_DONE
                 : "FLOW_STARTED");
         Optional<Long> accepted = Optional.of(commandQueue.enqueue(envelope));
-        com.sw.ck.bpm.process.service.ResourceAdmissionService.AdmissionTicket ticket =
+        AdmissionTicket ticket =
                 admissionService.admit(tenantId,
-                        com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD, 1, commandKey);
+                        ResourceClassEnum.PROD, 1, commandKey);
         if (ticket != null) {
-            envelope.setResourceClass(com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode());
+            envelope.setResourceClass(ResourceClassEnum.PROD.getCode());
             envelope.setResourceUnits(1);
             envelope.setResourceSegment(ticket.segment());
             envelope.setPolicyVersion(ticket.policyVersion());
@@ -243,7 +244,7 @@ public class FlowStartPortImpl implements FlowStartPort {
             return CommandChannelEnum.NORMAL;
         }
         try {
-            return CommandChannelEnum.valueOf(dispatchChannel.toUpperCase(java.util.Locale.ROOT));
+            return CommandChannelEnum.valueOf(dispatchChannel.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException ex) {
             throw new IllegalStateException("未知流程发起通道: " + dispatchChannel);
         }

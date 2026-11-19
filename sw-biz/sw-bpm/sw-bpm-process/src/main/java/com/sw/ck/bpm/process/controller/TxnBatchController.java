@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.TxnBatchSubmitRequest;
 import com.sw.ck.bpm.process.dto.TxnBatchView;
 import com.sw.ck.bpm.process.service.TxnBatchService;
@@ -24,11 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/workflow/txn-batch")
 public class TxnBatchController {
 
-    private final TxnBatchService txnBatchService;
-
-    public TxnBatchController(TxnBatchService txnBatchService) {
-        this.txnBatchService = txnBatchService;
-    }
+    @Autowired
+    private TxnBatchService txnBatchService;
 
     /** 受理批量调用（同租户批次键幂等：重放返回原批次）。 */
     @PostMapping

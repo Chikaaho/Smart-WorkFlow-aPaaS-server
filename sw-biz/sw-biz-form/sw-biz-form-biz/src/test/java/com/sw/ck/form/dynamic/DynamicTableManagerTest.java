@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
@@ -13,9 +14,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import javax.sql.DataSource;
-
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -47,7 +50,7 @@ class DynamicTableManagerTest {
     private JdbcTemplate jdbcTemplate;
 
     /** 记录每个测试创建的表名，在 @AfterEach 中清理 */
-    private final java.util.ArrayList<String> createdTables = new java.util.ArrayList<>();
+    private final ArrayList<String> createdTables = new ArrayList<>();
 
     @AfterEach
     void tearDown() {
@@ -322,7 +325,7 @@ class DynamicTableManagerTest {
         @Test
         @DisplayName("连续生成不重复")
         void consecutiveGenerations_shouldBeUnique() {
-            java.util.Set<String> names = new java.util.HashSet<>();
+            Set<String> names = new HashSet<>();
             for (int i = 0; i < 100; i++) {
                 names.add(dynamicTableManager.generateTableName(false));
             }
@@ -487,7 +490,7 @@ class DynamicTableManagerTest {
 
         @Bean
         public DataSource dataSource() {
-            return org.springframework.boot.jdbc.DataSourceBuilder.create()
+            return DataSourceBuilder.create()
                     .url("jdbc:h2:mem:dynamictest;DB_CLOSE_DELAY=-1;MODE=PostgreSQL")
                     .driverClassName("org.h2.Driver")
                     .username("sa")

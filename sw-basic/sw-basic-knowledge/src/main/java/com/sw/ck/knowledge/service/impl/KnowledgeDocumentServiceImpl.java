@@ -1,9 +1,11 @@
 package com.sw.ck.knowledge.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.knowledge.dto.KnowledgeDocumentDTO;
+import com.sw.ck.knowledge.vo.KnowledgeDocumentVO;
 import com.sw.ck.knowledge.entity.KnowledgeBase;
 import com.sw.ck.knowledge.entity.KnowledgeChunk;
 import com.sw.ck.knowledge.entity.KnowledgeDocument;
@@ -37,29 +39,21 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     private static final Set<String> ALLOWED_EXTENSIONS =
             Set.of("pdf", "doc", "docx", "txt", "md", "markdown");
 
-    private final KnowledgeBaseMapper baseMapper;
-    private final KnowledgeDocumentMapper documentMapper;
-    private final KnowledgeChunkMapper chunkMapper;
-    private final KnowledgeDocumentParser parser;
-    private final KnowledgeEmbeddingClient embeddingClient;
-    private final KnowledgeVectorStore vectorStore;
-
-    public KnowledgeDocumentServiceImpl(KnowledgeBaseMapper baseMapper,
-                                        KnowledgeDocumentMapper documentMapper,
-                                        KnowledgeChunkMapper chunkMapper,
-                                        KnowledgeDocumentParser parser,
-                                        KnowledgeEmbeddingClient embeddingClient,
-                                        KnowledgeVectorStore vectorStore) {
-        this.baseMapper = baseMapper;
-        this.documentMapper = documentMapper;
-        this.chunkMapper = chunkMapper;
-        this.parser = parser;
-        this.embeddingClient = embeddingClient;
-        this.vectorStore = vectorStore;
-    }
+    @Autowired
+    private KnowledgeBaseMapper baseMapper;
+    @Autowired
+    private KnowledgeDocumentMapper documentMapper;
+    @Autowired
+    private KnowledgeChunkMapper chunkMapper;
+    @Autowired
+    private KnowledgeDocumentParser parser;
+    @Autowired
+    private KnowledgeEmbeddingClient embeddingClient;
+    @Autowired
+    private KnowledgeVectorStore vectorStore;
 
     @Override
-    public List<KnowledgeDocumentDTO> list(Long kbId) {
+    public List<KnowledgeDocumentVO> list(Long kbId) {
         requireBase(kbId);
         return documentMapper.selectList(
                         Wrappers.<KnowledgeDocument>lambdaQuery()
@@ -69,7 +63,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     }
 
     @Override
-    public KnowledgeDocumentDTO upload(Long kbId, MultipartFile file) {
+    public KnowledgeDocumentVO upload(Long kbId, MultipartFile file) {
         KnowledgeBase base = requireBase(kbId);
         if (file == null || file.isEmpty()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "上传文件不能为空");
@@ -191,8 +185,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         return value.length() <= max ? value : value.substring(0, max);
     }
 
-    private KnowledgeDocumentDTO toDTO(KnowledgeDocument entity) {
-        KnowledgeDocumentDTO dto = new KnowledgeDocumentDTO();
+    private KnowledgeDocumentVO toDTO(KnowledgeDocument entity) {
+        KnowledgeDocumentVO dto = new KnowledgeDocumentVO();
         dto.setId(entity.getId());
         dto.setKbId(entity.getKbId());
         dto.setName(entity.getName());

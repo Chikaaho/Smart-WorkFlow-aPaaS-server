@@ -1,5 +1,7 @@
 package com.sw.ck.openapi.biz.listener;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.bpm.api.event.BpmNotifyEvent;
 import com.sw.ck.bpm.api.event.BpmNotifyTrigger;
@@ -7,8 +9,6 @@ import com.sw.ck.openapi.biz.entity.OpenApiApp;
 import com.sw.ck.openapi.biz.entity.OpenApiCallbackTask;
 import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.mapper.OpenApiCallbackTaskMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
@@ -17,6 +17,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.openapi.biz.entity.OpenApiAppStatusEnum;
+import com.sw.ck.openapi.biz.entity.OpenApiCallbackStatusEnum;
 /**
  * 出站回调意图的事务内登记器（Phase 4 可靠业务事件 —— OpenAPI 回调 MUST_DELIVER）。
  *
@@ -26,9 +29,8 @@ import java.util.List;
  * 原先“只在进程内重试 3 次、失败仅留日志”的路径不再作为唯一事实源。</p>
  */
 @Component
+@Log4j2
 public class OpenApiCallbackIntentRecorder {
-
-    private static final Logger log = LoggerFactory.getLogger(OpenApiCallbackIntentRecorder.class);
 
     /** 只登记实例终态事件（与提交后投递口径一致）。 */
     static final List<BpmNotifyTrigger> TERMINAL = List.of(
@@ -36,14 +38,10 @@ public class OpenApiCallbackIntentRecorder {
             BpmNotifyTrigger.PROCESS_DISAPPROVED, BpmNotifyTrigger.PROCESS_WITHDRAWN,
             BpmNotifyTrigger.PROCESS_DISCARDED);
 
-    private final OpenApiAppMapper appMapper;
-    private final OpenApiCallbackTaskMapper taskMapper;
-
-    public OpenApiCallbackIntentRecorder(OpenApiAppMapper appMapper,
-                                         OpenApiCallbackTaskMapper taskMapper) {
-        this.appMapper = appMapper;
-        this.taskMapper = taskMapper;
-    }
+    @Autowired
+    private OpenApiAppMapper appMapper;
+    @Autowired
+    private OpenApiCallbackTaskMapper taskMapper;
 
     @EventListener
     public void onBpmNotify(BpmNotifyEvent event) {
@@ -66,7 +64,7 @@ public class OpenApiCallbackIntentRecorder {
         }
         List<OpenApiApp> apps = appMapper.selectList(new LambdaQueryWrapper<OpenApiApp>()
                 .eq(OpenApiApp::getTenantId, event.getTenantId())
-                .eq(OpenApiApp::getStatus, "ENABLED")
+                .eq(OpenApiApp::getStatus, OpenApiAppStatusEnum.ENABLED.getCode())
                 .isNotNull(OpenApiApp::getCallbackUrl)
                 .eq(OpenApiApp::getDeleted, 0));
         int recorded = 0;
@@ -75,7 +73,7 @@ public class OpenApiCallbackIntentRecorder {
             task.setAppId(app.getAppId());
             task.setEvent(event.getTrigger().name());
             task.setBizRef(event.getBizId());
-            task.setStatus("PENDING");
+            task.setStatus(OpenApiCallbackStatusEnum.PENDING.getCode());
             task.setAttempts(0);
             task.setNextRetryTime(LocalDateTime.now());
             task.setTenantId(event.getTenantId());

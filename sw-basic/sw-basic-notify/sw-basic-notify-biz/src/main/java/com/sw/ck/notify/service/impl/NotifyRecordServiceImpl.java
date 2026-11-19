@@ -3,6 +3,7 @@ package com.sw.ck.notify.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -18,23 +19,24 @@ import com.sw.ck.notify.entity.NotifySendAttempt;
 import com.sw.ck.notify.mapper.NotifyMessageMapper;
 import com.sw.ck.notify.mapper.NotifySendAttemptMapper;
 import com.sw.ck.notify.service.NotifyRecordService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sw.ck.common.trace.DiagnosticText;
+import com.sw.ck.notify.vo.NotifyRecordDetailVO;
+import com.sw.ck.notify.vo.NotifyRecordSummaryVO;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /** 通知发送记录服务实现。 */
 @Service
+@Log4j2
 public class NotifyRecordServiceImpl implements NotifyRecordService {
-
-    private static final Logger log = LoggerFactory.getLogger(NotifyRecordServiceImpl.class);
 
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_RESENDING = "RESENDING";
@@ -43,20 +45,14 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
     /** 最小重发间隔：同步重发完成后记录回到 FAILED，节流窗口内拒绝快速重复重发（防重复业务效果） */
     private static final Duration MIN_RESEND_INTERVAL = Duration.ofSeconds(10);
 
-    private final NotifyMessageMapper messageMapper;
-    private final NotifySendAttemptMapper attemptMapper;
-    private final NotifyFacade notifyFacade;
-    private final TenantWorkAdmission tenantWorkAdmission;
-
-    public NotifyRecordServiceImpl(NotifyMessageMapper messageMapper,
-                                   NotifySendAttemptMapper attemptMapper,
-                                   NotifyFacade notifyFacade,
-                                   TenantWorkAdmission tenantWorkAdmission) {
-        this.messageMapper = messageMapper;
-        this.attemptMapper = attemptMapper;
-        this.notifyFacade = notifyFacade;
-        this.tenantWorkAdmission = Objects.requireNonNull(tenantWorkAdmission);
-    }
+    @Autowired
+    private NotifyMessageMapper messageMapper;
+    @Autowired
+    private NotifySendAttemptMapper attemptMapper;
+    @Autowired
+    private NotifyFacade notifyFacade;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @Override
     public PageResult<NotifyMessage> pageEntities(PageParam pageParam, String deliveryStatus, Long recipientId,
@@ -77,7 +73,7 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
 
     /** 必要详情（含完整正文/尝试流水）：仅限独立详情权限调用并记审计。 */
     @Override
-    public Map<String, Object> recordFullDetail(Long id) {
+    public NotifyRecordDetailVO recordFullDetail(Long id) {
         NotifyMessage message = messageMapper.selectById(id);
         if (message == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "发送记录不存在");
@@ -86,13 +82,13 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
                 Wrappers.lambdaQuery(NotifySendAttempt.class)
                         .eq(NotifySendAttempt::getMessageId, id)
                         .orderByAsc(NotifySendAttempt::getAttemptNo));
-        Map<String, Object> detail = new LinkedHashMap<>();
-        detail.put("message", message);
-        detail.put("attempts", attempts);
+        NotifyRecordDetailVO detail = new NotifyRecordDetailVO();
+        detail.setMessage(message);
+        detail.setAttempts(attempts);
         return detail;
     }
 
-    public Map<String, Object> recordDetail(Long id) {
+    public NotifyRecordDetailVO recordDetail(Long id) {
         NotifyMessage message = messageMapper.selectById(id);
         if (message == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "发送记录不存在");
@@ -101,7 +97,6 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
                 Wrappers.lambdaQuery(NotifySendAttempt.class)
                         .eq(NotifySendAttempt::getMessageId, id)
                         .orderByAsc(NotifySendAttempt::getAttemptNo));
-        Map<String, Object> detail = new LinkedHashMap<>();
         // 最小暴露：详情默认省略完整正文；正文/尝试流水经 /notify/records/{id}/detail 独立权限读取
         NotifyMessage masked = new NotifyMessage();
         masked.setId(message.getId());
@@ -112,8 +107,9 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
         masked.setChannel(message.getChannel());
         masked.setDeliveryStatus(message.getDeliveryStatus());
         masked.setCreateTime(message.getCreateTime());
-        detail.put("message", masked);
-        detail.put("attempts", attempts);
+        NotifyRecordDetailVO detail = new NotifyRecordDetailVO();
+        detail.setMessage(masked);
+        detail.setAttempts(attempts);
         return detail;
     }
 
@@ -203,7 +199,7 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
             result = NotifySendResult.builder()
                     .channel(parseChannel(message.getChannel()))
                     .status(STATUS_FAILED)
-                    .failureReason("重发投递失败，请稍后重试：" + com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 200))
+                    .failureReason("重发投递失败，请稍后重试：" + DiagnosticText.sanitize(e.getMessage(), 200))
                     .build();
         }
         String latest = result.getStatus() == null ? STATUS_FAILED : result.getStatus();
@@ -262,23 +258,23 @@ public class NotifyRecordServiceImpl implements NotifyRecordService {
         }
     }
     @Override
-    public PageResult<com.sw.ck.notify.dto.NotifyRecordSummaryDTO> pageRecords(
+    public PageResult<NotifyRecordSummaryVO> pageRecords(
             PageParam pageParam, String deliveryStatus, Long recipientId, String keyword,
             LocalDateTime timeFrom, LocalDateTime timeTo) {
         PageResult<NotifyMessage> raw = pageEntities(pageParam, deliveryStatus, recipientId, keyword,
                 timeFrom, timeTo);
-        com.sw.ck.notify.dto.NotifyRecordSummaryDTO[] mapped = raw.getRecords().stream()
-                .map(this::toSummary).toArray(com.sw.ck.notify.dto.NotifyRecordSummaryDTO[]::new);
-        return new com.sw.ck.common.page.PageResult<com.sw.ck.notify.dto.NotifyRecordSummaryDTO>() {{
-            setRecords(java.util.Arrays.asList(mapped));
+        NotifyRecordSummaryVO[] mapped = raw.getRecords().stream()
+                .map(this::toSummary).toArray(NotifyRecordSummaryVO[]::new);
+        return new PageResult<NotifyRecordSummaryVO>() {{
+            setRecords(Arrays.asList(mapped));
             setTotal(raw.getTotal());
             setPageNum(raw.getPageNum());
             setPageSize(raw.getPageSize());
         }};
     }
 
-    private com.sw.ck.notify.dto.NotifyRecordSummaryDTO toSummary(NotifyMessage m) {
-        com.sw.ck.notify.dto.NotifyRecordSummaryDTO dto = new com.sw.ck.notify.dto.NotifyRecordSummaryDTO();
+    private NotifyRecordSummaryVO toSummary(NotifyMessage m) {
+        NotifyRecordSummaryVO dto = new NotifyRecordSummaryVO();
         dto.setId(m.getId());
         dto.setTitle(m.getTitle());
         dto.setBizType(m.getBizType());

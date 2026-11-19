@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessNotificationConfig;
@@ -9,8 +11,6 @@ import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.ParticipantSnapshot;
 import com.sw.ck.bpm.process.mapper.ParticipantSnapshotMapper;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 结束通知接收人/渠道解析（50:88 / W020）。
  *
@@ -27,21 +28,15 @@ import java.util.Set;
  * 取本实例参与人快照去重。</p>
  */
 @Component
+@Log4j2
 public class ProcessEndNotificationResolver {
 
-    private static final Logger log = LoggerFactory.getLogger(ProcessEndNotificationResolver.class);
-
-    private final NodeFormDataService nodeFormDataService;
-    private final ParticipantSnapshotMapper participantSnapshotMapper;
-    private final UserQueryFacade userQueryFacade;
-
-    public ProcessEndNotificationResolver(NodeFormDataService nodeFormDataService,
-                                          ParticipantSnapshotMapper participantSnapshotMapper,
-                                          UserQueryFacade userQueryFacade) {
-        this.nodeFormDataService = nodeFormDataService;
-        this.participantSnapshotMapper = participantSnapshotMapper;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private NodeFormDataService nodeFormDataService;
+    @Autowired
+    private ParticipantSnapshotMapper participantSnapshotMapper;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     public List<BpmNotifyEvent> resolveApproved(BpmInstance instance, Long actorUserId) {
         if (instance == null || instance.getProcessInstanceId() == null) {

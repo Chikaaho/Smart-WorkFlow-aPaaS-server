@@ -1,5 +1,7 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.form.api.facade.SubmissionValidationOutcome;
 import org.springframework.stereotype.Service;
@@ -18,11 +20,8 @@ import java.util.Optional;
 @Service
 public class FormDataSubmitFacadeImpl implements FormDataSubmitFacade {
 
-    private final FormSubmitService formSubmitService;
-
-    public FormDataSubmitFacadeImpl(FormSubmitService formSubmitService) {
-        this.formSubmitService = formSubmitService;
-    }
+    @Autowired
+    private FormSubmitService formSubmitService;
 
     @Override
     public Optional<String> submit(String formKey, Map<String, Object> submittedData, String idempotencyKey) {

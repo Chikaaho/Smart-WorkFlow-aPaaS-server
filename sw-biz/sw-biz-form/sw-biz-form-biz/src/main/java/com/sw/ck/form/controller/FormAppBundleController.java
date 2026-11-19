@@ -1,5 +1,7 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.exception.FormErrorCode;
@@ -7,8 +9,7 @@ import com.sw.ck.form.bundle.FormBundleImportReport;
 import com.sw.ck.form.bundle.FormBundlePreviewResult;
 import com.sw.ck.form.entity.FormAppImportRecordEntity;
 import com.sw.ck.form.service.FormAppBundleService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -22,9 +23,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.form.vo.FormAppImportRecordEntityVO;
 /**
  * 应用整包导入导出（0.2.2 F2，D022-10～15）。
  * <p>
@@ -37,15 +41,11 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/form/app/manage/bundle")
+@Log4j2
 public class FormAppBundleController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormAppBundleController.class);
-
-    private final FormAppBundleService bundleService;
-
-    public FormAppBundleController(FormAppBundleService bundleService) {
-        this.bundleService = bundleService;
-    }
+    @Autowired
+    private FormAppBundleService bundleService;
 
     /** 导出应用整包（当前版本定义；不含业务数据、附件与密钥类信息，D022-10）。 */
     @PreAuthorize("@ss.hasPermi('form:app:export')")
@@ -90,15 +90,15 @@ public class FormAppBundleController {
     /** 导入记录列表（当前租户，含报告 JSON 摘要）。 */
     @PreAuthorize("@ss.hasPermi('form:app:import')")
     @GetMapping("/import-records")
-    public R<List<FormAppImportRecordEntity>> importRecords() {
-        return R.ok(bundleService.listImportRecords());
+    public R<List<FormAppImportRecordEntityVO>> importRecords() {
+        return R.ok(bundleService.listImportRecords() == null ? List.of() : bundleService.listImportRecords().stream().map(FormAppImportRecordEntityVO::from).toList());
     }
 
     /** 单条导入记录。 */
     @PreAuthorize("@ss.hasPermi('form:app:import')")
     @GetMapping("/import-records/{id}")
-    public R<FormAppImportRecordEntity> importRecord(@PathVariable("id") String id) {
-        return R.ok(bundleService.getImportRecord(id));
+    public R<FormAppImportRecordEntityVO> importRecord(@PathVariable("id") String id) {
+        return R.ok(FormAppImportRecordEntityVO.from(bundleService.getImportRecord(id)));
     }
 
     /** 下载导入报告 JSON（随导入记录持久化的报告原文）。 */
@@ -135,7 +135,7 @@ public class FormAppBundleController {
     }
 
     private String urlEncode(String value) {
-        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private String sanitizeFileName(String name) {

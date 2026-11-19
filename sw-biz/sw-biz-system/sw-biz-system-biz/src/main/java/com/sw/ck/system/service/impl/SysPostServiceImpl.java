@@ -29,16 +29,8 @@ public class SysPostServiceImpl
     /** 岗位状态：启用（sys_post 口径：1=启用 0=停用） */
     private static final int STATUS_ENABLED = 1;
 
-    private final SysUserPostMapper sysUserPostMapper;
-
-    public SysPostServiceImpl() {
-        this(null);
-    }
-
     @Autowired
-    public SysPostServiceImpl(SysUserPostMapper sysUserPostMapper) {
-        this.sysUserPostMapper = sysUserPostMapper;
-    }
+    private SysUserPostMapper sysUserPostMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)

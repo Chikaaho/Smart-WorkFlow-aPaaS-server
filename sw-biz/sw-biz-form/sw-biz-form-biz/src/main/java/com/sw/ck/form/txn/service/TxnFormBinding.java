@@ -1,5 +1,7 @@
 package com.sw.ck.form.txn.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.dynamic.DynamicTableSql;
@@ -24,13 +26,10 @@ public class TxnFormBinding {
     /** 表单状态：已发布 */
     public static final String FORM_STATUS_PUBLISHED = "PUBLISHED";
 
-    private final FormDefMapper formDefMapper;
-    private final FormFieldValidator formFieldValidator;
-
-    public TxnFormBinding(FormDefMapper formDefMapper, FormFieldValidator formFieldValidator) {
-        this.formDefMapper = formDefMapper;
-        this.formFieldValidator = formFieldValidator;
-    }
+    @Autowired
+    private FormDefMapper formDefMapper;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
 
     /** 加载表单定义；要求存在且已发布。 */
     public FormDefEntity requirePublishedForm(String formId) {

@@ -1,5 +1,7 @@
 package com.sw.ck.openapi.biz.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
@@ -8,14 +10,16 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
+import com.sw.ck.openapi.biz.vo.OpenApiCompleteTaskResultVO;
+import com.sw.ck.openapi.biz.vo.OpenApiStartResultVO;
+import com.sw.ck.openapi.biz.vo.OpenApiStatusVO;
 import com.sw.ck.openapi.biz.entity.OpenApiIdempotency;
 import com.sw.ck.openapi.biz.mapper.OpenApiIdempotencyMapper;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,42 +31,36 @@ import java.util.Optional;
  * 同一业务键 + 幂等键只产生一次合法业务效果（DB 唯一键权威）。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class OpenApiProcessService {
 
-    private final FormDataSubmitFacade submitFacade;
-    private final BpmTaskFacade bpmTaskFacade;
-    private final BpmRuntimeFacade bpmRuntimeFacade;
-    private final OpenApiIdempotencyMapper idempotencyMapper;
-
-    public OpenApiProcessService(FormDataSubmitFacade submitFacade,
-                                 BpmTaskFacade bpmTaskFacade,
-                                 BpmRuntimeFacade bpmRuntimeFacade,
-                                 OpenApiIdempotencyMapper idempotencyMapper) {
-        this.submitFacade = submitFacade;
-        this.bpmTaskFacade = bpmTaskFacade;
-        this.bpmRuntimeFacade = bpmRuntimeFacade;
-        this.idempotencyMapper = idempotencyMapper;
-    }
+    @Autowired
+    private FormDataSubmitFacade submitFacade;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
+    @Autowired
+    private BpmRuntimeFacade bpmRuntimeFacade;
+    @Autowired
+    private OpenApiIdempotencyMapper idempotencyMapper;
 
     /** 外部发起：返回 recordId（业务键），状态经查询端点获取。 */
-    public Map<String, Object> start(OpenApiAuthService.OpenApiAuthContext context,
-                                     String formKey, Map<String, Object> formData,
-                                     String businessKey, String idempotencyKey) {
+    public OpenApiStartResultVO start(OpenApiAuthService.OpenApiAuthContext context,
+                                       String formKey, Map<String, Object> formData,
+                                       String businessKey, String idempotencyKey) {
         String idemRef = idempotencyLookup(context.appId(), idempotencyKey, businessKey);
         if (idemRef != null) {
             // 幂等命中：同键重复请求返回既有业务对象，不产生第二次效果
-            return statusPayload(bpmRuntimeFacade, idemRef, true);
+            return statusPayload(idemRef, true);
         }
         try {
             // 提交契约恒 present：empty 属契约违背（提交失败以业务异常表达），不静默降级
             String recordId = submitFacade.submit(formKey, formData, idemKey(context, idempotencyKey, businessKey))
                     .orElseThrow(() -> new IllegalStateException("表单提交未返回记录标识"));
             idempotencyRegister(context.appId(), idemKey(context, idempotencyKey, businessKey), recordId);
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("recordId", recordId);
-            result.put("idempotentReplay", false);
+            OpenApiStartResultVO result = new OpenApiStartResultVO();
+            result.setRecordId(recordId);
+            result.setIdempotentReplay(false);
             return result;
         } catch (DuplicateKeyException e) {
             // 并发同键：以幂等登记为准
@@ -71,14 +69,14 @@ public class OpenApiProcessService {
                             .eq(OpenApiIdempotency::getAppId, context.appId())
                             .eq(OpenApiIdempotency::getIdemKey,
                                     idemKey(context, idempotencyKey, businessKey)));
-            return statusPayload(bpmRuntimeFacade,
+            return statusPayload(
                     existing == null ? null : existing.getResultRef(), true);
         }
     }
 
     /** 状态查询：仅返回应用发起（businessKey=recordId）且同租户的实例状态。 */
-    public Map<String, Object> status(OpenApiAuthService.OpenApiAuthContext context,
-                                      String processInstanceId) {
+    public OpenApiStatusVO status(OpenApiAuthService.OpenApiAuthContext context,
+                                   String processInstanceId) {
         // 业务键缺失或空白 = 该实例对应用不可见（保持原判定与错误码）
         String businessKey = bpmTaskFacade.getBusinessKey(processInstanceId)
                 .filter(key -> !key.isBlank())
@@ -94,16 +92,16 @@ public class OpenApiProcessService {
         String status = bpmRuntimeFacade.getProcessInstanceStatus(processInstanceId)
                 .map(BpmProcessStatus::name)
                 .orElse("NOT_FOUND");
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("processInstanceId", processInstanceId);
-        result.put("businessKey", businessKey);
-        result.put("status", status);
+        OpenApiStatusVO result = new OpenApiStatusVO();
+        result.setProcessInstanceId(processInstanceId);
+        result.setBusinessKey(businessKey);
+        result.setStatus(status);
         return result;
     }
 
     /** 嵌入式任务办理：completeAsUser 服务端校验任务归属（assignee/candidate）。 */
-    public Map<String, Object> completeTask(OpenApiAuthService.OpenApiAuthContext context,
-                                            String taskId, Map<String, Object> variables) {
+    public OpenApiCompleteTaskResultVO completeTask(OpenApiAuthService.OpenApiAuthContext context,
+                                                     String taskId, Map<String, Object> variables) {
         var task = bpmTaskFacade.getTask(taskId)
                 .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
         // 判定缺失（empty）与判定为 false 一律按无权办理（fail closed），不得放行
@@ -117,9 +115,9 @@ public class OpenApiProcessService {
         }
         bpmTaskFacade.completeAsUser(taskId, String.valueOf(context.actAsUserId()),
                 variables == null ? Map.of() : variables);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("taskId", taskId);
-        result.put("completed", true);
+        OpenApiCompleteTaskResultVO result = new OpenApiCompleteTaskResultVO();
+        result.setTaskId(taskId);
+        result.setCompleted(true);
         return result;
     }
 
@@ -157,11 +155,10 @@ public class OpenApiProcessService {
         }
     }
 
-    private static Map<String, Object> statusPayload(BpmRuntimeFacade facade, String recordId,
-                                                     boolean replay) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("recordId", recordId);
-        result.put("idempotentReplay", replay);
+    private static OpenApiStartResultVO statusPayload(String recordId, boolean replay) {
+        OpenApiStartResultVO result = new OpenApiStartResultVO();
+        result.setRecordId(recordId);
+        result.setIdempotentReplay(replay);
         return result;
     }
 }

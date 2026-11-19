@@ -11,17 +11,26 @@ import com.sw.ck.system.datascope.DeptScopeProviderImpl;
 import com.sw.ck.system.entity.SysRole;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.mapper.SysDeptMapper;
+import com.sw.ck.system.mapper.SysPostMapper;
+import com.sw.ck.system.mapper.SysRoleDeptMapper;
+import com.sw.ck.system.mapper.SysRoleMapper;
+import com.sw.ck.system.mapper.SysRoleMenuMapper;
+import com.sw.ck.system.mapper.SysUserMapper;
+import com.sw.ck.system.mapper.SysUserPostMapper;
+import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.system.service.SysDeptService;
 import com.sw.ck.system.service.SysRoleService;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.impl.SysDeptServiceImpl;
 import com.sw.ck.system.service.impl.SysRoleServiceImpl;
 import com.sw.ck.system.service.impl.SysUserServiceImpl;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mybatis.spring.mapper.MapperScannerConfigurer;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -34,6 +43,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -196,30 +206,29 @@ class PermissionConvergenceFailSecureTest {
 
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean
-        public SysUserService sysUserService(PasswordEncoder passwordEncoder, com.sw.ck.system.mapper.SysUserRoleMapper userRoleMapper,
-                                             com.sw.ck.system.mapper.SysUserPostMapper userPostMapper, com.sw.ck.system.mapper.SysRoleMapper roleMapper,
-                                             com.sw.ck.system.mapper.SysPostMapper postMapper, com.sw.ck.system.mapper.SysDeptMapper deptMapper,
+        public SysUserService sysUserService(PasswordEncoder passwordEncoder, SysUserRoleMapper userRoleMapper,
+                                             SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
+                                             SysPostMapper postMapper, SysDeptMapper deptMapper,
                                              LoginUserLoader loader) {
-            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper,
-                    deptMapper, loader);
+            return new SysUserServiceImpl();
         }
 
         @Bean
-        public SysRoleService sysRoleService(com.sw.ck.system.mapper.SysRoleDeptMapper roleDeptMapper,
-                                             com.sw.ck.system.mapper.SysRoleMenuMapper roleMenuMapper,
-                                             com.sw.ck.system.mapper.SysUserRoleMapper userRoleMapper,
-                                             com.sw.ck.system.mapper.SysUserMapper userMapper,
+        public SysRoleService sysRoleService(SysRoleDeptMapper roleDeptMapper,
+                                             SysRoleMenuMapper roleMenuMapper,
+                                             SysUserRoleMapper userRoleMapper,
+                                             SysUserMapper userMapper,
                                              LoginUserLoader loader) {
-            return new SysRoleServiceImpl(roleDeptMapper, roleMenuMapper, userRoleMapper, userMapper, loader);
+            return new SysRoleServiceImpl();
         }
 
         @Bean
         public SysDeptService sysDeptService(SysUserService sysUserService) {
-            return new SysDeptServiceImpl(sysUserService);
+            return new SysDeptServiceImpl();
         }
 
         @Bean
@@ -228,7 +237,7 @@ class PermissionConvergenceFailSecureTest {
             doAnswer(inv -> {
                 switch (loaderMode) {
                     case INFRA_FAILURE -> throw new IllegalStateException("模拟缓存基础设施故障（Redis 不可达）");
-                    case BEAN_ABSENT -> throw new org.springframework.beans.factory.NoSuchBeanDefinitionException(
+                    case BEAN_ABSENT -> throw new NoSuchBeanDefinitionException(
                             "LoginUserLoader");
                     default -> {
                         return null;
@@ -274,10 +283,10 @@ class PermissionConvergenceFailSecureTest {
                 }
 
                 @Override
-                public java.util.Set<Long> getCustomDeptIds() {
+                public Set<Long> getCustomDeptIds() {
                     LoginUser user = LoginUserHolder.get();
                     return user != null && user.getCustomDeptIds() != null
-                            ? user.getCustomDeptIds() : java.util.Set.of();
+                            ? user.getCustomDeptIds() : Set.of();
                 }
 
                 @Override

@@ -6,8 +6,9 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.dto.AgentGraphDebugNodeDTO;
-import com.sw.ck.agent.dto.AgentGraphDebugSessionDTO;
+
+import com.sw.ck.agent.vo.AgentGraphDebugNodeVO;
+import com.sw.ck.agent.vo.AgentGraphDebugSessionVO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDebugNode;
@@ -32,12 +33,19 @@ import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
+import com.sw.ck.agent.entity.AgentGraphSnapshot;
+import com.sw.ck.agent.orchestration.AgentFailureSummarizer;
+import com.sw.ck.knowledge.service.KnowledgeRetrievalService;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -59,51 +67,39 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     private static final int EXPIRE_MINUTES = 30;
 
-    private final ObjectMapper objectMapper;
-    private final AgentGraphDefMapper graphDefMapper;
-    private final AgentGraphDebugSessionMapper sessionMapper;
-    private final AgentGraphDebugNodeMapper debugNodeMapper;
-    private final AgentToolInternalConfigMapper internalToolMapper;
-    private final AgentToolExternalConfigMapper externalToolMapper;
-    private final AgentModelRuntimeService modelRuntimeService;
-    private final AgentGraphSnapshotServiceImpl snapshotService;
-    private final LoginContextProvider loginContextProvider;
-    private final DeptScopeProvider deptScopeProvider;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private AgentGraphDefMapper graphDefMapper;
+    @Autowired
+    private AgentGraphDebugSessionMapper sessionMapper;
+    @Autowired
+    private AgentGraphDebugNodeMapper debugNodeMapper;
+    @Autowired
+    private AgentToolInternalConfigMapper internalToolMapper;
+    @Autowired
+    private AgentToolExternalConfigMapper externalToolMapper;
+    @Autowired
+    private AgentModelRuntimeService modelRuntimeService;
+    @Autowired
+    private AgentGraphSnapshotServiceImpl snapshotService;
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    @Autowired
+    private DeptScopeProvider deptScopeProvider;
 
     @Autowired(required = false)
     private AgentToolCallbackFactory agentToolCallbackFactory;
 
     /** 知识检索服务（阶段 3；缺失时 KNOWLEDGE 节点运行时显式报错） */
     @Autowired(required = false)
-    private com.sw.ck.knowledge.service.KnowledgeRetrievalService knowledgeRetrievalService;
-
-    public AgentGraphDebugServiceImpl(ObjectMapper objectMapper,
-                                      AgentGraphDefMapper graphDefMapper,
-                                      AgentGraphDebugSessionMapper sessionMapper,
-                                      AgentGraphDebugNodeMapper debugNodeMapper,
-                                      AgentToolInternalConfigMapper internalToolMapper,
-                                      AgentToolExternalConfigMapper externalToolMapper,
-                                      AgentModelRuntimeService modelRuntimeService,
-                                      AgentGraphSnapshotServiceImpl snapshotService,
-                                      LoginContextProvider loginContextProvider,
-                                      DeptScopeProvider deptScopeProvider) {
-        this.objectMapper = objectMapper;
-        this.graphDefMapper = graphDefMapper;
-        this.sessionMapper = sessionMapper;
-        this.debugNodeMapper = debugNodeMapper;
-        this.internalToolMapper = internalToolMapper;
-        this.externalToolMapper = externalToolMapper;
-        this.modelRuntimeService = modelRuntimeService;
-        this.snapshotService = snapshotService;
-        this.loginContextProvider = loginContextProvider;
-        this.deptScopeProvider = deptScopeProvider;
-    }
+    private KnowledgeRetrievalService knowledgeRetrievalService;
 
     // ==================== 创建会话 ====================
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO createSession(Long graphDefId, String input) {
+    public AgentGraphDebugSessionVO createSession(Long graphDefId, String input) {
         if (input == null || input.isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "input 不能为空");
         }
@@ -112,7 +108,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "图未发布，无法调试");
         }
         // D022-06：调试会话同样按发布快照绑定（后续草稿编辑不影响已开始的会话）
-        com.sw.ck.agent.entity.AgentGraphSnapshot snapshot =
+        AgentGraphSnapshot snapshot =
                 snapshotService.requireSnapshot(def, def.getDefVersion());
         ProcessGraph graph = parseGraph(snapshot.getGraphJson());
         if (graph == null || graph.getElements() == null || graph.getElements().isEmpty()) {
@@ -146,7 +142,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     // ==================== 查询会话 ====================
 
     @Override
-    public AgentGraphDebugSessionDTO getSession(Long sessionId) {
+    public AgentGraphDebugSessionVO getSession(Long sessionId) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         // 重新加载以获取可能更新的过期状态
@@ -161,7 +157,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO step(Long sessionId, Long expectedVersion) {
+    public AgentGraphDebugSessionVO step(Long sessionId, Long expectedVersion) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (session.getStatus() != null && !STATUS_PAUSED.equals(session.getStatus())) {
@@ -269,7 +265,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO continueUntilBreakpoint(Long sessionId) {
+    public AgentGraphDebugSessionVO continueUntilBreakpoint(Long sessionId) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (!STATUS_PAUSED.equals(session.getStatus())) {
@@ -398,7 +394,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                     sessionMapper.updateById(refreshed);
                     return toDTO(refreshed, engine, countTraces(refreshed.getId()));
                 }
-            } catch (Exception e) { }
+            } catch (Exception e) { /* 补保存失败 → 落到下方兜底读取最新会话 */ }
         }
 
         // 若未进入终态/失败分支，当前 engine 为最新
@@ -416,7 +412,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO updateBreakpoints(Long sessionId, Set<String> breakpoints) {
+    public AgentGraphDebugSessionVO updateBreakpoints(Long sessionId, Set<String> breakpoints) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (session.getStatus() != null && !STATUS_PAUSED.equals(session.getStatus())) {
@@ -450,7 +446,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDebugSessionDTO stop(Long sessionId) {
+    public AgentGraphDebugSessionVO stop(Long sessionId) {
         AgentGraphDebugSession session = requireSession(sessionId);
         expireIfNeeded(session);
         if (!STATUS_PAUSED.equals(session.getStatus())) {
@@ -465,13 +461,13 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     // ==================== 明细 ====================
 
     @Override
-    public List<AgentGraphDebugNodeDTO> listNodes(Long sessionId) {
+    public List<AgentGraphDebugNodeVO> listNodes(Long sessionId) {
         requireSession(sessionId);
         List<AgentGraphDebugNode> nodes = debugNodeMapper.selectList(
                 Wrappers.<AgentGraphDebugNode>lambdaQuery()
                         .eq(AgentGraphDebugNode::getDebugSessionId, sessionId)
                         .orderByAsc(AgentGraphDebugNode::getNodeSeq));
-        List<AgentGraphDebugNodeDTO> result = new ArrayList<>(nodes.size());
+        List<AgentGraphDebugNodeVO> result = new ArrayList<>(nodes.size());
         for (AgentGraphDebugNode n : nodes) {
             result.add(toNodeDTO(n));
         }
@@ -481,7 +477,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     // ==================== 分页 ====================
 
     @Override
-    public PageResult<AgentGraphDebugSessionDTO> pageSessions(PageParam pageParam, Long graphDefId) {
+    public PageResult<AgentGraphDebugSessionVO> pageSessions(PageParam pageParam, Long graphDefId) {
         LambdaQueryWrapper<AgentGraphDebugSession> wrapper = Wrappers.<AgentGraphDebugSession>lambdaQuery()
                 .eq(graphDefId != null, AgentGraphDebugSession::getGraphDefId, graphDefId)
                 .orderByDesc(AgentGraphDebugSession::getCreateTime);
@@ -491,7 +487,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         for (AgentGraphDebugSession s : page.getRecords()) {
             expireIfNeeded(s);
         }
-        IPage<AgentGraphDebugSessionDTO> dtoPage = page.convert(this::toSummaryDTO);
+        IPage<AgentGraphDebugSessionVO> dtoPage = page.convert(this::toSummaryDTO);
         return PageResult.of(dtoPage);
     }
 
@@ -648,7 +644,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
     private String summarizeError(Throwable t) {
         // P61：按异常类型分层——平台业务异常与编排自身状态失败保留可定位文案，
         // 传输/服务商类异常替换为安全结论并写日志（见 AgentFailureSummarizer）。
-        return com.sw.ck.agent.orchestration.AgentFailureSummarizer.summarize(t);
+        return AgentFailureSummarizer.summarize(t);
     }
 
     @SuppressWarnings("unused")
@@ -668,13 +664,13 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         if (createTime == null) {
             return 0;
         }
-        return java.time.Duration.between(createTime, LocalDateTime.now()).toMillis();
+        return Duration.between(createTime, LocalDateTime.now()).toMillis();
     }
 
-    private AgentGraphDebugSessionDTO toDTO(AgentGraphDebugSession session,
+    private AgentGraphDebugSessionVO toDTO(AgentGraphDebugSession session,
                                             AgentGraphDebugEngine engine,
                                             int traceCount) {
-        AgentGraphDebugSessionDTO dto = new AgentGraphDebugSessionDTO();
+        AgentGraphDebugSessionVO dto = new AgentGraphDebugSessionVO();
         dto.setId(session.getId());
         dto.setGraphDefId(session.getGraphDefId());
         dto.setGraphDefVersion(session.getGraphDefVersion());
@@ -704,7 +700,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         return dto;
     }
 
-    private AgentGraphDebugSessionDTO toDTOWithState(AgentGraphDebugSession session) {
+    private AgentGraphDebugSessionVO toDTOWithState(AgentGraphDebugSession session) {
         // 尝试恢复 engine 以获取 nextNodeId/variables
         AgentGraphDebugEngine engine = null;
         int traceCount = countTraces(session.getId());
@@ -724,7 +720,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
                 // 忽略，反序列化失败则不提供 nextNodeId
             }
         }
-        AgentGraphDebugSessionDTO dto = toDTO(session, engine, traceCount);
+        AgentGraphDebugSessionVO dto = toDTO(session, engine, traceCount);
         // 终态下 nextNodeId 保持 null
         if (engine == null) {
             // variables 已在 toDTO 中从 stateJson 解析
@@ -732,8 +728,8 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         return dto;
     }
 
-    private AgentGraphDebugSessionDTO toSummaryDTO(AgentGraphDebugSession session) {
-        AgentGraphDebugSessionDTO dto = new AgentGraphDebugSessionDTO();
+    private AgentGraphDebugSessionVO toSummaryDTO(AgentGraphDebugSession session) {
+        AgentGraphDebugSessionVO dto = new AgentGraphDebugSessionVO();
         dto.setId(session.getId());
         dto.setGraphDefId(session.getGraphDefId());
         dto.setGraphDefVersion(session.getGraphDefVersion());
@@ -755,8 +751,8 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
         return dto;
     }
 
-    private AgentGraphDebugNodeDTO toNodeDTO(AgentGraphDebugNode node) {
-        AgentGraphDebugNodeDTO dto = new AgentGraphDebugNodeDTO();
+    private AgentGraphDebugNodeVO toNodeDTO(AgentGraphDebugNode node) {
+        AgentGraphDebugNodeVO dto = new AgentGraphDebugNodeVO();
         dto.setId(node.getId());
         dto.setDebugSessionId(node.getDebugSessionId());
         dto.setNodeSeq(node.getNodeSeq());
@@ -905,7 +901,7 @@ public class AgentGraphDebugServiceImpl implements AgentGraphDebugService {
             }
         }
         Set<String> visited = new HashSet<>();
-        java.util.Deque<String> queue = new java.util.ArrayDeque<>();
+        Deque<String> queue = new ArrayDeque<>();
         queue.add(start.getId());
         while (!queue.isEmpty()) {
             String id = queue.poll();

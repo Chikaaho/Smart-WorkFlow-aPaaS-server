@@ -18,6 +18,10 @@ import java.sql.Statement;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -205,8 +209,8 @@ class P64AppendMigrationUpgradePostgresTest {
     // ==================== 类路径最新版本化迁移（终点口径随链自动更新） ====================
 
     /** 期望的 versioned 历史：0.2.0 收敛基线 + 类路径上其后的版本化迁移 + 演练时间戳。 */
-    static java.util.Set<String> expectedHistoryVersions(String drillTimestamp) throws Exception {
-        java.util.Set<String> expected = new java.util.HashSet<>();
+    static Set<String> expectedHistoryVersions(String drillTimestamp) throws Exception {
+        Set<String> expected = new HashSet<>();
         expected.add("0.2.0");
         expected.add(drillTimestamp);
         expected.addAll(classpathVersions());
@@ -214,8 +218,8 @@ class P64AppendMigrationUpgradePostgresTest {
     }
 
     /** 主链各位置的版本化迁移版本（V&lt;version&gt;__*.sql），按 Flyway 版本序升序。 */
-    static java.util.List<String> classpathVersions() throws Exception {
-        java.util.List<String> versions = new java.util.ArrayList<>();
+    static List<String> classpathVersions() throws Exception {
+        List<String> versions = new ArrayList<>();
         var loader = P64AppendMigrationUpgradePostgresTest.class.getClassLoader();
         for (String dir : appDirs()) {
             var resources = loader.getResources(dir);
@@ -267,7 +271,7 @@ class P64AppendMigrationUpgradePostgresTest {
 
     /** 类路径上实际最新的版本化迁移版本。 */
     static String latestClasspathVersion() throws Exception {
-        java.util.List<String> versions = classpathVersions();
+        List<String> versions = classpathVersions();
         return versions.get(versions.size() - 1);
     }
 

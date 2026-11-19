@@ -3,17 +3,19 @@ package com.sw.ck.bpm.process.validator;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
-import java.util.ArrayDeque;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
 import java.util.Set;
+
+import org.springframework.stereotype.Component;
 
 /**
  * 生产轻流程图约束校验器（P62 分级执行 · 发布门）。
@@ -28,7 +30,7 @@ import java.util.Set;
 public class LightProcessGraphValidator {
 
     /** 生产轻流程允许的节点类型白名单（方向固定：START/END/CONDITION/事务动作）。 */
-    private static final Set<String> ALLOWED_TYPES = Set.of("START", "END", "CONDITION", "TXN_ACTION");
+    private static final Set<String> ALLOWED_TYPES = Set.of(GraphElement.TYPE_START, GraphElement.TYPE_END, GraphElement.TYPE_CONDITION, GraphElement.TYPE_TXN_ACTION);
 
     /** 生产轻流程事务动作节点上限（方向合同：最多 16 个）。 */
     public static final int MAX_ACTION_NODES = 16;
@@ -108,14 +110,14 @@ public class LightProcessGraphValidator {
         for (String start : nodeIds) {
             if (!white.contains(start)) continue;
             Deque<String> stack = new ArrayDeque<>();
-            Deque<java.util.Iterator<String>> iterators = new ArrayDeque<>();
+            Deque<Iterator<String>> iterators = new ArrayDeque<>();
             white.remove(start);
             gray.add(start);
             stack.push(start);
             iterators.push(adjacency.getOrDefault(start, List.of()).iterator());
 
             while (!stack.isEmpty()) {
-                java.util.Iterator<String> it = iterators.peek();
+                Iterator<String> it = iterators.peek();
                 if (it.hasNext()) {
                     String next = it.next();
                     if (gray.contains(next)) {

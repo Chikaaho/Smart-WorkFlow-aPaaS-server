@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.api.facade;
 
-import com.sw.ck.bpm.api.dto.BpmActivityDTO;
+import com.sw.ck.bpm.api.vo.BpmActivityVO;
 import com.sw.ck.bpm.api.result.BpmProcessStatus;
 import com.sw.ck.bpm.api.result.MutationOutcome;
 
@@ -78,7 +78,7 @@ public interface BpmRuntimeFacade {
      * @return present = 活动节点列表（按结束时间升序，进行中节点排在末尾；实例存在但无历史活动时为空列表）；
      *         empty = 实例标识缺失或该实例无历史记录
      */
-    Optional<List<BpmActivityDTO>> queryHistoricActivities(String processInstanceId);
+    Optional<List<BpmActivityVO>> queryHistoricActivities(String processInstanceId);
 
     /**
      * 读取流程实例全部变量（P21 G3b：流程侧表单详情回查）。

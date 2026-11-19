@@ -3,18 +3,20 @@ package com.sw.ck.form.txn.guard;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.TxnActionRuntimePort;
 import com.sw.ck.common.exception.BaseException;
+
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
 import java.util.function.Supplier;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 实时受控动作并发闸（P62 资源保障；form 侧实时入口的唯一运行强制点）。
  * <p>
@@ -27,9 +29,8 @@ import java.util.function.Supplier;
  * </p>
  */
 @Component
+@Log4j2
 public class TxnActionRealtimeGuard implements TxnActionRuntimePort {
-
-    private static final Logger log = LoggerFactory.getLogger(TxnActionRealtimeGuard.class);
 
     @Value("${sw.form.txn-action.realtime-global-concurrency:16}")
     private int globalMaxConcurrent;
@@ -75,11 +76,11 @@ public class TxnActionRealtimeGuard implements TxnActionRuntimePort {
     }
 
     @Override
-    public java.util.Optional<RealtimeGuardProfile> realtimeGuardProfile() {
+    public Optional<RealtimeGuardProfile> realtimeGuardProfile() {
         Map<Long, Integer> tenantInFlight = new HashMap<>();
         tenantPermits.forEach((tenant, permit) ->
                 tenantInFlight.put(tenant, Math.max(1, tenantMaxConcurrent) - permit.availablePermits()));
-        return java.util.Optional.of(new RealtimeGuardProfile(globalMaxConcurrent, tenantMaxConcurrent,
+        return Optional.of(new RealtimeGuardProfile(globalMaxConcurrent, tenantMaxConcurrent,
                 Math.max(1, globalMaxConcurrent) - globalPermits.availablePermits(), tenantInFlight));
     }
 }

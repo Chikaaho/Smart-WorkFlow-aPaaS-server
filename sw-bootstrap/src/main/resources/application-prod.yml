@@ -122,6 +122,8 @@ sw:
       captcha-fail-limit: 5
       client-time-tolerance-millis: 180000
       rsa-key-version: ${SW_LOGIN_RSA_KEY_VERSION:v1}
-      rsa-private-key: ${SW_LOGIN_RSA_PRIVATE_KEY:}
+      # 私钥只以文件路径注入（PKCS#8 PEM 文件）；生产将私钥文件挂在只读卷上，
+      # 由 SW_LOGIN_RSA_PRIVATE_KEY_FILE 指向，配置文件中不出现私钥本体
+      rsa-private-key-file: ${SW_LOGIN_RSA_PRIVATE_KEY_FILE:}
       digest-secret: ${SW_LOGIN_DIGEST_SECRET:}
-      rsa-extra-keys: {}
+      rsa-extra-key-files: {}

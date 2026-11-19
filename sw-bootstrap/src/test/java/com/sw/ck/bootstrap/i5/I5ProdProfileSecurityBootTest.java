@@ -1,20 +1,32 @@
 package com.sw.ck.bootstrap.i5;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,19 +65,19 @@ class I5ProdProfileSecurityBootTest {
         // 本类前提：prod 下固定验证码开关被误开，profile 门禁仍须拒绝固定答案
         props.put("ch.dev.test-mock", "true");
         props.put("sw.security.jwt.secret", "i5-prod-test-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "i5-prod-test-digest-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     // addFirst：测试属性源必须压过 application-prod.yml（默认 .properties 优先级最低）
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("i5-prod-test", props));
+                            new MapPropertySource("i5-prod-test", props));
                     context.getEnvironment().getSystemProperties().put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("i5ProdTestLoginContextProvider", provider);
                 })
                 // profile 必须在 Environment 准备期激活：initializer 晚于配置数据加载，
@@ -86,30 +98,21 @@ class I5ProdProfileSecurityBootTest {
         props.put("server.port", "0");
         props.put("spring.data.redis.password", System.getenv().getOrDefault("REDIS_PASSWORD", ""));
         // SSO/agent 共用单一 AesGcmCipher bean（@ConditionalOnMissingBean），密钥一致
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         // prod 下 sw.iot.enabled=true，IoT 凭据加密独立取 sw.iot.cipher.cipher-key（同构共享口默认 SW_CIPHER_KEY）
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         return props;
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator g = java.security.KeyPairGenerator.getInstance("RSA");
-            g.initialize(2048);
-            return java.util.Base64.getEncoder().encodeToString(g.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     @Test
     @DisplayName("匿名矩阵：仅最小健康探针可达且不泄漏详情，其余全部拒绝")
     void anonymousMatrix() throws Exception {
         HttpClient client = HttpClient.newHttpClient();
         record Row(String path, int status, String snippet) { }
-        java.util.List<Row> rows = new java.util.ArrayList<>();
+        List<Row> rows = new ArrayList<>();
         for (String p : new String[]{
                 "/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness",
                 "/actuator/metrics", "/actuator/env", "/actuator/heapdump", "/actuator/prometheus",
@@ -142,17 +145,17 @@ class I5ProdProfileSecurityBootTest {
                     .properties(props)
                     .initializers(context -> {
                         context.getEnvironment().getPropertySources().addFirst(
-                                new org.springframework.core.env.MapPropertySource("i5-prod-test-failfast", props));
-                        org.springframework.beans.factory.support.RootBeanDefinition provider =
-                                new org.springframework.beans.factory.support.RootBeanDefinition(
-                                        com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                                new MapPropertySource("i5-prod-test-failfast", props));
+                        RootBeanDefinition provider =
+                                new RootBeanDefinition(
+                                        SecurityLoginContextProvider.class);
                         provider.setPrimary(true);
-                        ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                        ((DefaultListableBeanFactory) context.getBeanFactory())
                                 .registerBeanDefinition("i5ProdTestLoginContextProvider2", provider);
                     })
                     .run("--spring.profiles.active=prod")
                     .close();
-            org.assertj.core.api.Assertions.fail("缺 JWT 密钥的 prod 启动应 fail-fast");
+            Assertions.fail("缺 JWT 密钥的 prod 启动应 fail-fast");
         } catch (Exception e) {
             assertThat(String.valueOf(rootMessage(e))).containsAnyOf("JWT", "secret", "密钥", "私钥");
             System.out.println("[G3-FAILFAST] prod 缺 JWT 密钥启动被拒绝: " + rootMessage(e));
@@ -171,19 +174,19 @@ class I5ProdProfileSecurityBootTest {
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.url", livePgUrl);
         props.put("sw.security.jwt.secret", "i5-prod-test-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "i5-prod-test-digest-secret");
         props.putAll(overrides);
         try {
             new SpringApplicationBuilder(ProdBootTestApplication.class)
                     .initializers(context -> {
                         context.getEnvironment().getPropertySources().addFirst(
-                                new org.springframework.core.env.MapPropertySource("i5-prod-g3b", props));
-                        org.springframework.beans.factory.support.RootBeanDefinition provider =
-                                new org.springframework.beans.factory.support.RootBeanDefinition(
-                                        com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                                new MapPropertySource("i5-prod-g3b", props));
+                        RootBeanDefinition provider =
+                                new RootBeanDefinition(
+                                        SecurityLoginContextProvider.class);
                         provider.setPrimary(true);
-                        ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                        ((DefaultListableBeanFactory) context.getBeanFactory())
                                 .registerBeanDefinition("i5G3bLoginContextProvider", provider);
                     })
                     .run("--spring.profiles.active=prod")
@@ -200,9 +203,9 @@ class I5ProdProfileSecurityBootTest {
     @DisplayName("G3b：凭据逐项缺失/占位的 prod 启动矩阵（首因命中目标且不泄密）")
     void credentialMatrixFailFast() {
         // 1) 缺 RSA 私钥（其余有效）→ 首因 = RSA 门禁
-        String rsa = tryBoot(Map.of("sw.security.login.rsa-private-key", ""));
+        String rsa = tryBoot(Map.of("sw.security.login.rsa-private-key-file", ""));
         System.out.println("[G3b] 缺RSA: " + rsa);
-        org.assertj.core.api.Assertions.assertThat(rsa).contains("RSA 私钥");
+        Assertions.assertThat(rsa).contains("RSA 私钥");
         // 2) RSA 有效、缺 JWT → 首因 = JWT 门禁
         String jwt = tryBoot(Map.of());
         // 占位 JWT
@@ -210,8 +213,8 @@ class I5ProdProfileSecurityBootTest {
         jwtPlaceholder.put("sw.security.jwt.secret", "smart-workflow-jwt-secret-CHANGE-ME-IN-PRODUCTION-please");
         String jwt2 = tryBoot(jwtPlaceholder);
         System.out.println("[G3b] 缺JWT首因链可达（占位）: " + jwt2);
-        org.assertj.core.api.Assertions.assertThat(jwt2).containsAnyOf("JWT", "CHANGE-ME");
-        org.assertj.core.api.Assertions.assertThat(rsa).isNotNull();
+        Assertions.assertThat(jwt2).containsAnyOf("JWT", "CHANGE-ME");
+        Assertions.assertThat(rsa).isNotNull();
         // 3) 凭据加密密钥缺失（AesGcmCipher 为 @ConditionalOnMissingBean 单例，
         //    生效密钥 = sw.agent.cipher-key 的注册顺序先到者）：置空两个密钥中的
         //    agent 侧与 SSO 侧 → 启动被凭据门禁拒绝
@@ -220,14 +223,14 @@ class I5ProdProfileSecurityBootTest {
         noCipher.put("sw.agent.cipher-key", "");
         String cipher = tryBoot(noCipher);
         System.out.println("[G3b] 缺凭据加密密钥: " + cipher);
-        org.assertj.core.api.Assertions.assertThat(cipher).containsAnyOf("cipher", "AES", "密钥");
+        Assertions.assertThat(cipher).containsAnyOf("cipher", "AES", "密钥");
         // 4) 错误 PostgreSQL 用户名/密码 → 真实 PG 认证拒绝，不能只依赖配置声明。
         Map<String, Object> wrongPg = new HashMap<>();
         wrongPg.put("spring.datasource.dynamic.datasource.master.username", "i5-wrong-user");
         wrongPg.put("spring.datasource.dynamic.datasource.master.password", "i5-wrong-password");
         String pg = tryBoot(wrongPg);
         System.out.println("[G3b] 错误 PG 凭据: " + pg);
-        org.assertj.core.api.Assertions.assertThat(pg)
+        Assertions.assertThat(pg)
                 .as("真实 PostgreSQL 错误用户名/密码必须阻止 prod 启动")
                 .isNotNull()
                 // Embedded PostgreSQL 当前以 trust 认证初始化；错误用户名会被 PG
@@ -245,8 +248,8 @@ class I5ProdProfileSecurityBootTest {
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest ch = HttpRequest.newBuilder(URI.create(base + "/auth/challenge")).GET().build();
         HttpResponse<String> chr = client.send(ch, HttpResponse.BodyHandlers.ofString());
-        String captchaId = com.fasterxml.jackson.databind.JsonNode.class.cast(
-                new com.fasterxml.jackson.databind.ObjectMapper().readTree(chr.body()).get("data")).get("captchaId").asText();
+        String captchaId = JsonNode.class.cast(
+                new ObjectMapper().readTree(chr.body()).get("data")).get("captchaId").asText();
         Map<String, Object> loginBody = new HashMap<>();
         loginBody.put("username", "admin");
         loginBody.put("password", "x");
@@ -255,13 +258,13 @@ class I5ProdProfileSecurityBootTest {
         loginBody.put("timestamp", String.valueOf(System.currentTimeMillis()));
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/auth/login"))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(loginBody)))
+                .POST(HttpRequest.BodyPublishers.ofString(new ObjectMapper().writeValueAsString(loginBody)))
                 .build();
         HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
         System.out.println("[G3a] prod captcha=1234 -> " + resp.statusCode() + " :: " + resp.body().substring(0, Math.min(120, resp.body().length())));
         // 固定答案 1234 在 prod 不得被接受（无论密码对错，先倒在验证码上）
-        org.assertj.core.api.Assertions.assertThat(resp.body()).doesNotContain("accessToken");
-        org.assertj.core.api.Assertions.assertThat(resp.body()).containsAnyOf("验证码", "2101");
+        Assertions.assertThat(resp.body()).doesNotContain("accessToken");
+        Assertions.assertThat(resp.body()).containsAnyOf("验证码", "2101");
     }
 
     @AfterAll

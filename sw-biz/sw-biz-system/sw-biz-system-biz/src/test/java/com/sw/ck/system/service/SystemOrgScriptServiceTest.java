@@ -18,6 +18,7 @@ import com.sw.ck.system.mapper.SysUserRoleMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -107,8 +108,14 @@ class SystemOrgScriptServiceTest {
         when(userPostMapper.selectList(any()))
                 .thenReturn(List.of(activePostRelation, disabledPostRelation));
 
-        SystemOrgScriptService service = new SystemOrgScriptService(userMapper, deptMapper,
-                roleMapper, postMapper, userRoleMapper, userPostMapper);
+        SystemOrgScriptService service = new SystemOrgScriptService();
+        // 生产类已统一字段注入：@Autowired 字段经反射注入上方 mock
+        ReflectionTestUtils.setField(service, "userMapper", userMapper);
+        ReflectionTestUtils.setField(service, "deptMapper", deptMapper);
+        ReflectionTestUtils.setField(service, "roleMapper", roleMapper);
+        ReflectionTestUtils.setField(service, "postMapper", postMapper);
+        ReflectionTestUtils.setField(service, "userRoleMapper", userRoleMapper);
+        ReflectionTestUtils.setField(service, "userPostMapper", userPostMapper);
 
         SystemOrgScriptService.OrgScriptContext context = service.load();
 
@@ -125,9 +132,7 @@ class SystemOrgScriptServiceTest {
     @Test
     @DisplayName("无登录租户上下文时拒绝")
     void rejectsMissingLoginContext() {
-        SystemOrgScriptService service = new SystemOrgScriptService(
-                mock(SysUserMapper.class), mock(SysDeptMapper.class), mock(SysRoleMapper.class),
-                mock(SysPostMapper.class), mock(SysUserRoleMapper.class), mock(SysUserPostMapper.class));
+        SystemOrgScriptService service = new SystemOrgScriptService();
 
         BaseException error = assertThrows(BaseException.class, service::load);
 

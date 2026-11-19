@@ -1,6 +1,9 @@
 package com.sw.ck.bpm.process.controller;
 
-import com.sw.ck.bpm.process.dto.ApprovalHistoryItemDTO;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.vo.ApprovalHistoryItemVO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.service.ApprovalHistoryAssembler;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
@@ -11,8 +14,7 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.print.FormPrintFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 服务端打印 PDF（1.0.0 F2-3）：表单详情、任务详情、「我发起的」三处共用端点。
  * <p>
@@ -32,27 +35,19 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/workflow/print")
+@Log4j2
 public class FormPrintController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormPrintController.class);
-
-    private final FormPrintPdfService formPrintPdfService;
-    private final FormPrintFacade formPrintFacade;
-    private final BpmInstanceService bpmInstanceService;
-    private final ApprovalHistoryAssembler approvalHistoryAssembler;
-    private final com.sw.ck.bpm.api.facade.BpmTaskFacade bpmTaskFacade;
-
-    public FormPrintController(FormPrintPdfService formPrintPdfService,
-                               FormPrintFacade formPrintFacade,
-                               BpmInstanceService bpmInstanceService,
-                               ApprovalHistoryAssembler approvalHistoryAssembler,
-                               com.sw.ck.bpm.api.facade.BpmTaskFacade bpmTaskFacade) {
-        this.formPrintPdfService = formPrintPdfService;
-        this.formPrintFacade = formPrintFacade;
-        this.bpmInstanceService = bpmInstanceService;
-        this.approvalHistoryAssembler = approvalHistoryAssembler;
-        this.bpmTaskFacade = bpmTaskFacade;
-    }
+    @Autowired
+    private FormPrintPdfService formPrintPdfService;
+    @Autowired
+    private FormPrintFacade formPrintFacade;
+    @Autowired
+    private BpmInstanceService bpmInstanceService;
+    @Autowired
+    private ApprovalHistoryAssembler approvalHistoryAssembler;
+    @Autowired
+    private BpmTaskFacade bpmTaskFacade;
 
     /**
      * 浏览器打印上下文（F2-5，S1）：与 PDF 共用提交时版本定位。
@@ -110,7 +105,7 @@ public class FormPrintController {
         }
 
         BpmInstance instance = null;
-        List<ApprovalHistoryItemDTO> history = null;
+        List<ApprovalHistoryItemVO> history = null;
         if (processInstanceId != null && !processInstanceId.isBlank()) {
             instance = bpmInstanceService.findByProcessInstanceId(processInstanceId).orElse(null);
             if (instance == null) {

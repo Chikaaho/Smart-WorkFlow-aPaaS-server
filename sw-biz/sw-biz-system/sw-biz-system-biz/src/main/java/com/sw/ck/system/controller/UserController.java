@@ -1,16 +1,25 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.api.user.UserOptionDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
 import com.sw.ck.system.entity.SysUser;
+import com.sw.ck.system.service.ManagementTenantContext;
 import com.sw.ck.system.service.SysUserService;
+import com.sw.ck.system.service.UserImportExportService;
+import com.sw.ck.system.service.UserImportExportService.UserImportResult;
 import com.sw.ck.system.service.UserPageQuery;
 import com.sw.ck.system.service.UserPostAssociation;
+
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -23,6 +32,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
+import com.sw.ck.system.vo.SysUserVO;
 
 /**
  * 用户管理控制器。
@@ -31,19 +41,14 @@ import java.util.List;
 @RequestMapping("/system/user")
 public class UserController {
 
-    private final SysUserService sysUserService;
-    private final UserQueryFacade userQueryFacade;
-    private final com.sw.ck.system.service.ManagementTenantContext tenantContext;
-    private final com.sw.ck.system.service.UserImportExportService userImportExportService;
-
-    public UserController(SysUserService sysUserService, UserQueryFacade userQueryFacade,
-                          com.sw.ck.system.service.ManagementTenantContext tenantContext,
-                          com.sw.ck.system.service.UserImportExportService userImportExportService) {
-        this.sysUserService = sysUserService;
-        this.userQueryFacade = userQueryFacade;
-        this.tenantContext = tenantContext;
-        this.userImportExportService = userImportExportService;
-    }
+    @Autowired
+    private SysUserService sysUserService;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private ManagementTenantContext tenantContext;
+    @Autowired
+    private UserImportExportService userImportExportService;
 
     /**
      * 用户候选选项（V012-BUG-019 选择器数据源）：登录即可调用。
@@ -95,7 +100,7 @@ public class UserController {
      */
     @PostMapping("/page")
     @PreAuthorize("@ss.hasPermi('system:user:list')")
-    public R<PageResult<SysUser>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysUserVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                         @RequestParam(defaultValue = "10") long pageSize,
                                         @RequestBody(required = false) UserPageQuery query) {
         PageParam pageParam = new PageParam();
@@ -108,7 +113,7 @@ public class UserController {
         }
         PageResult<SysUser> result = query == null ? sysUserService.page(pageParam) : sysUserService.page(pageParam, query);
         tenantContext.decorateUsers(result.getRecords());
-        return R.ok(result);
+        return R.ok(PageResult.map(result, SysUserVO::from));
     }
 
     /**
@@ -116,10 +121,10 @@ public class UserController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:user:list')")
-    public R<SysUser> get(@PathVariable Long id) {
+    public R<SysUserVO> get(@PathVariable Long id) {
         SysUser user = sysUserService.getById(id);
         if (user != null) tenantContext.decorateUsers(List.of(user));
-        return R.ok(user);
+        return R.ok(SysUserVO.from(user));
     }
 
     /**
@@ -207,8 +212,8 @@ public class UserController {
 
     private SysUser requireManagementUser(Long id) {
         SysUser user = sysUserService.getById(id);
-        if (user == null) throw new com.sw.ck.common.exception.BaseException(
-                com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "用户不存在或无权访问");
+        if (user == null) throw new BaseException(
+                CommonErrorCode.PARAM_ERROR, "用户不存在或无权访问");
         return user;
     }
 
@@ -242,7 +247,7 @@ public class UserController {
      */
     @PostMapping("/import")
     @PreAuthorize("@ss.hasPermi('system:user:import')")
-    public R<com.sw.ck.system.service.UserImportExportService.UserImportResult> importUsers(
+    public R<UserImportResult> importUsers(
             @RequestParam("file") MultipartFile file,
             @RequestParam("initialPassword") String initialPassword,
             @RequestParam(value = "tenantId", required = false) Long tenantId) throws IOException {

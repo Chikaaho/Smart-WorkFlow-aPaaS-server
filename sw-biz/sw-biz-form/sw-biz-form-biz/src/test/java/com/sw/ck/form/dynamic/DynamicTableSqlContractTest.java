@@ -2,6 +2,7 @@ package com.sw.ck.form.dynamic;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -11,6 +12,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -154,7 +156,7 @@ class DynamicTableSqlContractTest {
         // 租户上下文缺失即拒绝
         assertEquals(FormErrorCode.DYNAMIC_SQL_CONTRACT_VIOLATION.getCode(),
                 assertThrows(BaseException.class,
-                        () -> DynamicTableSql.appendLivePredicate(new StringBuilder(), new java.util.ArrayList<>(), null))
+                        () -> DynamicTableSql.appendLivePredicate(new StringBuilder(), new ArrayList<>(), null))
                         .getCode());
     }
 

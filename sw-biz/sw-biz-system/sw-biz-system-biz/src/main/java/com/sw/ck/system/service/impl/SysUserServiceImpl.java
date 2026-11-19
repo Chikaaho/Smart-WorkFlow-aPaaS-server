@@ -1,6 +1,7 @@
 package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -22,6 +23,8 @@ import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.UserPostAssociation;
 import com.sw.ck.system.service.UserPageQuery;
 import com.sw.ck.security.cache.LoginUserLoader;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,52 +33,38 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.util.ArrayList;
 import java.util.Objects;
 import java.util.List;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
+import org.springframework.context.annotation.Lazy;
+
+import lombok.extern.log4j.Log4j2;
 /**
  * 系统用户 Service 实现。
  */
 @Service
+@Log4j2
 public class SysUserServiceImpl
         extends BaseServiceImpl<SysUserMapper, SysUser>
         implements SysUserService {
 
-    private static final org.slf4j.Logger log =
-            org.slf4j.LoggerFactory.getLogger(SysUserServiceImpl.class);
-
-    private final PasswordEncoder passwordEncoder;
-    private final SysUserRoleMapper sysUserRoleMapper;
-    private final SysUserPostMapper sysUserPostMapper;
-    private final SysRoleMapper sysRoleMapper;
-    private final SysPostMapper sysPostMapper;
-    private final SysDeptMapper sysDeptMapper;
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+    @Autowired
+    private SysUserRoleMapper sysUserRoleMapper;
+    @Autowired
+    private SysUserPostMapper sysUserPostMapper;
+    @Autowired
+    private SysRoleMapper sysRoleMapper;
+    @Autowired
+    private SysPostMapper sysPostMapper;
+    @Autowired
+    private SysDeptMapper sysDeptMapper;
 
     /** 可选协同组件：启停/撤权/删号后立即踢出登录缓存，保证权限即时收敛。 */
-    private final LoginUserLoader loginUserLoader;
-
-    public SysUserServiceImpl(PasswordEncoder passwordEncoder) {
-        this(passwordEncoder, null, null, null, null, null, null);
-    }
-
-    public SysUserServiceImpl(PasswordEncoder passwordEncoder, SysUserRoleMapper sysUserRoleMapper,
-                              SysUserPostMapper sysUserPostMapper, SysRoleMapper sysRoleMapper,
-                              SysPostMapper sysPostMapper) {
-        this(passwordEncoder, sysUserRoleMapper, sysUserPostMapper, sysRoleMapper, sysPostMapper, null, null);
-    }
-
     @Autowired
-    public SysUserServiceImpl(PasswordEncoder passwordEncoder, SysUserRoleMapper sysUserRoleMapper,
-                              SysUserPostMapper sysUserPostMapper, SysRoleMapper sysRoleMapper,
-                              SysPostMapper sysPostMapper, SysDeptMapper sysDeptMapper,
-                              @org.springframework.context.annotation.Lazy LoginUserLoader loginUserLoader) {
-        this.passwordEncoder = passwordEncoder;
-        this.sysUserRoleMapper = sysUserRoleMapper;
-        this.sysUserPostMapper = sysUserPostMapper;
-        this.sysRoleMapper = sysRoleMapper;
-        this.sysPostMapper = sysPostMapper;
-        this.sysDeptMapper = sysDeptMapper;
-        this.loginUserLoader = loginUserLoader;
-    }
+    @Lazy
+    private LoginUserLoader loginUserLoader;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -177,14 +166,14 @@ public class SysUserServiceImpl
     @Override
     public SysUser getByUsername(String username) {
         // 用户名按租户唯一（0.2.0）：跨租户不唯一时 fail closed，重名账号须用企业名称定位
-        java.util.List<SysUser> rows = baseMapper.selectGlobalByUsernameAll(username);
+        List<SysUser> rows = baseMapper.selectGlobalByUsernameAll(username);
         return rows.size() == 1 ? rows.get(0) : null;
     }
 
     @Override
     public SysUser findByTenantNameAndUsername(String tenantName, String username) {
         // 租户名称不强制唯一：同名企业命中多行时 fail closed（null → 统一“密码错误”语义）
-        java.util.List<SysUser> rows =
+        List<SysUser> rows =
                 baseMapper.selectByTenantNameAndUsernameAll(tenantName.trim(), username);
         return rows.size() == 1 ? rows.get(0) : null;
     }
@@ -326,7 +315,7 @@ public class SysUserServiceImpl
         }
         try {
             loginUserLoader.kickOut(userId);
-        } catch (org.springframework.beans.factory.NoSuchBeanDefinitionException e) {
+        } catch (NoSuchBeanDefinitionException e) {
             // 非生产装配上下文：无登录缓存可驱逐
         } catch (Exception e) {
             log.error("用户权限/身份变更后踢出登录缓存失败，变更将回滚 userId={}", userId, e);
@@ -360,7 +349,7 @@ public class SysUserServiceImpl
         SysUser owner = getById(userId);
         if (owner == null || owner.getTenantId() == null)
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "用户不存在或所属租户无效");
-        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        var actor = LoginUserHolder.get();
         if (actor == null || actor.getTenantId() == null)
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少登录租户上下文");
         boolean root = actor.isSuperAdmin() && Long.valueOf(0).equals(actor.getTenantId());
@@ -370,7 +359,7 @@ public class SysUserServiceImpl
     }
 
     private Long resolveCreationTenant(Long requested) {
-        var actor = com.sw.ck.security.holder.LoginUserHolder.get();
+        var actor = LoginUserHolder.get();
         // 受信任的内部准入链显式提供已校验租户；管理 HTTP 入口另须校验操作者与有效性。
         if (actor == null) {
             if (requested == null) throw new BaseException(CommonErrorCode.PARAM_ERROR, "缺少目标租户");

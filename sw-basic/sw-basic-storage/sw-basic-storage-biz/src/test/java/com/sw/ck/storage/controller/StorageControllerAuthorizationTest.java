@@ -1,5 +1,6 @@
 package com.sw.ck.storage.controller;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
@@ -38,7 +39,9 @@ import jakarta.servlet.Filter;
 import java.io.IOException;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -81,7 +84,11 @@ class StorageControllerAuthorizationTest {
     static class TestConfig {
         @Bean
         StorageController controller() {
-            return new StorageController(mock(StorageFacade.class), mock(StorageFileService.class));
+            StorageFileService fileService = mock(StorageFileService.class);
+            // d0f82c46 起列表走 PageConverter.map，未桩的 mock 返回 null 页会 NPE：
+            // 鉴权用例只关心状态码，补空页桩让请求到达控制器（2026-11-19 治理批次漏网项）
+            when(fileService.pageFiles(anyLong(), anyLong())).thenReturn(new Page<>());
+            return new StorageController(mock(StorageFacade.class), fileService);
         }
 
         @Bean("ss")

@@ -2,6 +2,7 @@ package com.sw.ck.notify.render;
 
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -54,8 +55,8 @@ public class TemplateRenderService {
      *
      * @return LinkedHashMap 变量名 → 类型声明（可为 null 表示未声明）
      */
-    public java.util.Map<String, String> parseContract(String variablesAllowed) {
-        java.util.Map<String, String> contract = new java.util.LinkedHashMap<>();
+    public Map<String, String> parseContract(String variablesAllowed) {
+        Map<String, String> contract = new LinkedHashMap<>();
         if (variablesAllowed == null || variablesAllowed.isBlank()) {
             return contract;
         }
@@ -79,7 +80,7 @@ public class TemplateRenderService {
      * 与 {@link #render(String, Map)} 共用全部既有语义（缺失/非法占位符/长度上限）。
      */
     public String renderWithContract(String template, Map<String, String> variables, String variablesAllowed) {
-        java.util.Map<String, String> contract = parseContract(variablesAllowed);
+        Map<String, String> contract = parseContract(variablesAllowed);
         requireContractCoversTemplate(template, contract);
         if (variables != null && !contract.isEmpty()) {
             for (Map.Entry<String, String> provided : variables.entrySet()) {
@@ -100,7 +101,7 @@ public class TemplateRenderService {
     /**
      * 模板内部引用的全部变量必须在契约白名单中（契约非空时）。
      */
-    private void requireContractCoversTemplate(String template, java.util.Map<String, String> contract) {
+    private void requireContractCoversTemplate(String template, Map<String, String> contract) {
         if (contract == null || contract.isEmpty()) {
             return;
         }
@@ -126,19 +127,19 @@ public class TemplateRenderService {
             return;
         }
         String type = declared.toUpperCase();
-        if (type.equals("NUMBER")) {
+        if ("NUMBER".equals(type)) {
             if (value == null || NUMBER_VALUE.matcher(value).matches() == false) {
                 throw new TemplateRenderException("变量 " + name + " 类型不符（应为 NUMBER）");
             }
             return;
         }
-        if (type.equals("DATE")) {
+        if ("DATE".equals(type)) {
             if (value == null || DATE_VALUE.matcher(value).matches() == false) {
                 throw new TemplateRenderException("变量 " + name + " 类型不符（应为 DATE）");
             }
             return;
         }
-        if (type.equals("EMAIL")) {
+        if ("EMAIL".equals(type)) {
             if (value == null || EMAIL_VALUE.matcher(value).matches() == false) {
                 throw new TemplateRenderException("变量 " + name + " 类型不符（应为 EMAIL）");
             }

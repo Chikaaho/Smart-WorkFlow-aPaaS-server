@@ -6,12 +6,19 @@ import com.sw.ck.system.entity.SysPostDelegate;
 import com.sw.ck.system.mapper.SysPostDelegateMapper;
 import com.sw.ck.system.mapper.SysPostMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -43,7 +50,11 @@ class PositionDelegateFacadeImplTest {
         delegateMapper = mock(SysPostDelegateMapper.class);
         postMapper = mock(SysPostMapper.class);
         userMapper = mock(SysUserMapper.class);
-        facade = new PositionDelegateFacadeImpl(delegateMapper, postMapper, userMapper);
+        facade = new PositionDelegateFacadeImpl();
+        // 生产类已统一字段注入：字段名为 delegateMapper/sysPostMapper/sysUserMapper（与测试变量名不同，按类型映射）
+        ReflectionTestUtils.setField(facade, "delegateMapper", delegateMapper);
+        ReflectionTestUtils.setField(facade, "sysPostMapper", postMapper);
+        ReflectionTestUtils.setField(facade, "sysUserMapper", userMapper);
         when(postMapper.selectOne(any())).thenAnswer(invocation -> null);
         when(postMapper.selectById(anyLong())).thenAnswer(invocation ->
                 switch (invocation.getArgument(0, Long.class).intValue()) {
@@ -193,14 +204,14 @@ class PositionDelegateFacadeImplTest {
         // 首个查询即 ORG → 命中 P_ORG_LEAD，下方断言失败。
         // 注意：MP 惰性参数需先注册实体 lambda 缓存，getSqlSegment() 渲染后
         // paramNameValuePairs 才有值（纯单测无 MyBatis 运行时）。
-        com.baomidou.mybatisplus.core.MybatisConfiguration mpConfig =
-                new com.baomidou.mybatisplus.core.MybatisConfiguration();
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(mpConfig, ""),
+        MybatisConfiguration mpConfig =
+                new MybatisConfiguration();
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(mpConfig, ""),
                 SysPostDelegate.class);
-        java.util.concurrent.atomic.AtomicInteger orgQueries = new java.util.concurrent.atomic.AtomicInteger();
+        AtomicInteger orgQueries = new AtomicInteger();
         when(delegateMapper.selectOne(any())).thenAnswer(invocation -> {
-            com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?> wrapper =
+            AbstractWrapper<?, ?, ?> wrapper =
                     invocation.getArgument(0);
             String segment = String.valueOf(wrapper.getSqlSegment());
             var params = wrapper.getParamNameValuePairs();

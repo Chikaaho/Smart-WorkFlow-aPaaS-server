@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.script;
 
+import com.sw.ck.bpm.api.script.ScriptFunctionContext;
+
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,8 +47,8 @@ class ScriptWorkerPoolTest {
     @DisplayName("BF021 函数上下文经协议下发 worker：组织函数与变量写入在真实 worker 内生效")
     void shouldPassFunctionContextAndReturnWritesThroughWorkerProtocol() {
         pool.configure(2, 1, 200);
-        com.sw.ck.bpm.api.script.ScriptFunctionContext ctx =
-                new com.sw.ck.bpm.api.script.ScriptFunctionContext(
+        ScriptFunctionContext ctx =
+                new ScriptFunctionContext(
                         Map.of(2L, 1L), Map.of(1L, 100L), Map.of("flag", 7L));
         BpmScriptRunner.Result result = pool.evaluate(
                 "#设置流程变量(leader, #获取分管领导(2)); return #获取流程变量(flag);",

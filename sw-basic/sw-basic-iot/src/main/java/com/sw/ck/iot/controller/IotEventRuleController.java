@@ -1,6 +1,9 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.entity.IotEventRule;
 import com.sw.ck.iot.entity.IotProcessTrigger;
@@ -8,11 +11,20 @@ import com.sw.ck.iot.api.IotFormContractChecker;
 import com.sw.ck.iot.mapper.IotEventRuleMapper;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
 import com.sw.ck.iot.service.IotAuditService;
+
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
+import com.sw.ck.iot.entity.IotRuleTypeEnum;
+import com.sw.ck.iot.vo.IotEventRuleVO;
+import com.sw.ck.iot.vo.IotProcessTriggerVO;
 
 /**
  * 事件规则控制器：条件/阈值/防抖/冷却/流程模板/表单映射与发布。
@@ -22,40 +34,34 @@ import java.util.List;
 @RequestMapping("/iot/rules")
 public class IotEventRuleController {
 
-    private final IotEventRuleMapper ruleMapper;
-    private final IotProcessTriggerMapper triggerMapper;
-    private final ObjectProvider<IotFormContractChecker> formContractCheckerProvider;
-    private final IotAuditService auditService;
-
-    public IotEventRuleController(IotEventRuleMapper ruleMapper,
-                                  IotProcessTriggerMapper triggerMapper,
-                                  ObjectProvider<IotFormContractChecker> formContractCheckerProvider,
-                                  IotAuditService auditService) {
-        this.ruleMapper = ruleMapper;
-        this.triggerMapper = triggerMapper;
-        this.formContractCheckerProvider = formContractCheckerProvider;
-        this.auditService = auditService;
-    }
+    @Autowired
+    private IotEventRuleMapper ruleMapper;
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
+    @Autowired
+    private ObjectProvider<IotFormContractChecker> formContractCheckerProvider;
+    @Autowired
+    private IotAuditService auditService;
 
     @GetMapping
-    public R<List<IotEventRule>> list(@RequestParam(required = false) Long deviceId) {
+    public R<List<IotEventRuleVO>> list(@RequestParam(required = false) Long deviceId) {
         LambdaQueryWrapper<IotEventRule> wrapper = new LambdaQueryWrapper<>();
         if (deviceId != null) {
             wrapper.eq(IotEventRule::getDeviceId, deviceId);
         }
-        return R.ok(ruleMapper.selectList(wrapper));
+        return R.ok(ruleMapper.selectList(wrapper) == null ? List.of() : ruleMapper.selectList(wrapper).stream().map(IotEventRuleVO::from).toList());
     }
 
     @GetMapping("/{id}")
-    public R<IotEventRule> detail(@PathVariable Long id) {
-        return R.ok(ruleMapper.selectById(id));
+    public R<IotEventRuleVO> detail(@PathVariable Long id) {
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     @PostMapping
-    public R<IotEventRule> create(@RequestBody IotEventRule rule) {
+    public R<IotEventRuleVO> create(@RequestBody IotEventRule rule) {
         validate(rule);
         rule.setId(null);
-        rule.setStatus("DRAFT");
+        rule.setStatus(IotPublishStatusEnum.DRAFT.getCode());
         rule.setRuleVersion(1);
         if (rule.getProcessEnabled() == null) {
             rule.setProcessEnabled(0);
@@ -64,11 +70,11 @@ public class IotEventRuleController {
             rule.setAgentEnabled(0);
         }
         ruleMapper.insert(rule);
-        return R.ok(rule);
+        return R.ok(IotEventRuleVO.from(rule));
     }
 
     @PutMapping("/{id}")
-    public R<IotEventRule> update(@PathVariable Long id, @RequestBody IotEventRule patch) {
+    public R<IotEventRuleVO> update(@PathVariable Long id, @RequestBody IotEventRule patch) {
         IotEventRule existing = ruleMapper.selectById(id);
         if (existing == null) {
             return R.fail(404, "规则不存在: id=" + id);
@@ -78,7 +84,7 @@ public class IotEventRuleController {
         patch.setStatus(null);
         patch.setRuleVersion(null);
         ruleMapper.updateById(patch);
-        return R.ok(ruleMapper.selectById(id));
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     /**
@@ -86,7 +92,7 @@ public class IotEventRuleController {
      * 发布动作锁定版本。
      */
     @PostMapping("/{id}/publish")
-    public R<IotEventRule> publish(@PathVariable Long id) {
+    public R<IotEventRuleVO> publish(@PathVariable Long id) {
         IotEventRule existing = ruleMapper.selectById(id);
         if (existing == null) {
             return R.fail(404, "规则不存在: id=" + id);
@@ -95,7 +101,7 @@ public class IotEventRuleController {
         // empty = 无法裁决（如流程模板 key 空白）→ fail closed，不得当作通过。
         if (existing.getProcessEnabled() != null && existing.getProcessEnabled() == 1
                 && formContractCheckerProvider.getIfAvailable() instanceof IotFormContractChecker checker) {
-            java.util.Optional<List<String>> checkOutcome =
+            Optional<List<String>> checkOutcome =
                     checker.checkMapping(existing.getProcessTemplateKey(), existing.getFormMappingJson());
             if (checkOutcome.isEmpty()) {
                 return R.fail(400, "表单契约校验无法裁决: processTemplateKey="
@@ -113,28 +119,29 @@ public class IotEventRuleController {
         ruleMapper.updateById(patch);
         auditService.recordAction(existing.getTenantId(), null, "system:iot-rule-publish",
                 "RULE_PUBLISH", "RULE", String.valueOf(id), "PUBLISHED",
-                java.util.UUID.randomUUID().toString(), "ruleVersion=" + existing.getRuleVersion());
-        return R.ok(ruleMapper.selectById(id));
+                UUID.randomUUID().toString(), "ruleVersion=" + existing.getRuleVersion());
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     @PostMapping("/{id}/disable")
-    public R<IotEventRule> disable(@PathVariable Long id) {
+    public R<IotEventRuleVO> disable(@PathVariable Long id) {
         IotEventRule patch = new IotEventRule();
         patch.setId(id);
         patch.setStatus("DISABLED");
         ruleMapper.updateById(patch);
-        return R.ok(ruleMapper.selectById(id));
+        return R.ok(IotEventRuleVO.from(ruleMapper.selectById(id)));
     }
 
     /**
      * 规则触发记录（含流程发起结果）。
      */
     @GetMapping("/{id}/triggers")
-    public R<List<IotProcessTrigger>> triggers(@PathVariable Long id) {
+    public R<List<IotProcessTriggerVO>> triggers(@PathVariable Long id) {
         return R.ok(triggerMapper.selectList(new LambdaQueryWrapper<IotProcessTrigger>()
-                .eq(IotProcessTrigger::getRuleId, id)
-                .orderByDesc(IotProcessTrigger::getCreateTime)
-                .last("limit 100")));
+                        .eq(IotProcessTrigger::getRuleId, id)
+                        .orderByDesc(IotProcessTrigger::getCreateTime)
+                        .last("limit 100"))
+                .stream().map(IotProcessTriggerVO::from).toList());
     }
 
     private void validate(IotEventRule rule) {
@@ -144,8 +151,8 @@ public class IotEventRuleController {
         if (!"PROPERTY_CHANGED".equals(rule.getRuleType())
                 && !"THRESHOLD".equals(rule.getRuleType())
                 && !"EVENT_OCCUR".equals(rule.getRuleType())
-                && !"ONLINE".equals(rule.getRuleType())
-                && !"OFFLINE".equals(rule.getRuleType())) {
+                && !IotRuleTypeEnum.ONLINE.getCode().equals(rule.getRuleType())
+                && !IotRuleTypeEnum.OFFLINE.getCode().equals(rule.getRuleType())) {
             throw new IllegalArgumentException("非法规则类型: " + rule.getRuleType());
         }
         if (rule.getConditionJson() == null || rule.getConditionJson().isBlank()) {
@@ -161,8 +168,8 @@ public class IotEventRuleController {
         }
         if (rule.getAgentFailureConfigJson() != null && !rule.getAgentFailureConfigJson().isBlank()) {
             try {
-                Object parsed = com.alibaba.fastjson2.JSON.parse(rule.getAgentFailureConfigJson());
-                if (!(parsed instanceof com.alibaba.fastjson2.JSONObject)) {
+                Object parsed = JSON.parse(rule.getAgentFailureConfigJson());
+                if (!(parsed instanceof JSONObject)) {
                     throw new IllegalArgumentException("失败升级配置必须是 JSON 对象");
                 }
             } catch (IllegalArgumentException e) {

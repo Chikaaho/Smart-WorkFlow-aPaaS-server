@@ -122,8 +122,10 @@ public class SqlDialectRewriteInterceptor implements Interceptor {
         return prefix + orderBy + suffix;
     }
 
+    private static final Pattern LIMIT_PATTERN = Pattern.compile("(?is)\\blimit\\b");
+
     private static boolean containsLimitOutsideLiteral(String masked) {
-        return Pattern.compile("(?is)\\blimit\\b").matcher(masked).find();
+        return LIMIT_PATTERN.matcher(masked).find();
     }
 
     private static String rewriteForUpdateToHint(String sql, String masked) {

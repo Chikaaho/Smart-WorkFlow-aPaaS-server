@@ -1,12 +1,14 @@
 package com.sw.ck.knowledge.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
 import com.sw.ck.knowledge.dto.KnowledgeBaseCreateReqDTO;
-import com.sw.ck.knowledge.dto.KnowledgeBaseDTO;
-import com.sw.ck.knowledge.dto.KnowledgeDocumentDTO;
-import com.sw.ck.knowledge.dto.KnowledgeHitDTO;
+import com.sw.ck.knowledge.vo.KnowledgeBaseVO;
+import com.sw.ck.knowledge.vo.KnowledgeDocumentVO;
+import com.sw.ck.knowledge.vo.KnowledgeHitVO;
 import com.sw.ck.knowledge.dto.KnowledgeRetrievalReqDTO;
 import com.sw.ck.knowledge.service.KnowledgeBaseService;
 import com.sw.ck.knowledge.service.KnowledgeDocumentService;
@@ -34,21 +36,16 @@ import java.util.List;
 @RequestMapping("/agent/knowledge-bases")
 public class KnowledgeBaseController {
 
-    private final KnowledgeBaseService baseService;
-    private final KnowledgeDocumentService documentService;
-    private final KnowledgeRetrievalService retrievalService;
-
-    public KnowledgeBaseController(KnowledgeBaseService baseService,
-                                   KnowledgeDocumentService documentService,
-                                   KnowledgeRetrievalService retrievalService) {
-        this.baseService = baseService;
-        this.documentService = documentService;
-        this.retrievalService = retrievalService;
-    }
+    @Autowired
+    private KnowledgeBaseService baseService;
+    @Autowired
+    private KnowledgeDocumentService documentService;
+    @Autowired
+    private KnowledgeRetrievalService retrievalService;
 
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<PageResult<KnowledgeBaseDTO>> page(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<KnowledgeBaseVO>> page(@RequestParam(defaultValue = "1") long pageNum,
                                                 @RequestParam(defaultValue = "10") long pageSize,
                                                 @RequestParam(required = false) String nameKeyword) {
         PageParam param = new PageParam();
@@ -59,13 +56,13 @@ public class KnowledgeBaseController {
 
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<KnowledgeBaseDTO> get(@PathVariable Long id) {
+    public R<KnowledgeBaseVO> get(@PathVariable Long id) {
         return R.ok(baseService.get(id));
     }
 
     @PostMapping
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<KnowledgeBaseDTO> create(@RequestBody KnowledgeBaseCreateReqDTO req) {
+    public R<KnowledgeBaseVO> create(@RequestBody KnowledgeBaseCreateReqDTO req) {
         return R.ok(baseService.create(req));
     }
 
@@ -78,13 +75,13 @@ public class KnowledgeBaseController {
 
     @GetMapping("/{id}/documents")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<KnowledgeDocumentDTO>> documents(@PathVariable Long id) {
+    public R<List<KnowledgeDocumentVO>> documents(@PathVariable Long id) {
         return R.ok(documentService.list(id));
     }
 
     @PostMapping("/{id}/documents")
     @PreAuthorize("@ss.hasPermi('agent:model:manage')")
-    public R<KnowledgeDocumentDTO> uploadDocument(@PathVariable Long id,
+    public R<KnowledgeDocumentVO> uploadDocument(@PathVariable Long id,
                                                   @RequestParam("file") MultipartFile file) {
         return R.ok(documentService.upload(id, file));
     }
@@ -98,7 +95,7 @@ public class KnowledgeBaseController {
 
     @PostMapping("/{id}/retrieve")
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
-    public R<List<KnowledgeHitDTO>> retrieve(@PathVariable Long id,
+    public R<List<KnowledgeHitVO>> retrieve(@PathVariable Long id,
                                              @RequestBody KnowledgeRetrievalReqDTO req) {
         return R.ok(retrievalService.retrieve(id, req == null ? null : req.getQuery(),
                 req == null ? null : req.getTopK(),

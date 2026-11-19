@@ -1,6 +1,9 @@
 package com.sw.ck.iot.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
 import com.sw.ck.iot.entity.IotConnection;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotProduct;
@@ -10,38 +13,33 @@ import com.sw.ck.iot.mapper.IotDeviceMapper;
 import com.sw.ck.iot.mapper.IotProductMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
 import com.sw.ck.iot.mqtt.MqttBrokerManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.function.Function;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotPublishStatusEnum;
 /**
  * 设备管理服务（P21 平台化）：管理状态与连接状态分离、流程接入开关、发布/禁用。
  */
 @Service
+@Log4j2
 public class IotDeviceManageService {
 
-    private static final Logger log = LoggerFactory.getLogger(IotDeviceManageService.class);
-
-    private final IotDeviceMapper deviceMapper;
-    private final IotProductMapper productMapper;
-    private final IotConnectionMapper connectionMapper;
-    private final IotTopicMapper topicMapper;
-    private final MqttBrokerManager mqttBrokerManager;
-
-    public IotDeviceManageService(IotDeviceMapper deviceMapper,
-                                  IotProductMapper productMapper,
-                                  IotConnectionMapper connectionMapper,
-                                  IotTopicMapper topicMapper,
-                                  @Lazy MqttBrokerManager mqttBrokerManager) {
-        this.deviceMapper = deviceMapper;
-        this.productMapper = productMapper;
-        this.connectionMapper = connectionMapper;
-        this.topicMapper = topicMapper;
-        this.mqttBrokerManager = mqttBrokerManager;
-    }
+    @Autowired
+    private IotDeviceMapper deviceMapper;
+    @Autowired
+    private IotProductMapper productMapper;
+    @Autowired
+    private IotConnectionMapper connectionMapper;
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired
+    @Lazy
+    private MqttBrokerManager mqttBrokerManager;
 
     /**
      * 新增设备（草稿）。
@@ -62,7 +60,7 @@ public class IotDeviceManageService {
             requireConnection(device.getConnectionId());
         }
         device.setId(null);
-        device.setManageStatus("DRAFT");
+        device.setManageStatus(IotPublishStatusEnum.DRAFT.getCode());
         if (device.getProcessAccessEnabled() == null) {
             device.setProcessAccessEnabled(0);
         }
@@ -75,7 +73,7 @@ public class IotDeviceManageService {
      */
     public IotDevice update(Long id, IotDevice patch) {
         IotDevice existing = require(id);
-        if ("PUBLISHED".equals(existing.getManageStatus())) {
+        if (IotPublishStatusEnum.PUBLISHED.getCode().equals(existing.getManageStatus())) {
             if (patched(patch, IotDevice::getDeviceKey) || patched(patch, IotDevice::getProductRefId)) {
                 throw new IllegalStateException("已发布设备的关键身份变更受控，请先禁用后修改并重新发布");
             }
@@ -99,7 +97,7 @@ public class IotDeviceManageService {
         }
         IotDevice patch = new IotDevice();
         patch.setId(id);
-        patch.setManageStatus("PUBLISHED");
+        patch.setManageStatus(IotPublishStatusEnum.PUBLISHED.getCode());
         deviceMapper.updateById(patch);
         return deviceMapper.selectById(id);
     }
@@ -123,7 +121,7 @@ public class IotDeviceManageService {
      */
     public IotDevice changeProcessAccess(Long id, boolean enabled) {
         IotDevice existing = require(id);
-        if (enabled && !"PUBLISHED".equals(existing.getManageStatus())) {
+        if (enabled && !IotPublishStatusEnum.PUBLISHED.getCode().equals(existing.getManageStatus())) {
             throw new IllegalStateException("未发布设备不能开启流程接入");
         }
         IotDevice patch = new IotDevice();
@@ -138,7 +136,7 @@ public class IotDeviceManageService {
      */
     public List<IotDevice> listProcessEligible() {
         List<IotDevice> devices = deviceMapper.selectList(new LambdaQueryWrapper<IotDevice>()
-                .eq(IotDevice::getManageStatus, "PUBLISHED")
+                .eq(IotDevice::getManageStatus, IotPublishStatusEnum.PUBLISHED.getCode())
                 .eq(IotDevice::getProcessAccessEnabled, 1));
         return devices.stream().filter(d -> {
             if (d.getConnectionId() == null) {
@@ -166,7 +164,7 @@ public class IotDeviceManageService {
         return status;
     }
 
-    private boolean patched(IotDevice patch, java.util.function.Function<IotDevice, ?> getter) {
+    private boolean patched(IotDevice patch, Function<IotDevice, ?> getter) {
         Object value = getter.apply(patch);
         return value != null;
     }

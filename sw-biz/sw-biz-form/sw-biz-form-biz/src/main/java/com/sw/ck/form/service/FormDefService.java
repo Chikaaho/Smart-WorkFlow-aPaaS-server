@@ -2,13 +2,14 @@ package com.sw.ck.form.service;
 
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.form.api.dto.FormDefDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDTO;
-import com.sw.ck.form.api.dto.FormSnapshotDetailDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotVO;
+import com.sw.ck.form.api.vo.FormSnapshotDetailVO;
 import com.sw.ck.form.entity.FormDefEntity;
 
 import java.util.List;
 import java.util.Collection;
+import java.util.Set;
 
 /**
  * 表单定义管理服务。
@@ -25,14 +26,14 @@ public interface FormDefService {
      * @param description     表单描述
      * @return 创建的草稿 DTO
      */
-    FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description);
+    FormDefVO createDraft(String formKey, String name, String logicalTableName, String description);
 
     /**
      * 创建表单草稿（BF20261013-020：带表单类型）。
      *
      * @param formType BUSINESS 业务表单 / APPROVAL_COMMENT 审批意见表单；空白按 BUSINESS
      */
-    FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+    FormDefVO createDraft(String formKey, String name, String logicalTableName, String description,
             String formType);
 
     /**
@@ -45,7 +46,7 @@ public interface FormDefService {
      * @param appId 归属应用 ID（可空=不归属）
      * @param dirId 归属目录 ID（可空=直接归属应用）
      */
-    FormDefDTO createDraft(String formKey, String name, String logicalTableName, String description,
+    FormDefVO createDraft(String formKey, String name, String logicalTableName, String description,
             String formType, String appId, String dirId);
 
     /**
@@ -58,7 +59,7 @@ public interface FormDefService {
      * @param formKeys 待判定的 formKey 集合
      * @return 其中对当前用户可见的 formKey 子集
      */
-    java.util.Set<String> filterVisibleFormKeys(java.util.Collection<String> formKeys);
+    Set<String> filterVisibleFormKeys(Collection<String> formKeys);
 
     /**
      * 更新表单草稿元数据。
@@ -69,7 +70,7 @@ public interface FormDefService {
      * @param description 描述
      * @return 更新后的 DTO
      */
-    FormDefDTO updateDraft(String id, String name, String logicalTableName, String description);
+    FormDefVO updateDraft(String id, String name, String logicalTableName, String description);
 
     /**
      * 仅改名（0.1.7 #4）：不动 formKey、定义与物理列；草稿/已发布/停用均可改。
@@ -116,12 +117,12 @@ public interface FormDefService {
     /**
      * 根据 ID 获取表单定义 DTO。
      */
-    FormDefDTO getFormDef(String id);
+    FormDefVO getFormDef(String id);
 
     /**
      * 根据 formKey 获取表单定义 DTO。
      */
-    FormDefDTO getFormDefByKey(String formKey);
+    FormDefVO getFormDefByKey(String formKey);
 
     /**
      * 根据 formKey 获取表单定义 JSON（渲染接口）。
@@ -155,16 +156,16 @@ public interface FormDefService {
      *
      * @param pageParam 分页参数（pageNum/pageSize）
      * @param keyword   可选，对 name 模糊搜索（LIKE），为空不加该条件
-     * @return 分页结果，每行 FormDefDTO（含 id/formKey/name/status/createTime/updateTime 等）
+     * @return 分页结果，每行 FormDefVO（含 id/formKey/name/status/createTime/updateTime 等）
      */
-    PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword);
+    PageResult<FormDefVO> pageFormDefs(PageParam pageParam, String keyword);
 
     /**
      * 分页查询（BF20261013-020：按表单类型过滤）。
      *
      * @param formType 可选，BUSINESS / APPROVAL_COMMENT；为空不过滤
      */
-    PageResult<FormDefDTO> pageFormDefs(PageParam pageParam, String keyword, String formType);
+    PageResult<FormDefVO> pageFormDefs(PageParam pageParam, String keyword, String formType);
 
     /**
      * 根据 ID 获取表单定义实体。
@@ -172,7 +173,7 @@ public interface FormDefService {
     FormDefEntity getById(String id);
 
     /** 查询当前租户内当前用户可见的已发布表单。 */
-    List<FormDefDTO> listPublishedForCurrentUser();
+    List<FormDefVO> listPublishedForCurrentUser();
 
     /** 更新业务发起可见范围；空集合表示当前租户内全部用户。 */
     void updateVisibility(String formId, Collection<Long> userIds);
@@ -191,7 +192,7 @@ public interface FormDefService {
      * @param formId 表单 ID
      * @return 快照列表，按 formVersion 倒序
      */
-    List<FormSnapshotDTO> listSnapshots(String formId);
+    List<FormSnapshotVO> listSnapshots(String formId);
 
     /**
      * 读取指定版本的快照详情（只读预览）。
@@ -204,7 +205,7 @@ public interface FormDefService {
      * @param formVersion 快照版本号
      * @return 快照详情（含 definition）
      */
-    FormSnapshotDetailDTO getSnapshot(String formId, Integer formVersion);
+    FormSnapshotDetailVO getSnapshot(String formId, Integer formVersion);
 
     /**
      * 删除表单（逻辑删除，0.1.7 #21 起任何状态均可删除）。

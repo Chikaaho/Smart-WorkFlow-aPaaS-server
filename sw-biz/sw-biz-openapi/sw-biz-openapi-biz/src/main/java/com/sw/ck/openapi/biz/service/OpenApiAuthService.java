@@ -1,6 +1,9 @@
 package com.sw.ck.openapi.biz.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.openapi.api.exception.OpenApiErrorCode;
 import com.sw.ck.openapi.biz.entity.OpenApiApp;
@@ -9,6 +12,9 @@ import com.sw.ck.openapi.biz.mapper.OpenApiAppMapper;
 import com.sw.ck.openapi.biz.mapper.OpenApiNonceMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.api.tenant.TenantValidityFacade;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -17,6 +23,9 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import com.sw.ck.openapi.biz.entity.OpenApiAppStatusEnum;
 
 /**
  * 开放接口入站鉴权（I4 §3.4）。
@@ -31,25 +40,20 @@ public class OpenApiAuthService {
 
     static final long WINDOW_SECONDS = 300;
 
-    private final OpenApiAppMapper appMapper;
-    private final OpenApiNonceMapper nonceMapper;
-    private final com.sw.ck.system.api.tenant.TenantValidityFacade tenantValidityFacade;
-
-    public OpenApiAuthService(OpenApiAppMapper appMapper, OpenApiNonceMapper nonceMapper,
-                              @org.springframework.beans.factory.annotation.Autowired(required = false)
-                              com.sw.ck.system.api.tenant.TenantValidityFacade tenantValidityFacade) {
-        this.appMapper = appMapper;
-        this.nonceMapper = nonceMapper;
-        this.tenantValidityFacade = tenantValidityFacade;
-    }
+    @Autowired
+    private OpenApiAppMapper appMapper;
+    @Autowired
+    private OpenApiNonceMapper nonceMapper;
+    @Autowired(required = false)
+    private TenantValidityFacade tenantValidityFacade;
 
     /** 校验签名/时间窗/防重放/scope，通过后建立代理上下文并返回应用。 */
     public OpenApiAuthContext authenticate(String appId, String timestamp, String nonce,
                                            String signature, String rawBody, String requiredScope) {
         // 认证前无登录态：app/nonce 读取与写入显式挂起租户过滤
         // （租户语义由 app 行 tenantId 与代理上下文权威承担）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return doAuthenticate(appId, timestamp, nonce, signature, rawBody, requiredScope);
         }
     }
@@ -65,7 +69,7 @@ public class OpenApiAuthService {
         if (app == null) {
             throw new BaseException(OpenApiErrorCode.APP_NOT_FOUND);
         }
-        if (!"ENABLED".equals(app.getStatus())) {
+        if (!OpenApiAppStatusEnum.ENABLED.getCode().equals(app.getStatus())) {
             throw new BaseException(OpenApiErrorCode.APP_DISABLED);
         }
         long ts;
@@ -100,8 +104,8 @@ public class OpenApiAuthService {
             row.setUpdateTime(LocalDateTime.now());
             row.setDeleted(0);
             // 认证前无登录态：挂起租户过滤（租户归 app 行权威，显式携带）
-            try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                         com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+            try (Suspended ignored =
+                         TenantLineSuspension.suspended()) {
                 nonceMapper.insert(row); // 唯一键兜底并发重放
             }
         } catch (DuplicateKeyException e) {
@@ -125,8 +129,8 @@ public class OpenApiAuthService {
         String bodyHash = sha256(body == null ? "" : body);
         String material = appId + timestamp + nonce + bodyHash;
         try {
-            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-            mac.init(new javax.crypto.spec.SecretKeySpec(
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(
                     secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             return HexFormat.of().formatHex(mac.doFinal(material.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {

@@ -1,6 +1,9 @@
 package com.sw.ck.bpm.process.service;
 
+import com.sw.ck.bpm.api.participant.ConsensusVotePort;
+import com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
+import com.sw.ck.bpm.process.entity.BpmAuthorizeRule;
 import com.sw.ck.common.response.R;
 
 import java.util.List;
@@ -39,16 +42,16 @@ public interface ApprovalLifecycleService {
     R<Void> revokeAuthorizeRule(Long ruleId, ApprovalActionRequest request);
 
     /** 查询当前用户的代理规则。 */
-    List<com.sw.ck.bpm.process.entity.BpmAuthorizeRule> listAuthorizeRules();
+    List<BpmAuthorizeRule> listAuthorizeRules();
 
     /** 任务存在待处理加签时阻断普通结算。 */
     void assertNoPendingSign(String taskId);
 
     /** 会签投票端口实现（ConsensusVotePort 适配）。 */
-    com.sw.ck.bpm.api.participant.ConsensusVotePort consensusVotePort();
+    ConsensusVotePort consensusVotePort();
 
     /** 任务进入生命周期端口实现（代理匹配 + 时限登记）。 */
-    com.sw.ck.bpm.api.participant.LifecycleTaskEntryPort lifecycleTaskEntryPort();
+    LifecycleTaskEntryPort lifecycleTaskEntryPort();
 
 
     /** 会签负向终局结算（引擎会签监听器回调）。 */

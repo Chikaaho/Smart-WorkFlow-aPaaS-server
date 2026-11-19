@@ -42,18 +42,10 @@ public class PositionDelegateServiceImpl
 
     private static final int POST_STATUS_ENABLED = 1;
 
-    private final SysPostMapper sysPostMapper;
-    private final SysDeptMapper sysDeptMapper;
-
-    public PositionDelegateServiceImpl() {
-        this(null, null);
-    }
-
     @Autowired
-    public PositionDelegateServiceImpl(SysPostMapper sysPostMapper, SysDeptMapper sysDeptMapper) {
-        this.sysPostMapper = sysPostMapper;
-        this.sysDeptMapper = sysDeptMapper;
-    }
+    private SysPostMapper sysPostMapper;
+    @Autowired
+    private SysDeptMapper sysDeptMapper;
 
     @Override
     public PageResult<SysPostDelegate> page(PageParam pageParam, SysPostDelegate query) {

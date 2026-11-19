@@ -5,20 +5,22 @@ import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.bpm.engine.translator.NodeTypeTranslator;
+
 import org.flowable.bpmn.model.FlowElement;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
 
 /** 仅用于真实 Spring 启动失败复现：非法类别。 */
 @Profile("p57-invalid-illegal")
 @Component
 public class P57InvalidExtension implements NodeTypeTranslator {
-    @Override public java.util.Optional<String> type() { return java.util.Optional.of("P57_INVALID"); }
-    @Override public java.util.Optional<BpmNodeMetadata> metadata() {
-        return java.util.Optional.of(new BpmNodeMetadata("非法", "非法节点", "NOT_A_CATEGORY",
+    @Override public Optional<String> type() { return Optional.of("P57_INVALID"); }
+    @Override public Optional<BpmNodeMetadata> metadata() {
+        return Optional.of(new BpmNodeMetadata("非法", "非法节点", "NOT_A_CATEGORY",
                 new BpmNodeTopology(0, 1, 0, 1), List.of(), "invalid",
                 EnumSet.allOf(BpmNodeCapability.class), false, false, true, false));
     }

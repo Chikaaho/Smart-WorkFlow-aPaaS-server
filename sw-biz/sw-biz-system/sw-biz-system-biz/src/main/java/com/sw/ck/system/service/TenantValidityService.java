@@ -1,13 +1,17 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.system.entity.SysTenant;
 import com.sw.ck.system.mapper.SysTenantMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 租户有效性校验服务（I5）。
  * <p>
@@ -26,15 +30,11 @@ import java.time.LocalDateTime;
  * </p>
  */
 @Service
+@Log4j2
 public class TenantValidityService {
 
-    private static final Logger log = LoggerFactory.getLogger(TenantValidityService.class);
-
-    private final SysTenantMapper tenantMapper;
-
-    public TenantValidityService(SysTenantMapper tenantMapper) {
-        this.tenantMapper = tenantMapper;
-    }
+    @Autowired
+    private SysTenantMapper tenantMapper;
 
     /**
      * 校验租户当前是否有效（存在、启用、未过期）。
@@ -47,8 +47,8 @@ public class TenantValidityService {
             return false;
         }
         // sys_tenant 为全局表：登录/装载路径可能尚无租户上下文，读取必须挂起租户过滤
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             SysTenant tenant = tenantMapper.selectGlobalById(tenantId);
             if (tenant == null) {
                 log.warn("租户不存在: tenantId={}", tenantId);

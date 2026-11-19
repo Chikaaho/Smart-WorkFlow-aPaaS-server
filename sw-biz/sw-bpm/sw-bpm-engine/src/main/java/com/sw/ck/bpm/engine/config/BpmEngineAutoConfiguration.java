@@ -1,20 +1,27 @@
 package com.sw.ck.bpm.engine.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverResolver;
 import com.sw.ck.bpm.api.spi.assignee.NodeApproverType;
+import com.sw.ck.bpm.engine.adapter.FormExtDatasourceGrantAdapter;
+import com.sw.ck.bpm.engine.adapter.FormExtDatasourceQueryAdapter;
 import com.sw.ck.bpm.engine.datasource.ExternalDatasourceManager;
 import com.sw.ck.bpm.engine.executor.SqlExecutor;
 import com.sw.ck.bpm.engine.registry.BpmNodeRegistryImpl;
+import com.sw.ck.bpm.engine.resolver.DesignatedApproverResolver;
+import com.sw.ck.bpm.engine.resolver.UnsupportedApproverResolver;
+import com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.bpm.engine.service.SqlExecutionAuditService;
 import com.sw.ck.bpm.engine.translator.GraphToBpmnTranslator;
 import com.sw.ck.bpm.engine.translator.NodeTypeTranslator;
 import com.sw.ck.common.crypto.AesGcmCipher;
+import com.sw.ck.form.api.port.ExtDatasourceGrantPort;
+import com.sw.ck.form.api.port.ExtDatasourceQueryPort;
+
 import org.flowable.spring.boot.ProcessEngineConfigurationConfigurer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -23,12 +30,14 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * BPM 引擎自动配置（Flowable + 外部数据源执行引擎）。
  * <p>
@@ -41,9 +50,8 @@ import java.util.Map;
 @AutoConfigureAfter(name = "com.sw.ck.form.config.FormAutoConfiguration")
 @ConditionalOnProperty(prefix = "sw.bpm", name = "enabled", havingValue = "true")
 @EnableConfigurationProperties({BpmProperties.class, ExternalDatasourceProperties.class})
+@Log4j2
 public class BpmEngineAutoConfiguration {
-
-    private static final Logger log = LoggerFactory.getLogger(BpmEngineAutoConfiguration.class);
 
     public BpmEngineAutoConfiguration(Environment environment) {
         String formEnabled = environment.getProperty("sw.form.enabled");
@@ -90,8 +98,8 @@ public class BpmEngineAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public com.sw.ck.form.api.port.ExtDatasourceQueryPort extDatasourceQueryPort(SqlExecutor sqlExecutor) {
-        return new com.sw.ck.bpm.engine.adapter.FormExtDatasourceQueryAdapter(sqlExecutor);
+    public ExtDatasourceQueryPort extDatasourceQueryPort(SqlExecutor sqlExecutor) {
+        return new FormExtDatasourceQueryAdapter(sqlExecutor);
     }
 
     /**
@@ -99,9 +107,9 @@ public class BpmEngineAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    public com.sw.ck.form.api.port.ExtDatasourceGrantPort extDatasourceGrantPort(
-            com.sw.ck.bpm.engine.service.ExternalDatasourceGrantService grantService) {
-        return new com.sw.ck.bpm.engine.adapter.FormExtDatasourceGrantAdapter(grantService);
+    public ExtDatasourceGrantPort extDatasourceGrantPort(
+            ExternalDatasourceGrantService grantService) {
+        return new FormExtDatasourceGrantAdapter(grantService);
     }
 
     /**
@@ -138,9 +146,9 @@ public class BpmEngineAutoConfiguration {
             List<NodeApproverResolver> resolvers) {
         Map<String, NodeApproverResolver> map = new HashMap<>();
         for (NodeApproverResolver resolver : resolvers) {
-            if (resolver instanceof com.sw.ck.bpm.engine.resolver.DesignatedApproverResolver) {
+            if (resolver instanceof DesignatedApproverResolver) {
                 map.put(NodeApproverType.DESIGNATED, resolver);
-            } else if (resolver instanceof com.sw.ck.bpm.engine.resolver.UnsupportedApproverResolver) {
+            } else if (resolver instanceof UnsupportedApproverResolver) {
                 map.put(NodeApproverType.SCRIPT, resolver);
             }
         }
@@ -165,13 +173,13 @@ public class BpmEngineAutoConfiguration {
     @Bean
     public ProcessEngineConfigurationConfigurer masterDataSourceBinding(
             ObjectProvider<DataSource> dataSourceProvider,
-            ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactionManagerProvider) {
+            ObjectProvider<PlatformTransactionManager> transactionManagerProvider) {
         return config -> {
             DataSource ds = dataSourceProvider.getIfUnique();
             if (ds != null) {
                 config.setDataSource(ds);
             }
-            org.springframework.transaction.PlatformTransactionManager transactionManager =
+            PlatformTransactionManager transactionManager =
                     transactionManagerProvider.getIfUnique();
             if (transactionManager != null) {
                 config.setTransactionManager(transactionManager);

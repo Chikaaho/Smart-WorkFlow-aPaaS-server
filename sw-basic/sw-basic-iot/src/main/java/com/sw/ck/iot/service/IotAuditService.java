@@ -1,5 +1,7 @@
 package com.sw.ck.iot.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.iot.entity.IotAuditRecord;
 import com.sw.ck.iot.mapper.IotAuditRecordMapper;
 import com.sw.ck.security.holder.LoginUser;
@@ -19,11 +21,8 @@ import java.util.UUID;
 @Service
 public class IotAuditService {
 
-    private final IotAuditRecordMapper mapper;
-
-    public IotAuditService(IotAuditRecordMapper mapper) {
-        this.mapper = mapper;
-    }
+    @Autowired
+    private IotAuditRecordMapper mapper;
 
     public IotAuditRecord recordAction(Long tenantId,
                                        Long actorId,

@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.service.ManagementTenantContext;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -14,11 +16,8 @@ import java.util.List;
 @RestController
 @RequestMapping("/system/tenant-context")
 public class TenantContextController {
-    private final ManagementTenantContext context;
-
-    public TenantContextController(ManagementTenantContext context) {
-        this.context = context;
-    }
+    @Autowired
+    private ManagementTenantContext context;
 
     @GetMapping("/current")
     @PreAuthorize("isAuthenticated()")

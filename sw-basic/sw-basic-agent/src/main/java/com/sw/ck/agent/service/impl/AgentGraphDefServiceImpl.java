@@ -5,27 +5,34 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.agent.dto.AgentGraphDefDTO;
+import com.sw.ck.agent.vo.AgentGraphDefVO;
+import com.sw.ck.agent.vo.AgentGraphSnapshotVO;
 import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
+import com.sw.ck.agent.orchestration.AgentGraphInterpreter;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.service.BaseServiceImpl;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Agent 图定义 Service 实现（M07-F02 Step7 图定义 CRUD + 版本 + 发布骨架）。
@@ -58,14 +65,10 @@ public class AgentGraphDefServiceImpl
     private static final int DEFAULT_EXECUTION_TIMEOUT_SECONDS = 300;
     private static final int MAX_EXECUTION_TIMEOUT_SECONDS = 3600;
 
-    private final ObjectMapper objectMapper;
-    private final AgentGraphSnapshotServiceImpl snapshotService;
-
-    public AgentGraphDefServiceImpl(ObjectMapper objectMapper,
-                                    AgentGraphSnapshotServiceImpl snapshotService) {
-        this.objectMapper = objectMapper;
-        this.snapshotService = snapshotService;
-    }
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private AgentGraphSnapshotServiceImpl snapshotService;
 
     // ==================== G3 发布校验 ====================
 
@@ -73,7 +76,7 @@ public class AgentGraphDefServiceImpl
     private void validateHumanNodes(ProcessGraph graph) {
         for (GraphElement element : graph.getElements()) {
             if (!"node".equals(element.getKind())
-                    || !"HUMAN".equals(element.getType())) {
+                    || !AgentGraphInterpreter.NODE_TYPE_HUMAN.equals(element.getType())) {
                 continue;
             }
             Map<String, Object> config = element.getConfig() == null
@@ -86,7 +89,7 @@ public class AgentGraphDefServiceImpl
                 throw new BaseException(CommonErrorCode.PARAM_ERROR,
                         "人工节点必须配置处理人: " + element.getId());
             }
-            java.util.Set<String> fieldNames = new java.util.HashSet<>();
+            Set<String> fieldNames = new HashSet<>();
             if (config.get("fields") instanceof List<?> fields) {
                 for (Object item : fields) {
                     if (!(item instanceof Map<?, ?> field)) continue;
@@ -102,7 +105,7 @@ public class AgentGraphDefServiceImpl
                     }
                 }
             }
-            java.util.Set<String> edgeKeywords = new java.util.HashSet<>();
+            Set<String> edgeKeywords = new HashSet<>();
             for (GraphElement edge : graph.getElements()) {
                 if (!"edge".equals(edge.getKind())
                         || !element.getId().equals(edge.getSource())) continue;
@@ -111,7 +114,7 @@ public class AgentGraphDefServiceImpl
                     edgeKeywords.add(String.valueOf(keyword).trim());
                 }
             }
-            java.util.Set<String> buttonKeywords = new java.util.HashSet<>();
+            Set<String> buttonKeywords = new HashSet<>();
             int buttons = 0;
             if (config.get("buttons") instanceof List<?> list) {
                 for (Object item : list) {
@@ -148,12 +151,12 @@ public class AgentGraphDefServiceImpl
 
     /** 子图节点：引用已发布图、固定版本、无引用环、嵌套深度 ≤ 3。 */
     private void validateSubgraphNodes(ProcessGraph graph, Long currentDefId, int depth,
-                                       java.util.Set<Long> chain) {
-        java.util.Set<Long> nextChain = new java.util.HashSet<>(chain);
+                                       Set<Long> chain) {
+        Set<Long> nextChain = new HashSet<>(chain);
         if (currentDefId != null) nextChain.add(currentDefId);
         for (GraphElement element : graph.getElements()) {
             if (!"node".equals(element.getKind())
-                    || !"SUBGRAPH".equals(element.getType())) {
+                    || !AgentGraphInterpreter.NODE_TYPE_SUBGRAPH.equals(element.getType())) {
                 continue;
             }
             Map<String, Object> config = element.getConfig() == null
@@ -253,7 +256,7 @@ public class AgentGraphDefServiceImpl
     }
 
     @Override
-    public PageResult<AgentGraphDefDTO> pageDefs(PageParam pageParam) {
+    public PageResult<AgentGraphDefVO> pageDefs(PageParam pageParam) {
         LambdaQueryWrapper<AgentGraphDef> wrapper = Wrappers.<AgentGraphDef>lambdaQuery()
                 .orderByDesc(AgentGraphDef::getUpdateTime, AgentGraphDef::getId);
         Page<AgentGraphDef> page = page(new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), wrapper);
@@ -274,7 +277,7 @@ public class AgentGraphDefServiceImpl
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDefDTO publish(Long id) {
+    public AgentGraphDefVO publish(Long id) {
         AgentGraphDef entity = requireEntity(id);
 
         // —— ① 发布门：图可解析且 elements 非空（最小校验，完整拓扑校验留 Step8） ——
@@ -293,7 +296,7 @@ public class AgentGraphDefServiceImpl
 
         // —— ②b G3 节点配置校验：人工节点处理人/按钮/字段，子图引用环与嵌套深度 ——
         validateHumanNodes(graph);
-        validateSubgraphNodes(graph, entity.getId(), 0, new java.util.HashSet<>());
+        validateSubgraphNodes(graph, entity.getId(), 0, new HashSet<>());
 
         // —— ③ 版本递增 + 状态（版本递增取 sw-biz-form 语义：每次发布 +1） ——
         entity.setDefVersion(entity.getDefVersion() == null ? 1 : entity.getDefVersion() + 1);
@@ -307,14 +310,14 @@ public class AgentGraphDefServiceImpl
     }
 
     @Override
-    public java.util.List<com.sw.ck.agent.dto.AgentGraphSnapshotDTO> listVersions(Long id) {
+    public List<AgentGraphSnapshotVO> listVersions(Long id) {
         requireEntity(id);
         return snapshotService.listVersions(id);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public AgentGraphDefDTO updateSettings(Long id, Integer executionTimeoutSecs) {
+    public AgentGraphDefVO updateSettings(Long id, Integer executionTimeoutSecs) {
         if (executionTimeoutSecs == null
                 || executionTimeoutSecs < 1
                 || executionTimeoutSecs > MAX_EXECUTION_TIMEOUT_SECONDS) {
@@ -330,16 +333,16 @@ public class AgentGraphDefServiceImpl
     // ==================== 内部辅助 ====================
 
     @Override
-    public java.util.Optional<Long> resolvePublishedGraphId(String graphKey) {
+    public Optional<Long> resolvePublishedGraphId(String graphKey) {
         if (graphKey == null || graphKey.isBlank()) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         AgentGraphDef entity = baseMapper.selectOne(
                 Wrappers.<AgentGraphDef>lambdaQuery()
                         .eq(AgentGraphDef::getGraphKey, graphKey)
-                        .eq(AgentGraphDef::getStatus, "PUBLISHED")
+                        .eq(AgentGraphDef::getStatus, STATUS_PUBLISHED)
                         .last("LIMIT 1"));
-        return entity == null ? java.util.Optional.empty() : java.util.Optional.of(entity.getId());
+        return entity == null ? Optional.empty() : Optional.of(entity.getId());
     }
 
     /**
@@ -377,7 +380,7 @@ public class AgentGraphDefServiceImpl
         GraphElement startNode = GraphElement.builder()
                 .id(startId)
                 .kind("node")
-                .type("START")
+                .type(AgentGraphInterpreter.NODE_TYPE_START)
                 .style(startStyle)
                 .config(Collections.emptyMap())
                 .build();
@@ -385,7 +388,7 @@ public class AgentGraphDefServiceImpl
         GraphElement endNode = GraphElement.builder()
                 .id(endId)
                 .kind("node")
-                .type("END")
+                .type(AgentGraphInterpreter.NODE_TYPE_END)
                 .style(endStyle)
                 .config(Collections.emptyMap())
                 .build();
@@ -430,8 +433,8 @@ public class AgentGraphDefServiceImpl
         }
     }
 
-    private AgentGraphDefDTO toDTO(AgentGraphDef entity) {
-        AgentGraphDefDTO dto = new AgentGraphDefDTO();
+    private AgentGraphDefVO toDTO(AgentGraphDef entity) {
+        AgentGraphDefVO dto = new AgentGraphDefVO();
         dto.setId(entity.getId());
         dto.setGraphKey(entity.getGraphKey());
         dto.setName(entity.getName());

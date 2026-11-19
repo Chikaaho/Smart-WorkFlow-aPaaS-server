@@ -9,7 +9,7 @@ import com.sw.ck.storage.api.StorageUploadResult;
 import com.sw.ck.storage.entity.StorageFile;
 import com.sw.ck.storage.service.StorageFileService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -29,6 +29,8 @@ import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import com.sw.ck.storage.vo.StorageFileVO;
+import com.sw.ck.common.page.PageConverter;
 
 /**
  * 文件存储 REST 控制器。
@@ -36,7 +38,7 @@ import java.util.Optional;
  * 提供文件上传/下载/删除/列表/详情接口。
  * </p>
  */
-@Slf4j
+@Log4j2
 @RestController
 @RequestMapping("/storage/files")
 @RequiredArgsConstructor
@@ -68,10 +70,11 @@ public class StorageController {
      */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('storage:list')")
-    public R<Page<StorageFile>> list(
+    public R<Page<StorageFileVO>> list(
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "20") long size) {
-        return R.ok(storageFileService.pageFiles(page, size));
+        return R.ok(PageConverter.map(storageFileService.pageFiles(page, size),
+                StorageFileVO::from));
     }
 
     /**
@@ -79,12 +82,12 @@ public class StorageController {
      */
     @GetMapping("/{storageKey}")
     @PreAuthorize("@ss.hasPermi('storage:list')")
-    public R<StorageFile> info(@PathVariable String storageKey) {
+    public R<StorageFileVO> info(@PathVariable String storageKey) {
         StorageFile file = storageFileService.findByStorageKey(storageKey);
         if (file == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "文件不存在");
         }
-        return R.ok(file);
+        return R.ok(StorageFileVO.from(file));
     }
 
     /**

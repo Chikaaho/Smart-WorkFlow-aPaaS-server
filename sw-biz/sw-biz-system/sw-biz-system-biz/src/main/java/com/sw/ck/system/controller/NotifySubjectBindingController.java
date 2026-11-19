@@ -1,16 +1,17 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
+import com.sw.ck.system.vo.NotifySubjectBindingVO;
 import com.sw.ck.system.entity.NotifySubjectBinding;
 import com.sw.ck.system.service.NotifySubjectBindingService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 通知 Provider 主体映射控制器（I6 G5a-I）。
  * <p>绑定/解绑是渠道身份管理动作（notify:channel:manage）。响应只回
@@ -19,15 +20,11 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/notify/subject-bindings")
+@Log4j2
 public class NotifySubjectBindingController {
 
-    private static final Logger log = LoggerFactory.getLogger(NotifySubjectBindingController.class);
-
-    private final NotifySubjectBindingService service;
-
-    public NotifySubjectBindingController(NotifySubjectBindingService service) {
-        this.service = service;
-    }
+    @Autowired
+    private NotifySubjectBindingService service;
 
     /** 绑定请求体（subject 为一次性录入的明文主体，仅在服务端加密后落库）。 */
     public static class BindRequest {
@@ -45,27 +42,25 @@ public class NotifySubjectBindingController {
 
     @PostMapping
     @PreAuthorize("@ss.hasPermi('notify:channel:manage')")
-    public R<Map<String, Object>> bind(@RequestBody BindRequest request) {
+    public R<NotifySubjectBindingVO> bind(@RequestBody BindRequest request) {
         NotifySubjectBinding binding = service.bind(request.getUserId(), request.getProvider(), request.getSubject());
-        return R.ok(Map.of(
-                "id", binding.getId(),
-                "userId", binding.getUserId(),
-                "provider", binding.getProvider(),
-                "subjectDigest", binding.getSubjectDigest(),
-                "bindStatus", binding.getBindStatus()));
+        return R.ok(toDTO(binding));
     }
 
     @GetMapping
     @PreAuthorize("@ss.hasPermi('notify:channel:manage')")
-    public R<List<Map<String, Object>>> list(@RequestParam(required = false) String provider) {
-        return R.ok(service.list(provider).stream()
-                .map(b -> Map.<String, Object>of(
-                        "id", b.getId(),
-                        "userId", b.getUserId(),
-                        "provider", b.getProvider(),
-                        "subjectDigest", b.getSubjectDigest(),
-                        "bindStatus", b.getBindStatus()))
-                .toList());
+    public R<List<NotifySubjectBindingVO>> list(@RequestParam(required = false) String provider) {
+        return R.ok(service.list(provider).stream().map(this::toDTO).toList());
+    }
+
+    private NotifySubjectBindingVO toDTO(NotifySubjectBinding binding) {
+        NotifySubjectBindingVO dto = new NotifySubjectBindingVO();
+        dto.setId(binding.getId());
+        dto.setUserId(binding.getUserId());
+        dto.setProvider(binding.getProvider());
+        dto.setSubjectDigest(binding.getSubjectDigest());
+        dto.setBindStatus(binding.getBindStatus());
+        return dto;
     }
 
     @PostMapping("/{id}/toggle/{enabled}")

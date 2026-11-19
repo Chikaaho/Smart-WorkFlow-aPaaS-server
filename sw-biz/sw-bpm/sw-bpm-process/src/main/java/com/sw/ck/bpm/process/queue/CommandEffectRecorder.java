@@ -1,14 +1,14 @@
 package com.sw.ck.bpm.process.queue;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmCommandEffect;
-import com.sw.ck.bpm.process.entity.CommandStatusEnum;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.mapper.BpmCommandEffectMapper;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 命令效果权威记录器（P62 分级执行与统一命令）。
  * <p>
@@ -34,23 +35,19 @@ import java.util.Objects;
  * </p>
  */
 @Component
+@Log4j2
 public class CommandEffectRecorder {
 
-    private static final Logger log = LoggerFactory.getLogger(CommandEffectRecorder.class);
-
-    private final BpmCommandMapper commandMapper;
-    private final BpmCommandEffectMapper effectMapper;
-
-    public CommandEffectRecorder(BpmCommandMapper commandMapper, BpmCommandEffectMapper effectMapper) {
-        this.commandMapper = commandMapper;
-        this.effectMapper = effectMapper;
-    }
+    @Autowired
+    private BpmCommandMapper commandMapper;
+    @Autowired
+    private BpmCommandEffectMapper effectMapper;
 
     /**
      * 当前事务内校验命令执行权（持锁 + 状态 PROCESSING + 令牌一致）。
      * 不满足即抛出并回滚当前业务事务：旧执行者（租约已回收/转手）不得提交效果。
      */
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void assertLease(Long commandId, String claimToken) {
         BpmCommand locked = commandMapper.lockLeaseById(commandId);
         if (locked == null
@@ -70,7 +67,7 @@ public class CommandEffectRecorder {
      * @param resultJson      权威结果（JSON，与命令完成结果一致）
      * @param bizRef          业务对象引用（记录/任务/批次项，可空）
      */
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void record(Long commandId, String claimToken, String logicalCommandId,
                        String resultJson, String bizRef) {
         assertLease(commandId, claimToken);

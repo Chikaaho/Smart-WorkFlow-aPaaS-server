@@ -10,6 +10,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.awt.Font;
 
 /**
  * 像素级 PNG 验证码渲染器（P45 补充方向 §1：有效验证码挑战）。
@@ -62,7 +63,7 @@ public class PngCaptchaRenderer {
                 // Keep the primary glyph ink on the locked visual token so the
                 // raster evidence can verify the actual image pixels.
                 g.setColor(color(0, 255));
-                g.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.BOLD, rand(22, 28)));
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, rand(22, 28)));
                 double rotation = Math.toRadians(rand(-28, 28));
                 g.rotate(rotation, x, y);
                 g.drawString(String.valueOf(code.charAt(i)), x, y);

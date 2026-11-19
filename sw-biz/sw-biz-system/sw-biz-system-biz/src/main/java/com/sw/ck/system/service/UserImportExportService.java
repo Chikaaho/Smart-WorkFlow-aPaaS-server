@@ -1,5 +1,7 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.exception.BaseException;
@@ -14,7 +16,9 @@ import com.sw.ck.system.mapper.SysDeptMapper;
 import com.sw.ck.system.mapper.SysPostMapper;
 import com.sw.ck.system.mapper.SysRoleMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
-import lombok.extern.slf4j.Slf4j;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import lombok.extern.log4j.Log4j2;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DataFormatter;
@@ -24,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * 人员批量导入导出（1.0.0 F1，P27）。
@@ -51,7 +57,7 @@ import java.util.Set;
  *       列与模板一致并附部门名称等可读列；不导出密码</li>
  * </ul>
  */
-@Slf4j
+@Log4j2
 @Service
 public class UserImportExportService {
 
@@ -73,27 +79,19 @@ public class UserImportExportService {
     private static final int MAX_IMPORT_ROWS = 500;
     private static final long MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 
-    private final SysUserMapper userMapper;
-    private final SysDeptMapper deptMapper;
-    private final SysPostMapper postMapper;
-    private final SysRoleMapper roleMapper;
-    private final SysUserService sysUserService;
-    private final PlatformTransactionManager transactionManager;
+    @Autowired
+    private SysUserMapper userMapper;
+    @Autowired
+    private SysDeptMapper deptMapper;
+    @Autowired
+    private SysPostMapper postMapper;
+    @Autowired
+    private SysRoleMapper roleMapper;
+    @Autowired
+    private SysUserService sysUserService;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
     private final DataFormatter dataFormatter = new DataFormatter();
-
-    public UserImportExportService(SysUserMapper userMapper,
-                                   SysDeptMapper deptMapper,
-                                   SysPostMapper postMapper,
-                                   SysRoleMapper roleMapper,
-                                   SysUserService sysUserService,
-                                   PlatformTransactionManager transactionManager) {
-        this.userMapper = userMapper;
-        this.deptMapper = deptMapper;
-        this.postMapper = postMapper;
-        this.roleMapper = roleMapper;
-        this.sysUserService = sysUserService;
-        this.transactionManager = transactionManager;
-    }
 
     // ==================== 模板 ====================
 
@@ -173,12 +171,12 @@ public class UserImportExportService {
 
         try (TenantLineSuspension.Suspended ignored = TenantLineSuspension.suspended()) {
             Map<String, SysDept> deptByCode = uniqueByCode(
-                    deptMapper.selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers.<SysDept>lambdaQuery()
+                    deptMapper.selectList(Wrappers.<SysDept>lambdaQuery()
                             .eq(SysDept::getTenantId, tenantId).eq(SysDept::getDeleted, 0)),
                     SysDept::getCode, SysDept::getName, "部门编码", errors, warnings);
-            List<SysPost> posts = postMapper.selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers.<SysPost>lambdaQuery()
+            List<SysPost> posts = postMapper.selectList(Wrappers.<SysPost>lambdaQuery()
                     .eq(SysPost::getTenantId, tenantId).eq(SysPost::getDeleted, 0));
-            List<SysRole> roles = roleMapper.selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers.<SysRole>lambdaQuery()
+            List<SysRole> roles = roleMapper.selectList(Wrappers.<SysRole>lambdaQuery()
                     .eq(SysRole::getTenantId, tenantId).eq(SysRole::getDeleted, 0)
                     .ne(SysRole::getCode, "superadmin"));
 
@@ -204,7 +202,7 @@ public class UserImportExportService {
                     continue;
                 }
                 // 库内账号已存在（只新增，不覆盖）
-                Long existed = userMapper.selectCount(com.baomidou.mybatisplus.core.toolkit.Wrappers.<SysUser>lambdaQuery()
+                Long existed = userMapper.selectCount(Wrappers.<SysUser>lambdaQuery()
                         .eq(SysUser::getTenantId, tenantId).eq(SysUser::getUsername, row.username())
                         .eq(SysUser::getDeleted, 0));
                 if (existed != null && existed > 0) {
@@ -219,7 +217,7 @@ public class UserImportExportService {
                         continue;
                     }
                     dupRows.add("row" + n);
-                    Long phoneHits = userMapper.selectCount(com.baomidou.mybatisplus.core.toolkit.Wrappers.<SysUser>lambdaQuery()
+                    Long phoneHits = userMapper.selectCount(Wrappers.<SysUser>lambdaQuery()
                             .eq(SysUser::getTenantId, tenantId).eq(SysUser::getPhone, row.phone())
                             .eq(SysUser::getDeleted, 0));
                     if (phoneHits != null && phoneHits > 0) {
@@ -376,7 +374,7 @@ public class UserImportExportService {
 
     /** 解析工作簿：签名校验 + 表头逐列校验 + 数据行收集；签名/表头不符整体拒绝。 */
     private ParsedSheet parseSheet(byte[] file) {
-        try (XSSFWorkbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(file))) {
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(file))) {
             // 与 FormImportExportService 同款读取：属性缺失时 getProperty 返回 null，
             // NPE 落入下方统一 catch 按“无效模板”拒绝
             String signature = workbook.getProperties().getCustomProperties()
@@ -440,8 +438,8 @@ public class UserImportExportService {
     }
 
     /** 编码 → 实体唯一映射；0/多命中进错误清单（键缺失即未命中）。 */
-    private <T> Map<String, T> uniqueByCode(List<T> entities, java.util.function.Function<T, String> code,
-                                            java.util.function.Function<T, String> name,
+    private <T> Map<String, T> uniqueByCode(List<T> entities, Function<T, String> code,
+                                            Function<T, String> name,
                                             String label, List<RowError> errors, List<String> warnings) {
         Map<String, T> map = new LinkedHashMap<>();
         for (T entity : entities) {

@@ -1,11 +1,18 @@
 package com.sw.ck.iot.api.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.iot.api.DeviceCommandSummary;
 import com.sw.ck.iot.api.IotDeviceFacade;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.service.IotDeviceService;
+
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -19,7 +26,8 @@ import java.util.Optional;
 @Component
 public class IotDeviceFacadeImpl implements IotDeviceFacade {
 
-    private final IotDeviceService iotDeviceService;
+    @Autowired
+    private IotDeviceService iotDeviceService;
 
     @Override
     public Optional<Long> dispatchCommand(String productId, String deviceName,
@@ -41,16 +49,16 @@ public class IotDeviceFacadeImpl implements IotDeviceFacade {
     }
 
     @Override
-    public java.util.Optional<java.util.List<com.sw.ck.iot.api.DeviceCommandSummary>> findByApprovalBizId(
+    public Optional<List<DeviceCommandSummary>> findByApprovalBizId(
             Long tenantId, String approvalBizId) {
         if (approvalBizId == null || approvalBizId.isBlank()) {
-            return java.util.Optional.of(java.util.List.of());
+            return Optional.of(List.of());
         }
         // 跨模块回查按显式租户边界执行（调用方契约传入租户，不依赖线程登录态）
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
-            return java.util.Optional.of(iotDeviceService.findByApprovalBizId(tenantId, approvalBizId).stream()
-                    .map(command -> new com.sw.ck.iot.api.DeviceCommandSummary(
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
+            return Optional.of(iotDeviceService.findByApprovalBizId(tenantId, approvalBizId).stream()
+                    .map(command -> new DeviceCommandSummary(
                             command.getId(), command.getProductId(), command.getDeviceName(),
                             command.getCommandKey(), command.getStatus(), command.getResult(),
                             command.getUpdateTime()))
@@ -58,13 +66,9 @@ public class IotDeviceFacadeImpl implements IotDeviceFacade {
         }
     }
 
-    private final IotDeviceMqttDispatchService mqttDispatchService;
-
-    public IotDeviceFacadeImpl(IotDeviceService iotDeviceService,
-                               @Lazy IotDeviceMqttDispatchService mqttDispatchService) {
-        this.iotDeviceService = iotDeviceService;
-        this.mqttDispatchService = mqttDispatchService;
-    }
+    @Autowired
+    @Lazy
+    private IotDeviceMqttDispatchService mqttDispatchService;
 
     @Override
     public Optional<Long> dispatchByDeviceKey(Long tenantId, String deviceKey, String commandKey,

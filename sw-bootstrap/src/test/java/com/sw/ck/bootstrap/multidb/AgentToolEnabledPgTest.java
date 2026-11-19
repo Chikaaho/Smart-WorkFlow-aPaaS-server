@@ -1,10 +1,11 @@
 package com.sw.ck.bootstrap.multidb;
 
-import com.sw.ck.agent.dto.AgentToolExternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolExternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolExternalConfigQuery;
-import com.sw.ck.agent.dto.AgentToolInternalConfigDTO;
+import com.sw.ck.agent.vo.AgentToolInternalConfigVO;
 import com.sw.ck.agent.dto.AgentToolInternalConfigQuery;
 import com.sw.ck.agent.integration.AgentExternalCapabilityFacade;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.common.integration.ExternalCapability;
 import com.sw.ck.agent.orchestration.AgentToolCallbackFactory;
 import com.sw.ck.agent.service.AgentGraphDebugService;
@@ -14,14 +15,21 @@ import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
+import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -72,7 +80,7 @@ class AgentToolEnabledPgTest {
         props.put("spring.datasource.dynamic.druid.min-idle", "1");
         props.put("spring.datasource.dynamic.druid.max-active", "4");
         props.put("sw.security.jwt.secret", "p66-x1-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p66-x1-digest-secret");
         props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
@@ -84,14 +92,14 @@ class AgentToolEnabledPgTest {
                 .initializers(context -> {
                     context.getEnvironment().setActiveProfiles("dev");
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p66-x1", props));
+                            new MapPropertySource("p66-x1", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p66X1LoginContextProvider", provider);
                 })
                 .run();
@@ -154,9 +162,9 @@ class AgentToolEnabledPgTest {
             internalQuery.setPageNum(1);
             internalQuery.setPageSize(10);
             internalQuery.setEnabled(true);
-            PageResult<AgentToolInternalConfigDTO> internalPage = toolService.pageInternalTools(internalQuery);
+            PageResult<AgentToolInternalConfigVO> internalPage = toolService.pageInternalTools(internalQuery);
             assertThat(internalPage.getRecords())
-                    .extracting(AgentToolInternalConfigDTO::getName)
+                    .extracting(AgentToolInternalConfigVO::getName)
                     .contains("p66_enabled_probe")
                     .doesNotContain("p66_disabled_probe");
 
@@ -164,18 +172,18 @@ class AgentToolEnabledPgTest {
             externalQuery.setPageNum(1);
             externalQuery.setPageSize(10);
             externalQuery.setEnabled(true);
-            PageResult<AgentToolExternalConfigDTO> externalPage = toolService.pageExternalTools(externalQuery);
+            PageResult<AgentToolExternalConfigVO> externalPage = toolService.pageExternalTools(externalQuery);
             assertThat(externalPage.getRecords())
-                    .extracting(AgentToolExternalConfigDTO::getName)
+                    .extracting(AgentToolExternalConfigVO::getName)
                     .contains("p66_ext_probe");
 
             // 9/10：服务层 listEnabled
             assertThat(toolService.listEnabledInternalTools(TENANT))
-                    .extracting(com.sw.ck.agent.entity.tool.AgentToolInternalConfig::getName)
+                    .extracting(AgentToolInternalConfig::getName)
                     .contains("p66_enabled_probe")
                     .doesNotContain("p66_disabled_probe");
             assertThat(toolService.listEnabledExternalTools(TENANT))
-                    .extracting(com.sw.ck.agent.entity.tool.AgentToolExternalConfig::getName)
+                    .extracting(AgentToolExternalConfig::getName)
                     .contains("p66_ext_probe");
 
             // 1/2：表单外部能力门面 listEnabled / findEnabled（requireConfig）
@@ -213,14 +221,4 @@ class AgentToolEnabledPgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

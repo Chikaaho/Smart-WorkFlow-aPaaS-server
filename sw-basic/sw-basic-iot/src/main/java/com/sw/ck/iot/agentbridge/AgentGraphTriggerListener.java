@@ -1,6 +1,10 @@
 package com.sw.ck.iot.agentbridge;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
+
+import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
@@ -9,13 +13,19 @@ import com.sw.ck.iot.event.IotProcessTriggerEvent;
 import com.sw.ck.iot.mapper.IotProcessTriggerMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotTriggerActionTypeEnum;
+import com.sw.ck.iot.entity.IotTriggerStatusEnum;
+import com.sw.ck.agent.orchestration.AgentExecutionOutcomeEnum;
 /**
  * IoT 规则 → Agent 图执行桥（0.2.4）。
  * <p>
@@ -27,30 +37,23 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * </p>
  */
 @Component
+@Log4j2
 public class AgentGraphTriggerListener {
 
-    private static final Logger log = LoggerFactory.getLogger(AgentGraphTriggerListener.class);
-
-    private final ObjectProvider<AgentGraphDefService> graphDefServiceProvider;
-    private final ObjectProvider<AgentGraphExecutionLifecycleService> lifecycleServiceProvider;
-    private final IotProcessTriggerMapper triggerMapper;
-    private final TenantWorkAdmission tenantWorkAdmission;
-
-    public AgentGraphTriggerListener(ObjectProvider<AgentGraphDefService> graphDefServiceProvider,
-                                     ObjectProvider<AgentGraphExecutionLifecycleService> lifecycleServiceProvider,
-                                     IotProcessTriggerMapper triggerMapper,
-                                     TenantWorkAdmission tenantWorkAdmission) {
-        this.graphDefServiceProvider = graphDefServiceProvider;
-        this.lifecycleServiceProvider = lifecycleServiceProvider;
-        this.triggerMapper = triggerMapper;
-        this.tenantWorkAdmission = tenantWorkAdmission;
-    }
+    @Autowired
+    private ObjectProvider<AgentGraphDefService> graphDefServiceProvider;
+    @Autowired
+    private ObjectProvider<AgentGraphExecutionLifecycleService> lifecycleServiceProvider;
+    @Autowired
+    private IotProcessTriggerMapper triggerMapper;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @org.springframework.transaction.annotation.Transactional(
-            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    @Transactional(
+            propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public void onIotTrigger(IotProcessTriggerEvent event) {
-        if (event == null || !"AGENT".equals(event.getActionType())) {
+        if (event == null || !IotTriggerActionTypeEnum.AGENT.getCode().equals(event.getActionType())) {
             return;
         }
         if (event.getTenantId() == null
@@ -94,16 +97,16 @@ public class AgentGraphTriggerListener {
         // 幂等键（生命周期上限 100 字符）：以触发记录 id 派生紧凑稳定键——同一触发
         // （含恢复调度重投）提交同一执行；触发记录自身的长幂等键仍由 IoT 侧唯一约束保证
         String submitKey = "iotag-" + event.getTriggerId();
-        com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO accepted =
+        AgentGraphExecutionAcceptedVO accepted =
                 lifecycleService.submit(graphDefId, input, submitKey);
         IotProcessTrigger patch = new IotProcessTrigger();
         patch.setId(event.getTriggerId());
         patch.setAgentExecutionId(accepted.getExecutionId());
         patch.setStatus("PROCESSING");
         int updated = triggerMapper.update(patch,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
+                Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .eq(IotProcessTrigger::getId, event.getTriggerId())
-                        .eq(IotProcessTrigger::getStatus, "PENDING"));
+                        .eq(IotProcessTrigger::getStatus, IotTriggerStatusEnum.PENDING.getCode()));
         log.info("IoT 触发 Agent 执行已受理: graphKey={}, executionId={}, triggerId={}, 首次写回={}",
                 event.getAgentGraphKey(), accepted.getExecutionId(), event.getTriggerId(), updated == 1);
     }
@@ -112,11 +115,11 @@ public class AgentGraphTriggerListener {
         String safe = error.length() <= 480 ? error : error.substring(0, 480);
         IotProcessTrigger patch = new IotProcessTrigger();
         patch.setId(event.getTriggerId());
-        patch.setStatus("FAILED");
+        patch.setStatus(AgentExecutionOutcomeEnum.FAILED.getCode());
         patch.setError(safe);
         triggerMapper.update(patch,
-                com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotProcessTrigger>lambdaUpdate()
+                Wrappers.<IotProcessTrigger>lambdaUpdate()
                         .eq(IotProcessTrigger::getId, event.getTriggerId())
-                        .eq(IotProcessTrigger::getStatus, "PENDING"));
+                        .eq(IotProcessTrigger::getStatus, IotTriggerStatusEnum.PENDING.getCode()));
     }
 }

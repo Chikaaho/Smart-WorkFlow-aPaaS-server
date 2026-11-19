@@ -1,15 +1,20 @@
 package com.sw.ck.system.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.jdbc.JdbcMaps;
 import com.sw.ck.system.api.dept.DeptDirectoryRow;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.mapper.SysDeptMapper;
+
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,11 +36,8 @@ public class DeptFacadeImpl implements DeptQueryFacade {
     /** 部门状态：0=正常 1=停用（对齐 sys_dept.status 口径） */
     private static final int STATUS_ACTIVE = 0;
 
-    private final SysDeptMapper sysDeptMapper;
-
-    public DeptFacadeImpl(SysDeptMapper sysDeptMapper) {
-        this.sysDeptMapper = sysDeptMapper;
-    }
+    @Autowired
+    private SysDeptMapper sysDeptMapper;
 
     @Override
     public Optional<List<Long>> findActiveDeptIds(Collection<Long> ids) {
@@ -73,7 +75,7 @@ public class DeptFacadeImpl implements DeptQueryFacade {
                 .select(SysDept::getId, SysDept::getName)
                 .in(SysDept::getId, ids)
                 .eq(SysDept::getStatus, STATUS_ACTIVE));
-        Map<Long, String> result = new java.util.LinkedHashMap<>();
+        Map<Long, String> result = new LinkedHashMap<>();
         for (SysDept dept : depts) {
             if (dept.getId() != null && dept.getName() != null) {
                 result.put(dept.getId(), dept.getName());
@@ -88,10 +90,10 @@ public class DeptFacadeImpl implements DeptQueryFacade {
             // 缺少查询上下文：查询未执行
             return Optional.empty();
         }
-        List<java.util.Map<String, Object>> rows =
+        List<Map<String, Object>> rows =
                 JdbcMaps.caseInsensitiveKeys(sysDeptMapper.selectDeptDirectory(tenantId));
         List<DeptDirectoryRow> directory = new ArrayList<>(rows.size());
-        for (java.util.Map<String, Object> row : rows) {
+        for (Map<String, Object> row : rows) {
             Long deptId = asLong(row.get("dept_id"));
             if (deptId == null) {
                 continue;

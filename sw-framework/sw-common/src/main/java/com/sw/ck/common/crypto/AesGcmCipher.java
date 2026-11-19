@@ -6,6 +6,7 @@ import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.nio.charset.StandardCharsets;
 
 /**
  * AES-256-GCM 对称加密工具，用于外部数据源凭据加密。
@@ -80,7 +81,7 @@ public final class AesGcmCipher {
 
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.ENCRYPT_MODE, secretKey, new GCMParameterSpec(TAG_LENGTH, iv));
-            byte[] ciphertext = cipher.doFinal(plainText.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] ciphertext = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
 
             // IV + ciphertext 拼接后 Base64 编码
             byte[] combined = new byte[IV_LENGTH + ciphertext.length];
@@ -120,7 +121,7 @@ public final class AesGcmCipher {
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(TAG_LENGTH, iv));
             byte[] plainBytes = cipher.doFinal(ciphertext);
-            return new String(plainBytes, java.nio.charset.StandardCharsets.UTF_8);
+            return new String(plainBytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new RuntimeException("AES-GCM decryption failed", e);
         }

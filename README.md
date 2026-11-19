@@ -123,58 +123,48 @@ docker run -d --name sw-redis -p 6379:6379 redis:7
 
 ### 3. 本地配置
 
-新建 `sw-bootstrap/src/main/resources/application-local.yml`（已被忽略，不会误提交）：
+`sw-bootstrap/src/main/resources/application-local.yml` 已入库，就是可用的本地模板。按本机环境改这几处即可：
 
 ```yaml
 spring:
-  autoconfigure:
-    exclude:
-      # 排除 Spring AI 的自动向量存储，改由应用自行管理
-      - org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration
-  ai:
-    openai:
-      api-key: sk-your-openai-api-key
   datasource:
     dynamic:
       datasource:
         master:
-          url: jdbc:postgresql://127.0.0.1:5432/smart_workflow
-          username: postgres
-          password: 你的数据库口令
+          url: jdbc:postgresql://localhost:5432/smart_workflow_021
+          username: chikan
+          password: ""
   data:
     redis:
-      host: 127.0.0.1
-      port: 6379
-
-sw:
-  form:
-    enabled: true
-  bpm:
-    enabled: true
-  storage:
-    active-provider: local
+      host: localhost
+      port: 6399
 ```
 
-再生成几个本地开发用的随机密钥：
+登录口令加密用的 RSA 私钥不进配置也不进仓库，配置里只有文件路径。先生成一份：
 
 ```bash
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048   # 登录口令加密私钥（PKCS#8 PEM）
-openssl rand -base64 32    # SW_CIPHER_KEY、SW_SSO_CIPHER_KEY（各生成一份）
-openssl rand -base64 24    # SW_LOGIN_DIGEST_SECRET
-openssl rand -base64 32    # JWT_SECRET
+mkdir -p "$HOME/.smart-workflow"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$HOME/.smart-workflow/login-rsa.pem"
 ```
+
+`sw.security.login.rsa-private-key-file` 默认指向 `$HOME/.smart-workflow/login-rsa.pem`，放在别处时用环境变量覆盖：
+
+```bash
+export SW_LOGIN_RSA_PRIVATE_KEY_FILE=/你的路径/login-rsa.pem
+```
+
+`digest-secret`、`cipher-key` 等本地开发值已写在文件里，本机启动不需要额外注入。
 
 ### 4. 启动
 
 ```bash
-SW_LOGIN_RSA_PRIVATE_KEY="$(cat dev-login.key)" \
-SW_LOGIN_DIGEST_SECRET="上一步生成" \
-SW_CIPHER_KEY="上一步生成" \
-SW_SSO_CIPHER_KEY="上一步生成" \
-JWT_SECRET="上一步生成" \
-SPRING_PROFILES_ACTIVE=local \
-java -jar sw-bootstrap/target/bootstrap.jar
+SPRING_PROFILES_ACTIVE=local java -jar sw-bootstrap/target/bootstrap.jar
 ```
+
+需要覆盖某项配置时按 Spring 的环境变量写法注入即可，例如 `JWT_SECRET=...`、`SW_CIPHER_KEY=...`。
+
+生产同样只提供私钥文件路径：把私钥文件挂载到只读卷（如 `/etc/smart-workflow/login-rsa.pem`），
+由 `SW_LOGIN_RSA_PRIVATE_KEY_FILE` 指向它，配置文件中不出现私钥本体。
 
 - 默认地址 `http://127.0.0.1:8080`，健康检查 `http://127.0.0.1:8080/api/actuator/health` 返回 `{"status":"UP"}`。
 - 端口被占用时在 `application-local.yml` 加 `server.port: 18080`。

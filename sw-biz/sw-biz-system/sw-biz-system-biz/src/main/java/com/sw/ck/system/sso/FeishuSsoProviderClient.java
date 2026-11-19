@@ -4,13 +4,12 @@ import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 飞书 SSO Provider 实现（I5）。
  * <p>
@@ -20,9 +19,8 @@ import java.util.Map;
  * （租户内稳定主体标识）。
  * </p>
  */
+@Log4j2
 public class FeishuSsoProviderClient implements SsoProviderClient {
-
-    private static final Logger log = LoggerFactory.getLogger(FeishuSsoProviderClient.class);
 
     private static final String AUTHORIZE_URL = "https://open.feishu.cn/open-apis/authen/v1/authorize";
     private static final String TOKEN_URL = "https://accounts.feishu.cn/oauth/v3/token";
@@ -183,7 +181,6 @@ public class FeishuSsoProviderClient implements SsoProviderClient {
             return null;
         }
     }
-
 
     private String urlEncode(String value) {
         return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);

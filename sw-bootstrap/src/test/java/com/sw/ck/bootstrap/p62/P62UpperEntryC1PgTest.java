@@ -2,23 +2,31 @@ package com.sw.ck.bootstrap.p62;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.process.queue.CommandDispatcher;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.txn.model.C1PolicyModel;
 import com.sw.ck.form.txn.service.C1PolicyService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.jwt.JwtTokenProvider;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.lang.reflect.Method;
@@ -28,12 +36,16 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -89,7 +101,7 @@ class P62UpperEntryC1PgTest {
     void boot() throws Exception {
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -97,12 +109,12 @@ class P62UpperEntryC1PgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p62-upper-entry-jwt-secret-0123456789abcdef0123456789");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-upper-entry-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         // 自动轮询车道静默（首触发在 1 小时后）：消费者由测试直驱，避免与断言竞态；其余参数保持生产语义
         props.put("sw.bpm.command.poll-interval-millis", "3600000");
         props.put("sw.bpm.command.p0-poll-interval-millis", "3600000");
@@ -110,21 +122,21 @@ class P62UpperEntryC1PgTest {
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-upper-entry", props));
+                            new MapPropertySource("p62-upper-entry", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62UpperEntryLoginContextProvider", provider);
                 })
                 .run();
         jdbc = app.getBean(JdbcTemplate.class);
         objectMapper = app.getBean(ObjectMapper.class);
         dispatcher = app.getBean(CommandDispatcher.class);
-        int port = ((org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext) app)
+        int port = ((ServletWebServerApplicationContext) app)
                 .getWebServer().getPort();
         baseUrl = "http://127.0.0.1:" + port + "/api";
         token = app.getBean(JwtTokenProvider.class).generateToken(USER_ID);
@@ -269,14 +281,14 @@ class P62UpperEntryC1PgTest {
 
     private void seed() {
         protectedFormId = asTenant(TENANT, USER_ID, () -> {
-            FormDefDTO draft = formDefService().createDraft(PROTECTED_KEY, "P62上层入口受保护表", null, null);
+            FormDefVO draft = formDefService().createDraft(PROTECTED_KEY, "P62上层入口受保护表", null, null);
             formDefService().saveConfig(draft.getId(), stockDefinition());
             formDefService().publish(draft.getId());
             return draft.getId();
         });
         protectedTable = asTenant(TENANT, USER_ID, () -> formDefService().getFormDefByKey(PROTECTED_KEY).getPhysicalTableName());
         asTenant(TENANT, USER_ID, () -> {
-            FormDefDTO draft = formDefService().createDraft(PLAIN_KEY, "P62上层入口未保护表", null, null);
+            FormDefVO draft = formDefService().createDraft(PLAIN_KEY, "P62上层入口未保护表", null, null);
             formDefService().saveConfig(draft.getId(), stockDefinition());
             formDefService().publish(draft.getId());
             return draft.getId();
@@ -392,8 +404,8 @@ class P62UpperEntryC1PgTest {
     }
 
     private static String hmacSha256Hex(String secret, String material) throws Exception {
-        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-        mac.init(new javax.crypto.spec.SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
         return HexFormat.of().formatHex(mac.doFinal(material.getBytes(StandardCharsets.UTF_8)));
     }
 
@@ -425,14 +437,4 @@ class P62UpperEntryC1PgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

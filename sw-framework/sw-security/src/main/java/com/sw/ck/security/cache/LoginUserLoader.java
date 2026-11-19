@@ -3,8 +3,11 @@ package com.sw.ck.security.cache;
 import com.sw.ck.security.exception.SecurityInfrastructureException;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.spi.UserDetailsProvider;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
+
+import java.util.Objects;
 
 /**
  * 登录上下文「装载 + 缓存」骨架：缓存命中仍校验实时准入；未命中回查 {@link UserDetailsProvider}
@@ -33,7 +36,7 @@ public class LoginUserLoader {
         }
         LoginUser cached = loginUserCacheService.get(userId);
         if (cached != null) {
-            if (!java.util.Objects.equals(userId, cached.getUserId())
+            if (!Objects.equals(userId, cached.getUserId())
                     || !userDetailsProvider.isCachedIdentityValid(cached)) {
                 loginUserCacheService.evict(userId);
                 return null;

@@ -3,6 +3,7 @@ package com.sw.ck.iot;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.api.IotCommandReservationFacade.IotReservationView;
+import com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget;
 import com.sw.ck.iot.entity.IotCommandReservation;
 import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.job.IotReservationDispatchJob;
@@ -12,16 +13,26 @@ import com.sw.ck.iot.service.CommandQueueService;
 import com.sw.ck.iot.service.IotDeviceService;
 import com.sw.ck.iot.service.impl.IotCommandReservationFacadeImpl;
 import com.sw.ck.iot.util.DeferredControlUtil;
+import com.sw.ck.common.tenant.TenantWorkAdmission;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,27 +52,53 @@ class P63IotReservationTest {
     private IotCommandReservationFacade facade;
     private TransactionTemplate txTemplate;
 
-    @org.junit.jupiter.api.BeforeAll
+    @BeforeAll
     static void initTableInfo() {
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 IotCommandReservation.class);
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new com.baomidou.mybatisplus.core.MybatisConfiguration(), ""),
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(
+                        new MybatisConfiguration(), ""),
                 IotDeviceCommand.class);
     }
 
     @BeforeEach
     void setUp() {
         reservationMapper = mock(IotCommandReservationMapper.class);
-        facade = new IotCommandReservationFacadeImpl(reservationMapper, mock(IotDeviceService.class), java.time.Clock.systemUTC());
+        // 生产类已统一 @Autowired 字段注入（d53c7fb6）：经反射逐字段装配，
+        // 与原构造注入等价（mapper + 放行 validatePublishedFunction 的设备服务 + UTC 钟）。
+        facade = new IotCommandReservationFacadeImpl();
+        ReflectionTestUtils.setField(facade, "mapper", reservationMapper);
+        ReflectionTestUtils.setField(facade, "deviceService", mock(IotDeviceService.class));
+        ReflectionTestUtils.setField(facade, "clock", Clock.systemUTC());
         // mock insert 回填生成主键（真实链路由数据库/ID 生成器填充）
         when(reservationMapper.insert(any(IotCommandReservation.class))).thenAnswer(inv -> {
             inv.getArgument(0, IotCommandReservation.class).setId(99L);
             return 1;
         });
+    }
+
+    /**
+     * 生产类已统一 @Autowired 字段注入（d53c7fb6）：dispatch job 经反射逐字段装配，
+     * 与原构造参数一一对应（sender 传 null 即 provider 未装配态）。
+     */
+    private IotReservationDispatchJob job(IotCommandReservationMapper mapper,
+                                          IotDeviceCommandMapper commandMapper,
+                                          IotDeviceService deviceService,
+                                          DeferredControlUtil sender,
+                                          CommandQueueService queue,
+                                          TenantWorkAdmission admission) {
+        IotReservationDispatchJob job = new IotReservationDispatchJob();
+        ReflectionTestUtils.setField(job, "reservationMapper", mapper);
+        ReflectionTestUtils.setField(job, "commandMapper", commandMapper);
+        ReflectionTestUtils.setField(job, "deviceService", deviceService);
+        ReflectionTestUtils.setField(job, "senderProvider", provider(sender));
+        ReflectionTestUtils.setField(job, "commandQueueService", queue);
+        ReflectionTestUtils.setField(job, "clock", Clock.systemUTC());
+        ReflectionTestUtils.setField(job, "tenantWorkAdmission", admission);
+        return job;
     }
 
     private IotReservationIntent intent(LocalDateTime dueUtc) {
@@ -109,7 +146,7 @@ class P63IotReservationTest {
         when(reservationMapper.selectByInstance(100L, "pi-1")).thenReturn(null);
         AtomicReference<IotCommandReservation> row = new AtomicReference<>();
         inTx(() -> {
-            createIntent(LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(2));
+            createIntent(LocalDateTime.now(ZoneOffset.UTC).minusHours(2));
             ArgumentCaptor<IotCommandReservation> captor = ArgumentCaptor.forClass(IotCommandReservation.class);
             verify(reservationMapper).insert(captor.capture());
             row.set(captor.getValue());
@@ -144,8 +181,8 @@ class P63IotReservationTest {
         IotCommandReservation due = duePendingRow();
         when(mapper.selectExpiredPending(any())).thenReturn(List.of());
         when(mapper.selectDuePending(any(), any())).thenReturn(List.of(due));
-        var job = new IotReservationDispatchJob(mapper, commands, devices, provider(sender), queue,
-                java.time.Clock.systemUTC(), (tenantId, claim) -> 0);
+        // 租户停用：认领边界恒返回 0，预约留 PENDING，零设备调用
+        var job = job(mapper, commands, devices, sender, queue, (tenantId, claim) -> 0);
         job.dispatchDueReservations();
         verify(mapper, never()).update(isNull(), any());
         verifyNoInteractions(commands, devices, sender, queue);
@@ -171,12 +208,12 @@ class P63IotReservationTest {
                 .thenReturn(command);
         // P63 G03a 修正后契约：到点一律按 deviceKey+租户权威重解析执行目标
         when(deviceService.resolveDeviceTargetByKey(100L, "dev-key-1"))
-                .thenReturn(new com.sw.ck.iot.api.IotDeviceFacade.DeviceTarget("dev-key-1", "P63PROD", "dev-key-1"));
+                .thenReturn(new DeviceTarget("dev-key-1", "P63PROD", "dev-key-1"));
         when(commandMapper.selectById(555L)).thenReturn(command);
         when(commandMapper.update(isNull(), any())).thenReturn(1);
 
-        IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(sender), queueService, java.time.Clock.systemUTC(), (tenantId, claim) -> claim.getAsInt());
+        IotReservationDispatchJob job = job(mapper, commandMapper, deviceService, sender,
+                queueService, (tenantId, claim) -> claim.getAsInt());
         job.dispatchDueReservations();
 
         // P63 修复后契约：job 不再预占 SENDING（预占会让共享发送路径 markSending 撞状态判死），
@@ -184,7 +221,7 @@ class P63IotReservationTest {
         verify(commandMapper, times(1)).update(isNull(), any());
         verify(sender, times(1)).sendCommand(argThat(cmd -> cmd != null && "QUEUED".equals(cmd.getStatus())));
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(
-                (com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<?>) wrapper, "DISPATCHED")));
+                (LambdaUpdateWrapper<?>) wrapper, "DISPATCHED")));
         assertThat(due.getCommandId()).isNull(); // patch 经 wrapper 落库，实体断言以 wrapper 为准
     }
 
@@ -202,12 +239,12 @@ class P63IotReservationTest {
         when(mapper.selectDuePending(any(), any())).thenReturn(List.of(due));
         when(mapper.update(isNull(), any())).thenReturn(1);
 
-        IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(null), queueService, java.time.Clock.systemUTC(), (tenantId, claim) -> claim.getAsInt());
+        IotReservationDispatchJob job = job(mapper, commandMapper, deviceService, null,
+                queueService, (tenantId, claim) -> claim.getAsInt());
         job.dispatchDueReservations();
 
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(
-                (com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<?>) wrapper, "FAILED")));
+                (LambdaUpdateWrapper<?>) wrapper, "FAILED")));
         verify(deviceService, never()).dispatchCommandIdempotent(any(), any(), any(), any(), any(), any(), any());
     }
 
@@ -218,18 +255,18 @@ class P63IotReservationTest {
         IotDeviceService deviceService = mock(IotDeviceService.class);
         CommandQueueService queueService = mock(CommandQueueService.class);
         IotCommandReservation overdue = duePendingRow();
-        overdue.setDueAtUtc(LocalDateTime.now(java.time.ZoneOffset.UTC).minusHours(3));
+        overdue.setDueAtUtc(LocalDateTime.now(ZoneOffset.UTC).minusHours(3));
         IotCommandReservationMapper mapper = mock(IotCommandReservationMapper.class);
         when(mapper.selectExpiredPending(any())).thenReturn(List.of(overdue));
         when(mapper.selectDuePending(any(), any())).thenReturn(List.of());
         when(mapper.update(isNull(), any())).thenReturn(1);
 
-        IotReservationDispatchJob job = new IotReservationDispatchJob(mapper, commandMapper,
-                deviceService, provider(null), queueService, java.time.Clock.systemUTC(), (tenantId, claim) -> claim.getAsInt());
+        IotReservationDispatchJob job = job(mapper, commandMapper, deviceService, null,
+                queueService, (tenantId, claim) -> claim.getAsInt());
         job.dispatchDueReservations();
 
         verify(mapper).update(isNull(), argThat(wrapper -> wrapperSets(
-                (com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<?>) wrapper, "EXPIRED")));
+                (LambdaUpdateWrapper<?>) wrapper, "EXPIRED")));
         verify(deviceService, never()).dispatchCommandIdempotent(any(), any(), any(), any(), any(), any(), any());
     }
 
@@ -255,7 +292,7 @@ class P63IotReservationTest {
         row.setCommandKey("power_off");
         row.setCommandType("PROPERTY");
         row.setPayload("{}");
-        row.setDueAtUtc(LocalDateTime.now(java.time.ZoneOffset.UTC).minusSeconds(5));
+        row.setDueAtUtc(LocalDateTime.now(ZoneOffset.UTC).minusSeconds(5));
         row.setLateWindowSeconds(60);
         return row;
     }
@@ -273,7 +310,7 @@ class P63IotReservationTest {
     }
 
     /** LambdaUpdateWrapper 的 set 值检查（toString 不含字面值，检查参数值表）。 */
-    private boolean wrapperSets(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<?> wrapper,
+    private boolean wrapperSets(LambdaUpdateWrapper<?> wrapper,
                                 String needle) {
         return wrapper.getParamNameValuePairs().values().stream()
                 .anyMatch(value -> String.valueOf(value).contains(needle));

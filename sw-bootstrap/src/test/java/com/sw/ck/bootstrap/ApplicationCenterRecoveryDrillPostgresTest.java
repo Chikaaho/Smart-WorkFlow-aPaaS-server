@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -15,7 +16,9 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -144,7 +147,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         //   ①升级前每个菜单 id 都还在（一条不少）；②无重复 id；③总数=升级前+新增数（动态）。
         List<Long> menuIdsAfter = queryLongs("SELECT id FROM sys_menu");
         assertTrue(menuIdsAfter.containsAll(menuIdsBefore), "升级后升级前的每个菜单 id 都应保留");
-        assertEquals(menuIdsAfter.size(), new java.util.HashSet<>(menuIdsAfter).size(),
+        assertEquals(menuIdsAfter.size(), new HashSet<>(menuIdsAfter).size(),
                 "升级后菜单 id 不得重复");
         long menuIdsAdded = menuIdsAfter.stream().filter(id -> !menuIdsBefore.contains(id)).count();
         assertEquals(menusBefore + menuIdsAdded, menuIdsAfter.size(),
@@ -212,7 +215,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
 
     /** 主链各位置版本化迁移（V&lt;version&gt;__*.sql）版本，按 Flyway 版本序升序。 */
     private static List<String> classpathVersions() throws Exception {
-        List<String> versions = new java.util.ArrayList<>();
+        List<String> versions = new ArrayList<>();
         var loader = ApplicationCenterRecoveryDrillPostgresTest.class.getClassLoader();
         for (String location : pgLocations()) {
             var resources = loader.getResources(location.replace("classpath:", ""));
@@ -413,7 +416,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
         try (Connection conn = DriverManager.getConnection(dbUrl, dbUser, dbPassword);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
-            List<Long> values = new java.util.ArrayList<>();
+            List<Long> values = new ArrayList<>();
             while (rs.next()) {
                 values.add(rs.getLong(1));
             }
@@ -446,7 +449,7 @@ class ApplicationCenterRecoveryDrillPostgresTest {
             if (in == null) {
                 throw new IllegalStateException("发布资产缺失: " + resource);
             }
-            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 

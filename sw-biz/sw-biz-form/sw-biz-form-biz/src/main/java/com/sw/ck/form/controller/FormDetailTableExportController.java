@@ -1,8 +1,8 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.form.service.FormDetailTableExportService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 明细表导出入口（1.0.0 F2-6）。
  * <p>
@@ -25,15 +26,11 @@ import java.nio.charset.StandardCharsets;
  */
 @RestController
 @RequestMapping("/form/data")
+@Log4j2
 public class FormDetailTableExportController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormDetailTableExportController.class);
-
-    private final FormDetailTableExportService exportService;
-
-    public FormDetailTableExportController(FormDetailTableExportService exportService) {
-        this.exportService = exportService;
-    }
+    @Autowired
+    private FormDetailTableExportService exportService;
 
     @PreAuthorize("@ss.hasPermi('form:data:query')")
     @GetMapping("/{formKey}/{recordId}/tables/{fieldName}/export")

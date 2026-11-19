@@ -15,10 +15,15 @@ import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotProduct;
 import com.sw.ck.iot.entity.IotThingModel;
 import com.sw.ck.iot.entity.IotTopic;
+import com.sw.ck.iot.entity.IotCommand;
+import com.sw.ck.iot.entity.IotEventRecord;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
@@ -28,7 +33,6 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
-
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
@@ -161,15 +165,15 @@ class JavaSubprocessSandboxTest {
         when(mqttBrokerManager.publish(eq(10L), eq("owner/p21/down/cmd"), eq("JAVA:21"), eq(1), eq(false)))
                 .thenReturn(Map.of("brokerAck", true, "messageId", 11));
         doAnswer(invocation -> {
-            com.sw.ck.iot.entity.IotCommand command = invocation.getArgument(0);
+            IotCommand command = invocation.getArgument(0);
             command.setId(command.getCapabilityType().equals("INVOKE_ACTION") ? 100L : 101L);
             return 1;
-        }).when(commandMapper).insert(any(com.sw.ck.iot.entity.IotCommand.class));
+        }).when(commandMapper).insert(any(IotCommand.class));
         doAnswer(invocation -> {
-            com.sw.ck.iot.entity.IotEventRecord event = invocation.getArgument(0);
+            IotEventRecord event = invocation.getArgument(0);
             event.setId(102L);
             return 1;
-        }).when(eventRecordMapper).insert(any(com.sw.ck.iot.entity.IotEventRecord.class));
+        }).when(eventRecordMapper).insert(any(IotEventRecord.class));
 
         String source = HEADER + """
                     Map<String, Object> action = api.funInvokeAction(42L, "reset", Map.of("seq", "21"), null);
@@ -191,14 +195,14 @@ class JavaSubprocessSandboxTest {
 
         assertEquals("SUCCESS", result.getStatus(), () -> "error=" + result.getError());
         assertTrue(result.getOutputJson().contains("java-chain-correlation"));
-        org.mockito.ArgumentCaptor<com.sw.ck.iot.entity.IotCommand> commandCaptor =
-                org.mockito.ArgumentCaptor.forClass(com.sw.ck.iot.entity.IotCommand.class);
-        org.mockito.Mockito.verify(commandMapper, org.mockito.Mockito.times(2)).insert(commandCaptor.capture());
+        ArgumentCaptor<IotCommand> commandCaptor =
+                ArgumentCaptor.forClass(IotCommand.class);
+        Mockito.verify(commandMapper, Mockito.times(2)).insert(commandCaptor.capture());
         assertTrue(commandCaptor.getAllValues().stream()
                 .allMatch(command -> "java-chain-correlation".equals(command.getCorrelationId())));
-        org.mockito.ArgumentCaptor<com.sw.ck.iot.entity.IotEventRecord> eventCaptor =
-                org.mockito.ArgumentCaptor.forClass(com.sw.ck.iot.entity.IotEventRecord.class);
-        org.mockito.Mockito.verify(eventRecordMapper).insert(eventCaptor.capture());
+        ArgumentCaptor<IotEventRecord> eventCaptor =
+                ArgumentCaptor.forClass(IotEventRecord.class);
+        Mockito.verify(eventRecordMapper).insert(eventCaptor.capture());
         assertEquals("java-chain-correlation", eventCaptor.getValue().getCorrelationId());
     }
 

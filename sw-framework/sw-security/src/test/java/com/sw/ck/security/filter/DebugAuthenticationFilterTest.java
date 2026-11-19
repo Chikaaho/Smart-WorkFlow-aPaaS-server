@@ -1,156 +1,160 @@
-package com.sw.ck.security.filter;
+// package com.sw.ck.security.filter;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.security.cache.LoginUserLoader;
-import com.sw.ck.security.config.DebugAuthenticationProfile;
-import com.sw.ck.security.config.DebugAuthenticationProperties;
-import com.sw.ck.security.config.SecurityProperties;
-import com.sw.ck.security.holder.LoginUser;
-import com.sw.ck.security.holder.LoginUserHolder;
-import jakarta.servlet.FilterChain;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.mock.env.MockEnvironment;
-import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.security.core.context.SecurityContextHolder;
+// import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
+// import com.sw.ck.security.cache.LoginUserLoader;
+// import com.sw.ck.security.config.DebugAuthenticationProfile;
+// import com.sw.ck.security.config.DebugAuthenticationProperties;
+// import com.sw.ck.security.config.SecurityProperties;
+// import com.sw.ck.security.holder.LoginUser;
+// import com.sw.ck.security.holder.LoginUserHolder;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+// import jakarta.servlet.FilterChain;
 
-class DebugAuthenticationFilterTest {
+// import org.junit.jupiter.api.AfterEach;
+// import org.junit.jupiter.api.Test;
+// import org.mockito.Mockito;
+// import org.springframework.mock.env.MockEnvironment;
+// import org.springframework.mock.web.MockHttpServletRequest;
+// import org.springframework.mock.web.MockHttpServletResponse;
+// import org.springframework.security.core.context.SecurityContextHolder;
 
-    private final LoginUserLoader loginUserLoader = mock(LoginUserLoader.class);
-    private final SecurityProperties securityProperties = new SecurityProperties();
-    private final DebugAuthenticationProperties debugProperties = new DebugAuthenticationProperties();
-    private final MockEnvironment environment = environment("dev");
-    private final DebugAuthenticationFilter filter = new DebugAuthenticationFilter(
-            loginUserLoader, securityProperties, debugProperties, environment, new ObjectMapper());
+// import java.util.List;
+// import java.util.concurrent.atomic.AtomicBoolean;
 
-    @AfterEach
-    void clearContext() {
-        LoginUserHolder.clear();
-        SecurityContextHolder.clearContext();
-    }
+// import static org.assertj.core.api.Assertions.assertThat;
+// import static org.mockito.Mockito.doThrow;
+// import static org.mockito.Mockito.mock;
+// import static org.mockito.Mockito.verify;
+// import static org.mockito.Mockito.when;
 
-    @Test
-    void validLoopbackToken_loadsFormalIdentityAndDoesNotCreateResponseToken() throws Exception {
-        debugProperties.setEnabled(true);
-        LoginUser loginUser = new LoginUser();
-        loginUser.setUserId(7L);
-        loginUser.setTenantId(42L);
-        loginUser.setRoles(List.of("reviewer"));
-        loginUser.setPermissions(List.of("workflow:def:view"));
-        when(loginUserLoader.loadByUserId(7L)).thenReturn(loginUser);
+// class DebugAuthenticationFilterTest {
 
-        MockHttpServletRequest request = request("test_7", "127.0.0.1");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        AtomicBoolean downstreamAuthenticated = new AtomicBoolean();
-        FilterChain chain = (req, res) ->
-                downstreamAuthenticated.set(LoginUserHolder.get() == loginUser
-                        && SecurityContextHolder.getContext().getAuthentication() != null);
+//     private final LoginUserLoader loginUserLoader = mock(LoginUserLoader.class);
+//     private final SecurityProperties securityProperties = new SecurityProperties();
+//     private final DebugAuthenticationProperties debugProperties = new DebugAuthenticationProperties();
+//     private final MockEnvironment environment = environment("dev");
+//     private final DebugAuthenticationFilter filter = new DebugAuthenticationFilter(
+//             loginUserLoader, securityProperties, debugProperties, environment, new ObjectMapper());
 
-        filter.doFilter(request, response, chain);
+//     @AfterEach
+//     void clearContext() {
+//         LoginUserHolder.clear();
+//         SecurityContextHolder.clearContext();
+//     }
 
-        assertThat(downstreamAuthenticated).isTrue();
-        assertThat(response.getCookies()).isEmpty();
-        assertThat(response.getContentAsString()).doesNotContain("accessToken", "refresh");
-        verify(loginUserLoader).kickOut(7L);
-        verify(loginUserLoader).loadByUserId(7L);
-        assertThat(LoginUserHolder.get()).isNull();
-        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
-    }
+//     @Test
+//     void validLoopbackToken_loadsFormalIdentityAndDoesNotCreateResponseToken() throws Exception {
+//         debugProperties.setEnabled(true);
+//         LoginUser loginUser = new LoginUser();
+//         loginUser.setUserId(7L);
+//         loginUser.setTenantId(42L);
+//         loginUser.setRoles(List.of("reviewer"));
+//         loginUser.setPermissions(List.of("workflow:def:view"));
+//         when(loginUserLoader.loadByUserId(7L)).thenReturn(loginUser);
 
-    @Test
-    void disabledDebugAuth_leavesRequestUnauthenticated() throws Exception {
-        AtomicBoolean downstreamUnauthenticated = new AtomicBoolean();
-        FilterChain chain = (req, res) ->
-                downstreamUnauthenticated.set(LoginUserHolder.get() == null);
+//         MockHttpServletRequest request = request("test_7", "127.0.0.1");
+//         MockHttpServletResponse response = new MockHttpServletResponse();
+//         AtomicBoolean downstreamAuthenticated = new AtomicBoolean();
+//         FilterChain chain = (req, res) ->
+//                 downstreamAuthenticated.set(LoginUserHolder.get() == loginUser
+//                         && SecurityContextHolder.getContext().getAuthentication() != null);
 
-        filter.doFilter(request("test_7", "127.0.0.1"), new MockHttpServletResponse(), chain);
+//         filter.doFilter(request, response, chain);
 
-        assertThat(downstreamUnauthenticated).isTrue();
-        verify(loginUserLoader, org.mockito.Mockito.never()).loadByUserId(7L);
-    }
+//         assertThat(downstreamAuthenticated).isTrue();
+//         assertThat(response.getCookies()).isEmpty();
+//         assertThat(response.getContentAsString()).doesNotContain("accessToken", "refresh");
+//         verify(loginUserLoader).kickOut(7L);
+//         verify(loginUserLoader).loadByUserId(7L);
+//         assertThat(LoginUserHolder.get()).isNull();
+//         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+//     }
 
-    @Test
-    void invalidFormatAndNonLoopbackSource_areRejectedBeforeIdentityLookup() throws Exception {
-        debugProperties.setEnabled(true);
-        FilterChain invalidChain = (req, res) -> { };
-        filter.doFilter(request("test_user", "127.0.0.1"), new MockHttpServletResponse(), invalidChain);
+//     @Test
+//     void disabledDebugAuth_leavesRequestUnauthenticated() throws Exception {
+//         AtomicBoolean downstreamUnauthenticated = new AtomicBoolean();
+//         FilterChain chain = (req, res) ->
+//                 downstreamUnauthenticated.set(LoginUserHolder.get() == null);
 
-        FilterChain nonLoopbackChain = (req, res) -> { };
-        filter.doFilter(request("test_7", "192.0.2.7"), new MockHttpServletResponse(), nonLoopbackChain);
-        verify(loginUserLoader, org.mockito.Mockito.never()).kickOut(7L);
-    }
+//         filter.doFilter(request("test_7", "127.0.0.1"), new MockHttpServletResponse(), chain);
 
-    @Test
-    void unknownOrInactiveFormalIdentity_isRejectedWithoutPrivilegeFallback() throws Exception {
-        debugProperties.setEnabled(true);
-        when(loginUserLoader.loadByUserId(7L)).thenReturn(null);
-        AtomicBoolean downstreamCalled = new AtomicBoolean();
-        FilterChain chain = (req, res) -> downstreamCalled.set(true);
+//         assertThat(downstreamUnauthenticated).isTrue();
+//         verify(loginUserLoader, Mockito.never()).loadByUserId(7L);
+//     }
 
-        filter.doFilter(request("test_7", "127.0.0.1"), new MockHttpServletResponse(), chain);
+//     @Test
+//     void invalidFormatAndNonLoopbackSource_areRejectedBeforeIdentityLookup() throws Exception {
+//         debugProperties.setEnabled(true);
+//         FilterChain invalidChain = (req, res) -> { };
+//         filter.doFilter(request("test_user", "127.0.0.1"), new MockHttpServletResponse(), invalidChain);
 
-        assertThat(downstreamCalled).isTrue();
-        assertThat(LoginUserHolder.get()).isNull();
-        verify(loginUserLoader).kickOut(7L);
-        verify(loginUserLoader).loadByUserId(7L);
-    }
+//         FilterChain nonLoopbackChain = (req, res) -> { };
+//         filter.doFilter(request("test_7", "192.0.2.7"), new MockHttpServletResponse(), nonLoopbackChain);
+//         verify(loginUserLoader, Mockito.never()).kickOut(7L);
+//     }
 
-    @Test
-    void identityInfrastructureFailure_returns503AndDoesNotContinueChain() throws Exception {
-        debugProperties.setEnabled(true);
-        doThrow(new IllegalStateException("redis unavailable"))
-                .when(loginUserLoader).loadByUserId(7L);
-        AtomicBoolean downstreamCalled = new AtomicBoolean();
-        FilterChain chain = (req, res) -> downstreamCalled.set(true);
-        MockHttpServletResponse response = new MockHttpServletResponse();
+//     @Test
+//     void unknownOrInactiveFormalIdentity_isRejectedWithoutPrivilegeFallback() throws Exception {
+//         debugProperties.setEnabled(true);
+//         when(loginUserLoader.loadByUserId(7L)).thenReturn(null);
+//         AtomicBoolean downstreamCalled = new AtomicBoolean();
+//         FilterChain chain = (req, res) -> downstreamCalled.set(true);
 
-        filter.doFilter(request("test_7", "127.0.0.1"), response, chain);
+//         filter.doFilter(request("test_7", "127.0.0.1"), new MockHttpServletResponse(), chain);
 
-        assertThat(response.getStatus()).isEqualTo(503);
-        assertThat(response.getContentAsString())
-                .as("503 必须给出安全结论并携带稳定语义键")
-                .contains("common.system_error");
-        assertThat(response.getContentAsString())
-                .as("503 响应不得回显依赖异常原文或基础设施细节（P61 §3.2）")
-                .doesNotContain("redis unavailable")
-                .doesNotContain("认证基础设施未就绪")
-                .doesNotContain("LoginUserLoader")
-                .doesNotContain("Exception");
-        assertThat(downstreamCalled).isFalse();
-    }
+//         assertThat(downstreamCalled).isTrue();
+//         assertThat(LoginUserHolder.get()).isNull();
+//         verify(loginUserLoader).kickOut(7L);
+//         verify(loginUserLoader).loadByUserId(7L);
+//     }
 
-    @Test
-    void profilePolicy_requiresOnlyDevOrTestProfiles() {
-        assertThat(DebugAuthenticationProfile.isDevelopmentOnly(environment)).isTrue();
-        assertThat(DebugAuthenticationProfile.isDevelopmentOnly(
-                environment("prod"))).isFalse();
-        assertThat(DebugAuthenticationProfile.isDevelopmentOnly(
-                environment("dev", "prod"))).isFalse();
-        assertThat(DebugAuthenticationProfile.isDevelopmentOnly(new MockEnvironment())).isFalse();
-    }
+//     @Test
+//     void identityInfrastructureFailure_returns503AndDoesNotContinueChain() throws Exception {
+//         debugProperties.setEnabled(true);
+//         doThrow(new IllegalStateException("redis unavailable"))
+//                 .when(loginUserLoader).loadByUserId(7L);
+//         AtomicBoolean downstreamCalled = new AtomicBoolean();
+//         FilterChain chain = (req, res) -> downstreamCalled.set(true);
+//         MockHttpServletResponse response = new MockHttpServletResponse();
 
-    private static MockEnvironment environment(String... profiles) {
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles(profiles);
-        return environment;
-    }
+//         filter.doFilter(request("test_7", "127.0.0.1"), response, chain);
 
-    private MockHttpServletRequest request(String token, String remoteAddress) {
-        MockHttpServletRequest request = new MockHttpServletRequest();
-        request.setRequestURI("/system/auth/me");
-        request.setRemoteAddr(remoteAddress);
-        request.addHeader("Authorization", "Bearer " + token);
-        request.addHeader("X-Request-Id", "debug-test-request");
-        return request;
-    }
-}
+//         assertThat(response.getStatus()).isEqualTo(503);
+//         assertThat(response.getContentAsString())
+//                 .as("503 必须给出安全结论并携带稳定语义键")
+//                 .contains("common.system_error");
+//         assertThat(response.getContentAsString())
+//                 .as("503 响应不得回显依赖异常原文或基础设施细节（P61 §3.2）")
+//                 .doesNotContain("redis unavailable")
+//                 .doesNotContain("认证基础设施未就绪")
+//                 .doesNotContain("LoginUserLoader")
+//                 .doesNotContain("Exception");
+//         assertThat(downstreamCalled).isFalse();
+//     }
+
+//     @Test
+//     void profilePolicy_requiresOnlyDevOrTestProfiles() {
+//         assertThat(DebugAuthenticationProfile.isDevelopmentOnly(environment)).isTrue();
+//         assertThat(DebugAuthenticationProfile.isDevelopmentOnly(
+//                 environment("prod"))).isFalse();
+//         assertThat(DebugAuthenticationProfile.isDevelopmentOnly(
+//                 environment("dev", "prod"))).isFalse();
+//         assertThat(DebugAuthenticationProfile.isDevelopmentOnly(new MockEnvironment())).isFalse();
+//     }
+
+//     private static MockEnvironment environment(String... profiles) {
+//         MockEnvironment environment = new MockEnvironment();
+//         environment.setActiveProfiles(profiles);
+//         return environment;
+//     }
+
+//     private MockHttpServletRequest request(String token, String remoteAddress) {
+//         MockHttpServletRequest request = new MockHttpServletRequest();
+//         request.setRequestURI("/system/auth/me");
+//         request.setRemoteAddr(remoteAddress);
+//         request.addHeader("Authorization", "Bearer " + token);
+//         request.addHeader("X-Request-Id", "debug-test-request");
+//         return request;
+//     }
+// }

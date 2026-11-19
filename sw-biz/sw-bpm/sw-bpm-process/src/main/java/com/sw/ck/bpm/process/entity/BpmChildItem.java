@@ -2,9 +2,13 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /**
  * P64 阶段Ⅱ（A05/A06）子流程批次项：一个预期子流程一行。
@@ -75,7 +79,7 @@ public class BpmChildItem extends BaseEntity {
     private String writebackJson;
 
     @TableField("writeback_time")
-    private java.time.LocalDateTime writebackTime;
+    private LocalDateTime writebackTime;
 
     /** 回写来源（子实例/节点/轮次/任务，可追溯）。 */
     @TableField("writeback_source")

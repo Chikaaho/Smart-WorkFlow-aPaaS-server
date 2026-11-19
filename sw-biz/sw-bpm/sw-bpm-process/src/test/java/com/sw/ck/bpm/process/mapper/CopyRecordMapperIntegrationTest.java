@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.process.mapper;
 
-import com.sw.ck.bpm.process.dto.CopyItemDTO;
+import com.sw.ck.bpm.process.vo.CopyItemVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -64,7 +64,7 @@ class CopyRecordMapperIntegrationTest {
         assertThat(mapper.countMyCopies(TENANT_ID, RECIPIENT_ID, "pi-a", null, null, null))
                 .isEqualTo(1L);
         assertThat(mapper.selectMyCopies(TENANT_ID, RECIPIENT_ID, "pi-a", null, null, null, 10, 0))
-                .extracting(CopyItemDTO::getProcessInstanceId)
+                .extracting(CopyItemVO::getProcessInstanceId)
                 .containsExactly("pi-a");
 
         assertThat(mapper.countMyCopies(TENANT_ID, RECIPIENT_ID, "pi-missing", null, null, null))
@@ -95,7 +95,7 @@ class CopyRecordMapperIntegrationTest {
     private List<String> processIds(int limit, int offset) {
         return mapper.selectMyCopies(TENANT_ID, RECIPIENT_ID, null, null, null, null, limit, offset)
                 .stream()
-                .map(CopyItemDTO::getProcessInstanceId)
+                .map(CopyItemVO::getProcessInstanceId)
                 .toList();
     }
 

@@ -12,14 +12,14 @@ import com.sw.ck.storage.provider.StorageProvider;
 import com.sw.ck.storage.provider.StorageProviderRegistry;
 import com.sw.ck.storage.service.StorageFileService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.util.Optional;
 import java.util.UUID;
 
-@Slf4j
+@Log4j2
 @Service
 @RequiredArgsConstructor
 public class StorageFacadeImpl implements StorageFacade {

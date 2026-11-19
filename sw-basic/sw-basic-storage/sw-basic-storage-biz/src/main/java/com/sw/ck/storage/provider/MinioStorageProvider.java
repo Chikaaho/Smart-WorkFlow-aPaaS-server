@@ -11,7 +11,7 @@ import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import lombok.extern.log4j.Log4j2;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -22,7 +22,7 @@ import java.io.InputStream;
  * 使用 MinIO SDK 8.x Builder API，支持懒加载 MinioClient。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 @RequiredArgsConstructor
 public class MinioStorageProvider implements StorageProvider {

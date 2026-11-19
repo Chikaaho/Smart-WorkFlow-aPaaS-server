@@ -1,18 +1,22 @@
 package com.sw.ck.bpm.process.queue;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.entity.DraftStatusEnum;
 import com.sw.ck.bpm.process.service.BpmDraftService;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 草稿提交命令处理器。
  * <p>
@@ -23,25 +27,19 @@ import java.util.Map;
  * </p>
  */
 @Component
+@Log4j2
 public class DraftSubmitCommandHandler implements BpmCommandHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(DraftSubmitCommandHandler.class);
-
-    private final BpmDraftService draftService;
-    private final FormDataSubmitFacade formDataSubmitFacade;
-    private final ObjectMapper objectMapper;
-
-    public DraftSubmitCommandHandler(BpmDraftService draftService,
-                                     FormDataSubmitFacade formDataSubmitFacade,
-                                     ObjectMapper objectMapper) {
-        this.draftService = draftService;
-        this.formDataSubmitFacade = formDataSubmitFacade;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private BpmDraftService draftService;
+    @Autowired
+    private FormDataSubmitFacade formDataSubmitFacade;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
-    public java.util.Set<CommandTypeEnum> types() {
-        return java.util.Set.of(CommandTypeEnum.DRAFT_SUBMIT);
+    public Set<CommandTypeEnum> types() {
+        return Set.of(CommandTypeEnum.DRAFT_SUBMIT);
     }
 
     @Override

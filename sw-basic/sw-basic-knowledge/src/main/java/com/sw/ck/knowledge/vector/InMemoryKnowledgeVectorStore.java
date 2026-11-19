@@ -1,5 +1,7 @@
 package com.sw.ck.knowledge.vector;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.knowledge.entity.KnowledgeChunk;
 import com.sw.ck.knowledge.entity.KnowledgeDocument;
@@ -23,16 +25,12 @@ import java.util.concurrent.ConcurrentHashMap;
 @ConditionalOnProperty(prefix = "sw.knowledge", name = "vector-store", havingValue = "memory")
 public class InMemoryKnowledgeVectorStore implements KnowledgeVectorStore {
 
-    private final KnowledgeChunkMapper chunkMapper;
-    private final KnowledgeDocumentMapper documentMapper;
+    @Autowired
+    private KnowledgeChunkMapper chunkMapper;
+    @Autowired
+    private KnowledgeDocumentMapper documentMapper;
     /** chunkId → 向量 */
     private final Map<Long, float[]> vectors = new ConcurrentHashMap<>();
-
-    public InMemoryKnowledgeVectorStore(KnowledgeChunkMapper chunkMapper,
-                                        KnowledgeDocumentMapper documentMapper) {
-        this.chunkMapper = chunkMapper;
-        this.documentMapper = documentMapper;
-    }
 
     @Override
     public void store(Long chunkId, float[] embedding) {

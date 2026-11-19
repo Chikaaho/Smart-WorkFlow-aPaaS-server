@@ -1,0 +1,43 @@
+# 本机开发/验证配置（local profile；以下密钥为本机生成的开发值，非生产凭据）
+spring:
+  datasource:
+    dynamic:
+      datasource:
+        master:
+          url: jdbc:postgresql://localhost:5432/smart_workflow_021
+          username: chikan
+          password: ""
+  data:
+    redis:
+      host: localhost
+      port: 6399
+
+sw:
+  storage:
+    active-provider: local
+    providers:
+      local:
+        base-path: ./uploads
+        url-prefix: /files
+  security:
+    login:
+      # 只放私钥文件路径，私钥本体放在仓库外的文件里（本机路径可用 SW_LOGIN_RSA_PRIVATE_KEY_FILE 覆盖）
+      rsa-private-key-file: ${SW_LOGIN_RSA_PRIVATE_KEY_FILE:${user.home}/.smart-workflow/login-rsa.pem}
+      digest-secret: 8ad035f459c647a1823ea37a91a8978aedf37a5d37293a0fd997721f12ba632f
+    sso:
+      cipher-key: TBTKGVA7hsrExI5hOzYwKm9BRxkiIfKJYilXNfzh+uo=
+  agent:
+    cipher-key: DtDDiwsDqKzBTyBTBpSHAmVHe50nL+Zwt+RsX+m8fEs=
+  external-datasource:
+    cipher-key: DtDDiwsDqKzBTyBTBpSHAmVHe50nL+Zwt+RsX+m8fEs=
+  bpm:
+    enabled: true
+    script:
+      workers: 1
+      tenant-workers: 1
+  form:
+    enabled: true
+  iot:
+    enabled: true
+    tencent:
+      enabled: false

@@ -1,5 +1,7 @@
 package com.sw.ck.iot.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.iot.entity.IotTopic;
 import com.sw.ck.iot.mapper.IotConnectionMapper;
@@ -16,17 +18,13 @@ import java.util.List;
 @Service
 public class IotTopicService {
 
-    private final IotTopicMapper topicMapper;
-    private final IotConnectionMapper connectionMapper;
-    private final MqttBrokerManager mqttBrokerManager;
-
-    public IotTopicService(IotTopicMapper topicMapper,
-                           IotConnectionMapper connectionMapper,
-                           @Lazy MqttBrokerManager mqttBrokerManager) {
-        this.topicMapper = topicMapper;
-        this.connectionMapper = connectionMapper;
-        this.mqttBrokerManager = mqttBrokerManager;
-    }
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired
+    private IotConnectionMapper connectionMapper;
+    @Autowired
+    @Lazy
+    private MqttBrokerManager mqttBrokerManager;
 
     public List<IotTopic> list() {
         return topicMapper.selectList(new LambdaQueryWrapper<>());

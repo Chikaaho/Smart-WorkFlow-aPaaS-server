@@ -1,5 +1,7 @@
 package com.sw.ck.notify.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
@@ -16,13 +18,17 @@ import com.sw.ck.notify.entity.NotifyMessage;
 import com.sw.ck.notify.service.NotifyMessageService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.notify.api.NotifySendStatusEnum;
+import com.sw.ck.notify.vo.NotifyMessageVO;
 /**
  * 通知消息接收侧控制器（M05 Step 3 — 第四环闭合）。
  * <p>
@@ -44,17 +50,13 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/notify/messages")
+@Log4j2
 public class NotifyController {
 
-    private static final Logger log = LoggerFactory.getLogger(NotifyController.class);
-
-    private final NotifyMessageService notifyMessageService;
-    private final NotifyFacade notifyFacade;
-
-    public NotifyController(NotifyMessageService notifyMessageService, NotifyFacade notifyFacade) {
-        this.notifyMessageService = notifyMessageService;
-        this.notifyFacade = notifyFacade;
-    }
+    @Autowired
+    private NotifyMessageService notifyMessageService;
+    @Autowired
+    private NotifyFacade notifyFacade;
 
     /**
      * 当前用户的通知列表（支持过滤）。
@@ -68,7 +70,7 @@ public class NotifyController {
      * @return 通知列表（可能为空）
      */
     @GetMapping
-    public R<List<NotifyMessage>> messages(
+    public R<List<NotifyMessageVO>> messages(
             @RequestParam(required = false) Boolean read,
             @RequestParam(required = false) String keyword) {
         LoginUser loginUser = LoginUserHolder.get();
@@ -80,7 +82,7 @@ public class NotifyController {
 
         log.debug("通知列表查询: userId={}, read={}, keyword={}, count={}",
                 currentUserId, read, keyword, list.size());
-        return R.ok(list);
+        return R.ok(list == null ? List.of() : list.stream().map(NotifyMessageVO::from).toList());
     }
 
     /**
@@ -170,7 +172,7 @@ public class NotifyController {
         // 每接收人独立结果与尝试流水（失败子记录可查可重发），幂等键按批次+接收人隔离；
         // 缺省仍走既有 IN_APP 批量入口，保留其幂等边界不变。
         if (req != null && req.getChannel() != null && !req.getChannel().isBlank()
-                && !"IN_APP".equalsIgnoreCase(req.getChannel().trim())) {
+                && !NotifyChannel.IN_APP.name().equalsIgnoreCase(req.getChannel().trim())) {
             return R.ok(batchSendByChannel(req));
         }
         return R.ok(notifyMessageService.batchSendWithOutcome(req));
@@ -192,13 +194,13 @@ public class NotifyController {
         }
         int count = notifyMessageService.resolveCount(req);
         var loginUser = LoginUserHolder.get();
-        String batchKey = java.util.UUID.randomUUID().toString();
+        String batchKey = UUID.randomUUID().toString();
         int delivered = 0;
         int processing = 0;
         // 与站内信批量共用同一判定：请求中被丢弃的对象进入失败明细，
         // 两条路由的「总量 = 成功 + 失败 + 处理中」对照同一个请求集合。
         List<NotifyBatchItemFailure> failures =
-                new java.util.ArrayList<>(notifyMessageService.invalidRecipientFailures(req));
+                new ArrayList<>(notifyMessageService.invalidRecipientFailures(req));
         for (Long recipientId : notifyMessageService.resolveRecipientUserIds(req)) {
             NotifySendResult result = notifyFacade.send(NotifySendRequest.builder()
                     .channel(channel)
@@ -211,7 +213,7 @@ public class NotifyController {
                     .idempotencyKey("batch:" + batchKey + ":" + recipientId)
                     .build())
                     .orElseThrow(() -> new IllegalStateException("通知发送未返回结果"));
-            String status = result.getStatus() == null ? "FAILED" : result.getStatus();
+            String status = result.getStatus() == null ? NotifySendStatusEnum.FAILED.getCode() : result.getStatus();
             switch (status) {
                 case "SUCCESS" -> delivered++;
                 case "TIMEOUT", "PENDING" -> processing++;

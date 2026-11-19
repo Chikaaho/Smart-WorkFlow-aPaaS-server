@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.process.service;
 
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.bpm.api.participant.NodeTriggerEventPort;
@@ -10,6 +10,7 @@ import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,9 +18,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Field;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -56,18 +62,18 @@ class ProcessStartServiceTest {
     /** 可选端口是字段注入；显式回填，确保单测覆盖首节点补评估路径。 */
     @BeforeEach
     void injectOptionalTriggerPort() throws Exception {
-        java.lang.reflect.Field field = ProcessStartService.class.getDeclaredField("nodeTriggerEventPort");
+        Field field = ProcessStartService.class.getDeclaredField("nodeTriggerEventPort");
         field.setAccessible(true);
         field.set(service, nodeTriggerEventPort);
         // userQueryFacade 经 ObjectProvider 装配；@InjectMocks 不匹配该类型，显式回填
-        java.lang.reflect.Field userField =
+        Field userField =
                 ProcessStartService.class.getDeclaredField("userQueryFacade");
         userField.setAccessible(true);
         userField.set(service, userQueryFacade);
         // 默认：系统操作人 1 在测试租户内有效（各用例可按需覆盖）
-        org.mockito.Mockito.lenient()
+        Mockito.lenient()
                 .when(userQueryFacade.findActiveUserIds(any(), any()))
-                .thenReturn(java.util.Optional.of(List.of(1L)));
+                .thenReturn(Optional.of(List.of(1L)));
     }
 
     @Test
@@ -75,10 +81,10 @@ class ProcessStartServiceTest {
     void start_whenRuntimeAlreadyEnded_shouldPersistApproved() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(false));
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(false));
 
         service.start(command());
 
@@ -94,11 +100,11 @@ class ProcessStartServiceTest {
     void start_whenRuntimeActive_shouldPersistRunning() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
-        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(Optional.of(List.of()));
 
         service.start(command());
 
@@ -114,14 +120,14 @@ class ProcessStartServiceTest {
     void start_whenFirstTaskCreatedBeforeInstancePersist_shouldEvaluateNodeEntering() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
-        BpmTaskDTO task = new BpmTaskDTO();
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(true));
+        BpmTaskVO task = new BpmTaskVO();
         task.setTaskDefinitionKey("node_1");
         when(bpmTaskFacade.queryByProcessInstance("instance-1"))
-                .thenReturn(java.util.Optional.of(List.of(task)));
+                .thenReturn(Optional.of(List.of(task)));
 
         service.start(command());
 
@@ -133,21 +139,21 @@ class ProcessStartServiceTest {
     void start_whenSubmittedDataCarriesTxnQuantity_shouldPromoteProcessVariable() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
-        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(Optional.of(List.of()));
 
         StartCommand command = command();
-        command.setSubmittedData(new java.util.HashMap<>(java.util.Map.of(
+        command.setSubmittedData(new HashMap<>(Map.of(
                 "target_record_id", "inv-record-9",
                 "txn_quantity", "12.5")));
         service.start(command);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
-                ArgumentCaptor.forClass(java.util.Map.class);
+        ArgumentCaptor<Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(Map.class);
         verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
                 varsCaptor.capture(), eq("57001"));
         assertThat(varsCaptor.getValue())
@@ -160,17 +166,17 @@ class ProcessStartServiceTest {
     void start_whenNoTxnQuantity_shouldNotPromoteVariable() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
-        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(Optional.of(List.of()));
 
         service.start(command());
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
-                ArgumentCaptor.forClass(java.util.Map.class);
+        ArgumentCaptor<Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(Map.class);
         verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
                 varsCaptor.capture(), eq("57001"));
         assertThat(varsCaptor.getValue()).doesNotContainKey("txnQuantity");
@@ -181,15 +187,15 @@ class ProcessStartServiceTest {
     void start_whenAutoStartCarriesSource_shouldForceAdminAndEmbedSourceVariables() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
-        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(Optional.of(List.of()));
 
         StartCommand command = command();
         command.setSubmitter(7L); // 派发链携带的业务提交人：自动发起时应被改写为管理员
-        command.setSubmittedData(new java.util.HashMap<>(java.util.Map.of(
+        command.setSubmittedData(new HashMap<>(Map.of(
                 "sourceInstanceId", "main-instance-1",
                 "sourceBusinessKey", "record-9")));
         service.start(command);
@@ -200,8 +206,8 @@ class ProcessStartServiceTest {
         assertThat(instanceCaptor.getValue().getInitiatorId()).isEqualTo(1L);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
-                ArgumentCaptor.forClass(java.util.Map.class);
+        ArgumentCaptor<Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(Map.class);
         verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
                 varsCaptor.capture(), eq("57001"));
         assertThat(varsCaptor.getValue())
@@ -215,20 +221,20 @@ class ProcessStartServiceTest {
     void start_whenAutoStartOperatorNotActiveInTenant_shouldKeepSourceSubmitter() {
         BpmFormBinding binding = binding();
         when(bindingService.findActiveByFormKey("p57-r1-form")).thenReturn(List.of(binding));
-        when(approverResolver.resolve(any())).thenReturn(java.util.Optional.of("1"));
+        when(approverResolver.resolve(any())).thenReturn(Optional.of("1"));
         when(bpmRuntimeFacade.startProcess(eq("p57-r1-process"), eq("record-1"), any(), eq("57001")))
-                .thenReturn(java.util.Optional.of("instance-1"));
-        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(java.util.Optional.of(true));
-        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(java.util.Optional.of(List.of()));
+                .thenReturn(Optional.of("instance-1"));
+        when(bpmTaskFacade.isProcessActive("instance-1")).thenReturn(Optional.of(true));
+        when(bpmTaskFacade.queryByProcessInstance("instance-1")).thenReturn(Optional.of(List.of()));
         // 系统用户 1 不在业务租户 57001；来源发起人 7 在租户内有效
         when(userQueryFacade.findActiveUserIds(eq(List.of(1L)), eq(57001L)))
-                .thenReturn(java.util.Optional.of(List.of()));
+                .thenReturn(Optional.of(List.of()));
         when(userQueryFacade.findActiveUserIds(eq(List.of(7L)), eq(57001L)))
-                .thenReturn(java.util.Optional.of(List.of(7L)));
+                .thenReturn(Optional.of(List.of(7L)));
 
         StartCommand command = command();
         command.setSubmitter(7L);
-        command.setSubmittedData(new java.util.HashMap<>(java.util.Map.of(
+        command.setSubmittedData(new HashMap<>(Map.of(
                 "sourceInstanceId", "main-instance-1",
                 "sourceBusinessKey", "record-9")));
         service.start(command);
@@ -239,8 +245,8 @@ class ProcessStartServiceTest {
         assertThat(instanceCaptor.getValue().getInitiatorId()).isEqualTo(7L);
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<java.util.Map<String, Object>> varsCaptor =
-                ArgumentCaptor.forClass(java.util.Map.class);
+        ArgumentCaptor<Map<String, Object>> varsCaptor =
+                ArgumentCaptor.forClass(Map.class);
         verify(bpmRuntimeFacade).startProcess(eq("p57-r1-process"), eq("record-1"),
                 varsCaptor.capture(), eq("57001"));
         assertThat(varsCaptor.getValue())

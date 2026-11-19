@@ -1,6 +1,8 @@
 package com.sw.ck.form.api.port;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -25,7 +27,7 @@ public interface FormTxnActionPort {
      * SUCCEEDED/REJECTED/CONFLICT；动作不存在、身份缺失或参数非法以业务异常表达，
      * 不使用 empty（empty 语义保留给"可能不存在的单对象查询"类方法）。</p>
      */
-    java.util.Optional<TxnActionResult> invoke(TxnActionCommand command);
+    Optional<TxnActionResult> invoke(TxnActionCommand command);
 
     /** 发布期绑定校验：动作存在、同租户且已发布（未发布或无权限时返回 empty）。 */
     Optional<TxnActionDescriptor> describe(String actionId);
@@ -67,11 +69,11 @@ public interface FormTxnActionPort {
      * {@code Optional.of(非 null 列表)}，<strong>合法空集合即零行</strong>；不使用 empty。
      * 非法入参（null/blank/limit≤0）按零行处理，不抛异常。</p>
      */
-    java.util.Optional<java.util.List<TxnInvocationSummary>> listInvocationsByBizRecord(String bizRecordId, int limit);
+    Optional<List<TxnInvocationSummary>> listInvocationsByBizRecord(String bizRecordId, int limit);
 
     /** 调用行只读摘要（关联查询用）。 */
     record TxnInvocationSummary(String invocationId, String actionId, Integer actionVersion,
                                 String status, Integer errorCode, String errorMsg,
-                                String bizRecordId, java.time.LocalDateTime createTime) {
+                                String bizRecordId, LocalDateTime createTime) {
     }
 }

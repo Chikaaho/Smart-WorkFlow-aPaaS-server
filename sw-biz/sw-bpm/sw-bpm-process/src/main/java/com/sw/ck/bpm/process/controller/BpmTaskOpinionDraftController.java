@@ -1,10 +1,13 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.bpm.api.dto.BpmTaskDTO;
+import com.sw.ck.bpm.api.vo.BpmTaskVO;
 import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.process.vo.OpinionDraftVO;
 import com.sw.ck.bpm.process.entity.BpmTaskOpinionDraft;
 import com.sw.ck.bpm.process.mapper.BpmTaskOpinionDraftMapper;
 import com.sw.ck.common.exception.BaseException;
@@ -17,41 +20,36 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
 import java.util.Map;
+import com.sw.ck.common.value.DynamicData;
 
 /** 审批意见暂存：绑定任务、轮次、办理人和意见表单，仅本人可读写。 */
 @RestController
 @RequestMapping("/workflow/tasks/{taskId}/opinion-draft")
 public class BpmTaskOpinionDraftController {
-    private final BpmTaskFacade taskFacade;
-    private final BpmTaskOpinionDraftMapper mapper;
-    private final ObjectMapper objectMapper;
-
-    public BpmTaskOpinionDraftController(BpmTaskFacade taskFacade,
-                                         BpmTaskOpinionDraftMapper mapper,
-                                         ObjectMapper objectMapper) {
-        this.taskFacade = taskFacade;
-        this.mapper = mapper;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private BpmTaskFacade taskFacade;
+    @Autowired
+    private BpmTaskOpinionDraftMapper mapper;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public R<Map<String, Object>> get(@PathVariable String taskId) {
+    public R<OpinionDraftVO> get(@PathVariable String taskId) {
         LoginUser actor = requireActor();
-        BpmTaskDTO task = requireOwnedRunningTask(taskId, actor);
+        BpmTaskVO task = requireOwnedRunningTask(taskId, actor);
         BpmTaskOpinionDraft draft = find(taskId, actor);
         return R.ok(draft == null ? null : view(task, draft));
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PutMapping
     @PreAuthorize("isAuthenticated()")
-    public R<Map<String, Object>> save(@PathVariable String taskId,
-                                       @RequestBody OpinionDraftRequest request) {
+    public R<OpinionDraftVO> save(@PathVariable String taskId,
+                                   @RequestBody OpinionDraftRequest request) {
         LoginUser actor = requireActor();
-        BpmTaskDTO task = requireOwnedRunningTask(taskId, actor);
+        BpmTaskVO task = requireOwnedRunningTask(taskId, actor);
         if (request == null || request.comment() != null && request.comment().length() > 20_000) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "审批意见暂存内容过长");
         }
@@ -85,7 +83,7 @@ public class BpmTaskOpinionDraftController {
         return R.ok(view(task, draft));
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @DeleteMapping
     @PreAuthorize("isAuthenticated()")
     public R<Void> delete(@PathVariable String taskId) {
@@ -105,8 +103,8 @@ public class BpmTaskOpinionDraftController {
         return actor;
     }
 
-    private BpmTaskDTO requireOwnedRunningTask(String taskId, LoginUser actor) {
-        BpmTaskDTO task = taskFacade.getTask(taskId).orElseThrow(
+    private BpmTaskVO requireOwnedRunningTask(String taskId, LoginUser actor) {
+        BpmTaskVO task = taskFacade.getTask(taskId).orElseThrow(
                 () -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "任务不存在"));
         if (task.getEndTime() != null) {
             throw new BaseException(CommonErrorCode.FORBIDDEN.getCode(), "任务已结束，意见暂存不可改写");
@@ -130,24 +128,24 @@ public class BpmTaskOpinionDraftController {
                 .last("LIMIT 1"));
     }
 
-    private Map<String, Object> view(BpmTaskDTO task, BpmTaskOpinionDraft draft) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("taskId", draft.getTaskId());
-        out.put("processInstanceId", task.getProcessInstanceId());
-        out.put("nodeKey", draft.getNodeKey());
-        out.put("roundNo", draft.getRoundNo());
-        out.put("assigneeId", String.valueOf(draft.getAssigneeId()));
-        out.put("opinionFormId", draft.getOpinionFormId());
-        out.put("opinionFormVersion", draft.getOpinionFormVersion());
-        out.put("comment", draft.getOpinionComment());
+    private OpinionDraftVO view(BpmTaskVO task, BpmTaskOpinionDraft draft) {
+        OpinionDraftVO out = new OpinionDraftVO();
+        out.setTaskId(draft.getTaskId());
+        out.setProcessInstanceId(task.getProcessInstanceId());
+        out.setNodeKey(draft.getNodeKey());
+        out.setRoundNo(draft.getRoundNo());
+        out.setAssigneeId(String.valueOf(draft.getAssigneeId()));
+        out.setOpinionFormId(draft.getOpinionFormId());
+        out.setOpinionFormVersion(draft.getOpinionFormVersion());
+        out.setComment(draft.getOpinionComment());
         try {
-            out.put("opinionData", objectMapper.readValue(
+            out.setOpinionData(DynamicData.of(objectMapper.readValue(
                     draft.getOpinionData() == null ? "{}" : draft.getOpinionData(),
-                    new TypeReference<Map<String, Object>>() {}));
+                    new TypeReference<Map<String, Object>>() {})));
         } catch (Exception ignored) {
-            out.put("opinionData", Map.of());
+            out.setOpinionData(DynamicData.empty());
         }
-        out.put("updateTime", draft.getUpdateTime());
+        out.setUpdateTime(draft.getUpdateTime());
         return out;
     }
 

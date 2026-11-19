@@ -1,5 +1,7 @@
 package com.sw.ck.storage.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.sw.ck.common.datascope.DataScopeFilter;
 import com.sw.ck.common.datascope.DeptScopeProvider;
@@ -18,14 +20,10 @@ public class StorageFileServiceImpl
         extends BaseServiceImpl<StorageFileMapper, StorageFile>
         implements StorageFileService {
 
-    private final LoginContextProvider loginContextProvider;
-    private final DeptScopeProvider deptScopeProvider;
-
-    public StorageFileServiceImpl(LoginContextProvider loginContextProvider,
-                                  DeptScopeProvider deptScopeProvider) {
-        this.loginContextProvider = loginContextProvider;
-        this.deptScopeProvider = deptScopeProvider;
-    }
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    @Autowired
+    private DeptScopeProvider deptScopeProvider;
 
     @Override
     public StorageFile findByStorageKey(String storageKey) {

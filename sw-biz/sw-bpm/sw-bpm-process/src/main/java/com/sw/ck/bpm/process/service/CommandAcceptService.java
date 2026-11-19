@@ -1,12 +1,15 @@
 package com.sw.ck.bpm.process.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
+import com.sw.ck.bpm.api.common.CommandStatusEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
+import com.sw.ck.bpm.process.entity.ResourceClassEnum;
 import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.bpm.process.queue.CommandFingerprint;
@@ -14,16 +17,17 @@ import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 /**
  * 命令受理服务：审批动作异步通道的统一受理入口。
  * <p>
@@ -32,25 +36,21 @@ import java.util.concurrent.ConcurrentHashMap;
  * </p>
  */
 @Service
+@Log4j2
 public class CommandAcceptService {
 
-    private static final Logger log = LoggerFactory.getLogger(CommandAcceptService.class);
     /**
      * 仅收窄同一 JVM 内的同键受理竞争窗口；持久化唯一键仍是跨进程幂等真源，
      * 消费侧也不依赖此锁。请求结束后移除锁对象，避免按任务无限增长。
      */
     private static final ConcurrentHashMap<String, Object> ACCEPT_LOCKS = new ConcurrentHashMap<>();
 
-    private final BpmCommandQueue commandQueue;
-    private final ObjectMapper objectMapper;
-    private final ResourceAdmissionService admissionService;
-
-    public CommandAcceptService(BpmCommandQueue commandQueue, ObjectMapper objectMapper,
-                                ResourceAdmissionService admissionService) {
-        this.commandQueue = commandQueue;
-        this.objectMapper = objectMapper;
-        this.admissionService = admissionService;
-    }
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private ResourceAdmissionService admissionService;
 
     /**
      * 受理审批动作命令（异步通道）。
@@ -60,8 +60,8 @@ public class CommandAcceptService {
      * @param request 动作内容（意见等，可为 null）
      * @param channel 通道（NORMAL；P0 由 P0 同步入口受理）
      */
-    @Transactional
-    public CommandAcceptRespDTO acceptTaskAction(String taskId, ApprovalAction action,
+    @Transactional(rollbackFor = Exception.class)
+    public CommandAcceptRespVO acceptTaskAction(String taskId, ApprovalAction action,
                                                  ApprovalActionRequest request,
                                                  CommandChannelEnum channel) {
         LoginUser loginUser = LoginUserHolder.get();
@@ -92,7 +92,7 @@ public class CommandAcceptService {
         }
     }
 
-    private CommandAcceptRespDTO acceptTaskActionLocked(String taskId, ApprovalAction action,
+    private CommandAcceptRespVO acceptTaskActionLocked(String taskId, ApprovalAction action,
                                                         ApprovalActionRequest request,
                                                         CommandChannelEnum channel,
                                                         LoginUser loginUser,
@@ -109,8 +109,8 @@ public class CommandAcceptService {
         // 已核销语义复用同键行重置。
         String acceptKey = commandKey;
         if (existing != null) {
-            boolean failedExisting = "FAILED".equals(existing.getStatus());
-            boolean expiredExisting = "EXPIRED".equals(existing.getStatus());
+            boolean failedExisting = CommandStatusEnum.FAILED.getCode().equals(existing.getStatus());
+            boolean expiredExisting = CommandStatusEnum.EXPIRED.getCode().equals(existing.getStatus());
             if (!failedExisting && !expiredExisting) {
                 // 同键命中（提示05 G3b1）：同载荷=同一操作重放，返回原受理；异载荷=明确拒绝，
                 // 不得默认成功（含受理尚未完成/运行期的首次并发冲突）。旧行缺指纹时以存储
@@ -124,7 +124,7 @@ public class CommandAcceptService {
                                     + "existingFingerprint={}",
                             commandKey, existing.getCommandId(), incomingFingerprint, existingFingerprint);
                     throw new BaseException(
-                            com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
+                            BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
                 }
                 log.info("审批命令幂等命中: key={}, commandId={}", commandKey, existing.getCommandId());
                 return toResp(existing, false);
@@ -139,7 +139,7 @@ public class CommandAcceptService {
                                 + "existingFingerprint={}",
                         commandKey, existing.getCommandId(), incomingFingerprint, existingFingerprint);
                 throw new BaseException(
-                        com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
+                        BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
             }
             if (failedExisting) {
                 // FAILED：唯一键 (tenant_id, command_key) 语义下复用同键行重置入队（P62 核销边界）
@@ -159,13 +159,13 @@ public class CommandAcceptService {
                     acceptKey = recoveryKey;
                     break;
                 }
-                if ("FAILED".equals(prior.getStatus())) {
+                if (CommandStatusEnum.FAILED.getCode().equals(prior.getStatus())) {
                     prior.setPayload(incomingPayload);
                     prior.setPayloadFingerprint(incomingFingerprint);
                     commandQueue.requeueFailed(prior);
                     return toResp(prior, true);
                 }
-                if (!"EXPIRED".equals(prior.getStatus())) {
+                if (!CommandStatusEnum.EXPIRED.getCode().equals(prior.getStatus())) {
                     log.info("审批命令恢复链幂等命中: originCommandId={}, recoveryKey={}, commandId={}, status={}",
                             existing.getCommandId(), recoveryKey, prior.getCommandId(), prior.getStatus());
                     return toResp(prior, false);
@@ -198,14 +198,14 @@ public class CommandAcceptService {
         ResourceAdmissionService.AdmissionTicket ticket = admissionService.admit(
                 loginUser.getTenantId(),
                 channel == CommandChannelEnum.P0
-                        ? com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD
-                        : com.sw.ck.bpm.process.entity.ResourceClassEnum.OA,
+                        ? ResourceClassEnum.PROD
+                        : ResourceClassEnum.OA,
                 1, commandKey);
         if (ticket != null) {
             // 冻结字段直接写已插入的命令行（同事务）；拒绝路径不会到达此处（异常即回滚）
             envelope.setResourceClass(channel == CommandChannelEnum.P0
-                    ? com.sw.ck.bpm.process.entity.ResourceClassEnum.PROD.getCode()
-                    : com.sw.ck.bpm.process.entity.ResourceClassEnum.OA.getCode());
+                    ? ResourceClassEnum.PROD.getCode()
+                    : ResourceClassEnum.OA.getCode());
             envelope.setResourceUnits(1);
             envelope.setResourceSegment(ticket.segment());
             envelope.setPolicyVersion(ticket.policyVersion());
@@ -221,7 +221,7 @@ public class CommandAcceptService {
             // action 必须写入 payload：消费者据此执行对应审批动作（否则默认 APPROVE）
             effective.setAction(action);
             Map<String, Object> payload = new LinkedHashMap<>(objectMapper.convertValue(
-                    effective, new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { }));
+                    effective, new TypeReference<Map<String, Object>>() { }));
             payload.entrySet().removeIf(entry -> entry.getValue() == null);
             return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
@@ -229,8 +229,8 @@ public class CommandAcceptService {
         }
     }
 
-    private CommandAcceptRespDTO toResp(CommandEnvelope envelope, boolean duplicated) {
-        CommandAcceptRespDTO resp = new CommandAcceptRespDTO();
+    private CommandAcceptRespVO toResp(CommandEnvelope envelope, boolean duplicated) {
+        CommandAcceptRespVO resp = new CommandAcceptRespVO();
         resp.setCommandId(envelope.getCommandId());
         resp.setCommandKey(envelope.getCommandKey());
         resp.setCommandType(envelope.getCommandType().getCode());

@@ -1,20 +1,27 @@
 package com.sw.ck.notify.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageResult;
-import com.sw.ck.notify.dto.NotifyRuleDTO;
+import com.sw.ck.notify.api.NotifyChannel;
+import com.sw.ck.notify.vo.NotifyRuleVO;
 import com.sw.ck.notify.dto.NotifyRuleQuery;
 import com.sw.ck.notify.entity.NotifyRule;
 import com.sw.ck.notify.mapper.NotifyRuleMapper;
 import com.sw.ck.notify.service.NotifyRuleService;
+
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Locale;
+import com.sw.ck.notify.api.NotifyFailurePolicyEnum;
 
 /** 通知规则服务实现（I6）。 */
 @Service
@@ -25,14 +32,11 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     private static final String RECIPIENT_RULE_TOKEN =
             "(INITIATOR|ASSIGNEE|ALL|ROLE:[A-Za-z0-9_-]+|DEPT:[0-9]+|USER:[0-9]+)";
 
-    private final NotifyRuleMapper ruleMapper;
-
-    public NotifyRuleServiceImpl(NotifyRuleMapper ruleMapper) {
-        this.ruleMapper = ruleMapper;
-    }
+    @Autowired
+    private NotifyRuleMapper ruleMapper;
 
     @Override
-    public PageResult<NotifyRuleDTO> pageRules(NotifyRuleQuery query) {
+    public PageResult<NotifyRuleVO> pageRules(NotifyRuleQuery query) {
         LambdaQueryWrapper<NotifyRule> w = Wrappers.lambdaQuery(NotifyRule.class);
         if (StringUtils.hasText(query.getEventType())) {
             w.eq(NotifyRule::getEventType, query.getEventType());
@@ -48,14 +52,14 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         Page<NotifyRule> resultPage = ruleMapper.selectPage(Page.of(
                 query.getPageNum() == null ? 1 : Math.max(1, query.getPageNum()),
                 Math.min(Math.max(1, query.getPageSize() == null ? 20 : query.getPageSize()), 200)), w);
-        Page<NotifyRuleDTO> converted = Page.of(resultPage.getCurrent(), resultPage.getSize(),
+        Page<NotifyRuleVO> converted = Page.of(resultPage.getCurrent(), resultPage.getSize(),
                 resultPage.getTotal());
         converted.setRecords(resultPage.getRecords().stream().map(this::toDTO).toList());
         return PageResult.of(converted);
     }
 
-    private NotifyRuleDTO toDTO(NotifyRule r) {
-        NotifyRuleDTO dto = new NotifyRuleDTO();
+    private NotifyRuleVO toDTO(NotifyRule r) {
+        NotifyRuleVO dto = new NotifyRuleVO();
         dto.setId(r.getId());
         dto.setRuleCode(r.getRuleCode());
         dto.setName(r.getName());
@@ -70,12 +74,12 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     }
 
     @Override
-    public NotifyRuleDTO getRule(Long id) {
+    public NotifyRuleVO getRule(Long id) {
         return toDTO(requireEntity(id));
     }
 
     @Override
-    public Long createRule(NotifyRuleDTO dto) {
+    public Long createRule(NotifyRuleVO dto) {
         validate(dto);
         requireCodeAvailable(dto.getRuleCode());
         NotifyRule entity = toEntity(dto);
@@ -84,7 +88,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
     }
 
     @Override
-    public void updateRule(Long id, NotifyRuleDTO dto) {
+    public void updateRule(Long id, NotifyRuleVO dto) {
         NotifyRule existing = requireEntity(id);
         validate(dto);
         if (!existing.getRuleCode().equals(dto.getRuleCode())) {
@@ -121,7 +125,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
 
     // ==================== 内部 ====================
 
-    void validate(NotifyRuleDTO dto) {
+    void validate(NotifyRuleVO dto) {
         if (dto.getRuleCode() == null || !dto.getRuleCode().matches("[A-Za-z][A-Za-z0-9_]{1,98}")) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "规则编码非法");
         }
@@ -133,15 +137,15 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "渠道顺序不能为空且不得超过 200 字符");
         }
         for (String token : dto.getChannelPriority().split(",")) {
-            String trimmed = token.trim().toUpperCase(java.util.Locale.ROOT);
+            String trimmed = token.trim().toUpperCase(Locale.ROOT);
             try {
-                com.sw.ck.notify.api.NotifyChannel.valueOf(trimmed);
+                NotifyChannel.valueOf(trimmed);
             } catch (IllegalArgumentException e) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "渠道顺序含未知渠道: " + token);
             }
         }
         // 渠道顺序必须以 IN_APP 开头：必须送达规则的最低保证（方向 §3.4/§3.6）
-        if (!"IN_APP".equalsIgnoreCase(dto.getChannelPriority().split(",")[0].trim())) {
+        if (!NotifyChannel.IN_APP.name().equalsIgnoreCase(dto.getChannelPriority().split(",")[0].trim())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "渠道顺序必须以 IN_APP 开头（站内信保底）");
         }
         String rr = dto.getRecipientRule();
@@ -155,7 +159,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         }
     }
 
-    private NotifyRule toEntity(NotifyRuleDTO dto) {
+    private NotifyRule toEntity(NotifyRuleVO dto) {
         NotifyRule r = new NotifyRule();
         r.setRuleCode(dto.getRuleCode());
         r.setName(dto.getName());
@@ -163,7 +167,7 @@ public class NotifyRuleServiceImpl implements NotifyRuleService {
         r.setChannelPriority(dto.getChannelPriority());
         r.setRecipientRule(dto.getRecipientRule());
         r.setRequiredFlag(Boolean.TRUE.equals(dto.getRequiredFlag()) ? 1 : 0);
-        r.setFailurePolicy("MANUAL".equals(dto.getFailurePolicy()) ? "MANUAL" : "RETRY");
+        r.setFailurePolicy(NotifyFailurePolicyEnum.MANUAL.getCode().equals(dto.getFailurePolicy()) ? NotifyFailurePolicyEnum.MANUAL.getCode() : NotifyFailurePolicyEnum.RETRY.getCode());
         r.setEnabled(dto.getEnabled() == null || Boolean.TRUE.equals(dto.getEnabled()));
         r.setRemark(dto.getRemark());
         return r;

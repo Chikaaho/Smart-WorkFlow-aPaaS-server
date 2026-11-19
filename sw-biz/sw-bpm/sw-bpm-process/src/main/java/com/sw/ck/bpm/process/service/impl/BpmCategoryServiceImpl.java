@@ -1,7 +1,9 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
-import com.sw.ck.bpm.process.dto.CategoryDTO;
+import com.sw.ck.bpm.process.vo.CategoryVO;
 import com.sw.ck.bpm.process.dto.CategorySaveReq;
 import com.sw.ck.bpm.process.entity.BpmCategory;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -10,8 +12,6 @@ import com.sw.ck.bpm.process.mapper.BpmProcessDefMapper;
 import com.sw.ck.bpm.process.service.BpmCategoryService;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,23 +20,19 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /** 流程分类服务实现。 */
 @Service
+@Log4j2
 public class BpmCategoryServiceImpl implements BpmCategoryService {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmCategoryServiceImpl.class);
-
-    private final BpmCategoryMapper categoryMapper;
-    private final BpmProcessDefMapper processDefMapper;
-
-    public BpmCategoryServiceImpl(BpmCategoryMapper categoryMapper,
-                                  BpmProcessDefMapper processDefMapper) {
-        this.categoryMapper = categoryMapper;
-        this.processDefMapper = processDefMapper;
-    }
+    @Autowired
+    private BpmCategoryMapper categoryMapper;
+    @Autowired
+    private BpmProcessDefMapper processDefMapper;
 
     @Override
-    public List<CategoryDTO> listCategories() {
+    public List<CategoryVO> listCategories() {
         List<BpmCategory> categories = categoryMapper.selectList(
                 Wrappers.<BpmCategory>lambdaQuery()
                         .orderByAsc(BpmCategory::getSortNo)
@@ -47,7 +43,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
                 .filter(def -> def.getCategoryId() != null)
                 .collect(Collectors.groupingBy(BpmProcessDef::getCategoryId, Collectors.counting()));
         return categories.stream()
-                .map(c -> CategoryDTO.builder()
+                .map(c -> CategoryVO.builder()
                         .id(c.getId())
                         .name(c.getName())
                         .sortNo(c.getSortNo())
@@ -57,7 +53,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmCategory createCategory(CategorySaveReq req) {
         String name = requireValidName(req);
         requireNameAvailable(name, null);
@@ -70,7 +66,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmCategory updateCategory(Long id, CategorySaveReq req) {
         BpmCategory category = getExisting(id);
         String name = requireValidName(req);
@@ -85,7 +81,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void deleteCategory(Long id) {
         BpmCategory category = categoryMapper.selectById(id);
         if (category == null) {

@@ -1,8 +1,11 @@
 package com.sw.ck.iot.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.iot.api.IotCommandReservationFacade.IotReservationView;
+import com.sw.ck.iot.vo.IotReservationCancelVO;
 import com.sw.ck.security.holder.LoginUserHolder;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,7 +17,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -29,11 +31,8 @@ import java.util.Optional;
 @RequestMapping("/iot/reservations")
 public class IotReservationController {
 
-    private final IotCommandReservationFacade reservationFacade;
-
-    public IotReservationController(IotCommandReservationFacade reservationFacade) {
-        this.reservationFacade = reservationFacade;
-    }
+    @Autowired
+    private IotCommandReservationFacade reservationFacade;
 
     /** 按流程实例回查预约（关联链：流程 → 预约 → 命令 → 回执）。 */
     @GetMapping
@@ -56,15 +55,19 @@ public class IotReservationController {
     /** 取消待触发预约（独立最小权限；竞争结果确定并留审计）。 */
     @PostMapping("/{id}/cancel")
     @PreAuthorize("@ss.hasPermi('iot:reservation:cancel')")
-    public R<Map<String, Object>> cancel(@PathVariable Long id,
-                                         @RequestBody CancelRequest request) {
+    public R<IotReservationCancelVO> cancel(@PathVariable Long id,
+                                             @RequestBody CancelRequest request) {
         Long tenantId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getTenantId();
         Long actorId = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();
         Optional<String> outcome = reservationFacade
                 .cancel(tenantId, id, actorId, request == null ? null : request.reason());
         // empty = 租户内无此预约（含他租户主键探测）：明确 404，不进系统错误，不写任何数据
         return outcome
-                .<R<Map<String, Object>>>map(value -> R.ok(Map.of("outcome", value)))
+                .<R<IotReservationCancelVO>>map(value -> {
+                    IotReservationCancelVO result = new IotReservationCancelVO();
+                    result.setOutcome(value);
+                    return R.ok(result);
+                })
                 .orElseGet(() -> R.fail(404, "预约不存在"));
     }
 

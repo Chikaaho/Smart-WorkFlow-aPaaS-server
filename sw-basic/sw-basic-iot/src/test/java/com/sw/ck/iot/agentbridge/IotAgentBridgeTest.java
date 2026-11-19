@@ -2,7 +2,7 @@ package com.sw.ck.iot.agentbridge;
 
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
-import com.sw.ck.agent.dto.AgentGraphExecutionAcceptedDTO;
+import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.agent.event.AgentGraphExecutionTerminalEvent;
 import com.sw.ck.common.event.DomainEventPublisher;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
@@ -18,11 +18,14 @@ import com.sw.ck.notify.api.NotifyFacade;
 import com.sw.ck.notify.api.NotifySendRequest;
 import com.sw.ck.notify.api.NotifySendResult;
 import com.sw.ck.security.holder.LoginUserHolder;
+
+import com.alibaba.fastjson2.JSON;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -32,6 +35,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -75,7 +79,12 @@ class IotAgentBridgeTest {
     @Mock
     private NotifyFacade notifyFacade;
 
+    // 生产类已统一 @Autowired 字段注入（d53c7fb6）：改 @InjectMocks 按 mock 字段名/类型
+    // 自动装配（两个监听器的字段名与上述 @Mock 变量名一致，ObjectProvider 同型 mock 靠
+    // 字段名消歧），等价原构造注入。
+    @InjectMocks
     private AgentGraphTriggerListener triggerListener;
+    @InjectMocks
     private AgentExecutionOutcomeListener outcomeListener;
 
     @BeforeEach
@@ -88,10 +97,6 @@ class IotAgentBridgeTest {
                 .channel(NotifyChannel.IN_APP).status("SUCCESS").build()));
         // 升级路径在显式事务模板内插入并发布；测试中直接同步执行回调
         when(transactionManager.getTransaction(any())).thenReturn(null);
-        triggerListener = new AgentGraphTriggerListener(graphDefServiceProvider,
-                lifecycleServiceProvider, triggerMapper, tenantWorkAdmission);
-        outcomeListener = new AgentExecutionOutcomeListener(triggerMapper, ruleMapper,
-                deviceMapper, eventPublisher, transactionManagerProvider, notifyFacadeProvider);
         when(tenantWorkAdmission.claim(eq(1L), any())).thenReturn(1);
         LoginUserHolder.clear();
     }
@@ -120,7 +125,7 @@ class IotAgentBridgeTest {
         when(graphDefService.resolvePublishedGraphId("agent_gate_judge"))
                 .thenReturn(Optional.of(88L));
         when(lifecycleService.submit(eq(88L), any(), eq("iotag-55")))
-                .thenReturn(new AgentGraphExecutionAcceptedDTO(666L, "QUEUED"));
+                .thenReturn(new AgentGraphExecutionAcceptedVO(666L, "QUEUED"));
         when(triggerMapper.update(any(IotProcessTrigger.class), any())).thenReturn(1);
 
         triggerListener.onIotTrigger(agentEvent());
@@ -210,7 +215,7 @@ class IotAgentBridgeTest {
         assertEquals("p0_ticket", escalation.getProcessTemplateKey());
         assertEquals("iot-esc-666", escalation.getIdempotentKey());
         assertEquals("AGENT_FAIL", escalation.getTriggerSource());
-        Map<String, Object> formData = com.alibaba.fastjson2.JSON.parseObject(
+        Map<String, Object> formData = JSON.parseObject(
                 escalation.getFormSnapshot());
         assertEquals("P0", formData.get("level"));
         assertEquals("35.0", formData.get("temperature"));
@@ -260,14 +265,14 @@ class IotAgentBridgeTest {
         verify(triggerMapper).insert(insertCaptor.capture());
         IotProcessTrigger escalation = insertCaptor.getValue();
         assertEquals("agent_fail_escalation", escalation.getProcessTemplateKey());
-        Map<String, Object> formData = com.alibaba.fastjson2.JSON.parseObject(
+        Map<String, Object> formData = JSON.parseObject(
                 escalation.getFormSnapshot());
         assertEquals("P0", formData.get("level"));
         assertEquals("值班长", formData.get("advisor"));
 
         ArgumentCaptor<NotifySendRequest> notifyCaptor = ArgumentCaptor.forClass(NotifySendRequest.class);
         verify(notifyFacade, times(2)).send(notifyCaptor.capture());
-        assertEquals(java.util.List.of(NotifyChannel.IN_APP, NotifyChannel.EMAIL),
+        assertEquals(List.of(NotifyChannel.IN_APP, NotifyChannel.EMAIL),
                 notifyCaptor.getAllValues().stream().map(NotifySendRequest::getChannel).toList());
         assertEquals("iot-fail-666-IN_APP", notifyCaptor.getAllValues().get(0).getIdempotencyKey());
         assertEquals("iot-fail-666-EMAIL", notifyCaptor.getAllValues().get(1).getIdempotencyKey());

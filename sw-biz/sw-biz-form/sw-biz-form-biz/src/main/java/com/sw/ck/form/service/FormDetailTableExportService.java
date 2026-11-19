@@ -1,9 +1,13 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
 import com.sw.ck.form.dynamic.FieldType;
@@ -13,6 +17,7 @@ import com.sw.ck.system.api.dept.DeptQueryFacade;
 import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.dict.DictItemDTO;
 import com.sw.ck.system.api.user.UserQueryFacade;
+
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.DataFormat;
@@ -21,19 +26,22 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.jsoup.Jsoup;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +49,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 明细表导出 Excel（1.0.0 F2-6）。
  * <p>
@@ -53,9 +62,8 @@ import java.util.Set;
  * </p>
  */
 @Service
+@Log4j2
 public class FormDetailTableExportService {
-
-    private static final Logger log = LoggerFactory.getLogger(FormDetailTableExportService.class);
 
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter DATE_ONLY = DateTimeFormatter.ofPattern("yyyy-MM-dd");
@@ -63,29 +71,20 @@ public class FormDetailTableExportService {
     private static final String MULTI_SEPARATOR = "、";
     private static final int MAX_FILENAME_PART = 60;
 
-    private final FormDefService formDefService;
-    private final FormDataQueryService formDataQueryService;
-    private final UserQueryFacade userQueryFacade;
-    private final DeptQueryFacade deptQueryFacade;
-    private final DictFacade dictFacade;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
-
-    public FormDetailTableExportService(FormDefService formDefService,
-                                        FormDataQueryService formDataQueryService,
-                                        UserQueryFacade userQueryFacade,
-                                        DeptQueryFacade deptQueryFacade,
-                                        DictFacade dictFacade,
-                                        JdbcTemplate jdbcTemplate,
-                                        ObjectMapper objectMapper) {
-        this.formDefService = formDefService;
-        this.formDataQueryService = formDataQueryService;
-        this.userQueryFacade = userQueryFacade;
-        this.deptQueryFacade = deptQueryFacade;
-        this.dictFacade = dictFacade;
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
+    @Autowired
+    private DeptQueryFacade deptQueryFacade;
+    @Autowired
+    private DictFacade dictFacade;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /**
      * 导出指定记录的一张明细表。
@@ -95,9 +94,9 @@ public class FormDetailTableExportService {
     public ExportFile exportTable(String formKey, String recordId, String fieldName) {
         LoginUser loginUser = LoginUserHolder.get();
         if (loginUser == null) {
-            throw new BaseException(com.sw.ck.common.exception.CommonErrorCode.UNAUTHORIZED, "未登录");
+            throw new BaseException(CommonErrorCode.UNAUTHORIZED, "未登录");
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST, "表单 '" + formKey + "' 不存在");
         }
@@ -136,7 +135,7 @@ public class FormDetailTableExportService {
             }
             for (JsonNode node : fields) {
                 String name = node.path("name").asText(null);
-                if (!fieldName.equals(name) || !"TABLE".equals(node.path("type").asText())) {
+                if (!fieldName.equals(name) || !FieldType.TABLE.name().equals(node.path("type").asText())) {
                     continue;
                 }
                 List<SubField> subFields = new ArrayList<>();
@@ -149,7 +148,7 @@ public class FormDetailTableExportService {
                         }
                         FieldType type;
                         try {
-                            type = FieldType.valueOf(sub.path("type").asText("TEXT"));
+                            type = FieldType.valueOf(sub.path("type").asText(FieldType.TEXT.name()));
                         } catch (IllegalArgumentException e) {
                             continue;
                         }
@@ -280,7 +279,7 @@ public class FormDetailTableExportService {
     }
 
     private String resolvePhysicalTable(String targetFormKey) {
-        FormDefDTO target = formDefService.getFormDefByKey(targetFormKey);
+        FormDefVO target = formDefService.getFormDefByKey(targetFormKey);
         if (target == null || target.getPhysicalTableName() == null) {
             throw new BaseException(FormErrorCode.QUERY_FORM_NOT_EXIST,
                     "引用表单 '" + targetFormKey + "' 不存在");
@@ -289,7 +288,7 @@ public class FormDetailTableExportService {
     }
 
     private String resolveDisplayColumn(String targetFormKey) {
-        FormDefDTO target = formDefService.getFormDefByKey(targetFormKey);
+        FormDefVO target = formDefService.getFormDefByKey(targetFormKey);
         if (target == null) {
             return null;
         }
@@ -300,7 +299,7 @@ public class FormDetailTableExportService {
                 return null;
             }
             for (JsonNode field : fields) {
-                if ("TEXT".equals(field.path("type").asText("TEXT")) && field.has("name")) {
+                if (FieldType.TEXT.name().equals(field.path("type").asText(FieldType.TEXT.name())) && field.has("name")) {
                     return DynamicTableSql.requireColumn(field.get("name").asText(), FieldType.TEXT);
                 }
             }
@@ -534,7 +533,7 @@ public class FormDetailTableExportService {
             return null;
         }
         if (value instanceof byte[] bytes) {
-            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            return new String(bytes, StandardCharsets.UTF_8);
         }
         return value.toString();
     }
@@ -571,11 +570,11 @@ public class FormDetailTableExportService {
         if (value instanceof LocalDateTime dateTime) {
             return pattern.format(dateTime);
         }
-        if (value instanceof java.sql.Timestamp timestamp) {
+        if (value instanceof Timestamp timestamp) {
             return pattern.format(timestamp.toLocalDateTime());
         }
-        if (value instanceof java.util.Date date) {
-            return pattern.format(LocalDateTime.ofInstant(date.toInstant(), java.time.ZoneId.systemDefault()));
+        if (value instanceof Date date) {
+            return pattern.format(LocalDateTime.ofInstant(date.toInstant(), ZoneId.systemDefault()));
         }
         if (value instanceof LocalDate date) {
             return date.toString();
@@ -597,7 +596,7 @@ public class FormDetailTableExportService {
         if (value instanceof LocalTime time) {
             return TIME.format(time);
         }
-        if (value instanceof java.sql.Time time) {
+        if (value instanceof Time time) {
             return TIME.format(time.toLocalTime());
         }
         String text = asText(value);
@@ -620,7 +619,7 @@ public class FormDetailTableExportService {
         String text = asText(raw).trim();
         if (text.startsWith("[")) {
             try {
-                JsonNode array = new com.fasterxml.jackson.databind.ObjectMapper().readTree(text);
+                JsonNode array = new ObjectMapper().readTree(text);
                 if (array.isArray()) {
                     for (JsonNode item : array) {
                         if (!item.asText("").isBlank()) {

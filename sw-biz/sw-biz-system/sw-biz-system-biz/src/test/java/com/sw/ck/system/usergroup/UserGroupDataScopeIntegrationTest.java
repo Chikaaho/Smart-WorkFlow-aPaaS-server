@@ -2,6 +2,7 @@ package com.sw.ck.system.usergroup;
 
 import com.sw.ck.common.datascope.DataScopeType;
 import com.sw.ck.common.datascope.DeptScopeProvider;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.security.LoginContextProvider;
@@ -17,6 +18,8 @@ import com.sw.ck.system.mapper.SysUserGroupMemberMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.service.SysUserGroupService;
 import com.sw.ck.system.service.impl.SysUserGroupServiceImpl;
+
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -122,11 +125,11 @@ class UserGroupDataScopeIntegrationTest {
     private Long createGroup(String code, String name, Long... memberIds) {
         // I5 fail-closed：种子/建组动作发生在 loginAs 之前，显式建立租户 0 上下文
         //（原实现依赖无上下文回落租户 0 的隐式填充）
-        if (com.sw.ck.security.holder.LoginUserHolder.get() == null) {
-            com.sw.ck.security.holder.LoginUser bootstrap = new com.sw.ck.security.holder.LoginUser();
+        if (LoginUserHolder.get() == null) {
+            LoginUser bootstrap = new LoginUser();
             bootstrap.setUserId(0L);
             bootstrap.setTenantId(0L);
-            com.sw.ck.security.holder.LoginUserHolder.set(bootstrap);
+            LoginUserHolder.set(bootstrap);
         }
         SysUserGroup withMembers = new SysUserGroup();
         withMembers.setGroupCode(code);
@@ -215,9 +218,9 @@ class UserGroupDataScopeIntegrationTest {
         Long groupId = createGroup("G-11", "研发组", u11);
 
         // u12 不在 DEPT(11) 数据范围内 → 绑定被拒绝（先删后插整体回滚）
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                         sysUserGroupService.updateMemberIds(groupId, List.of(u11, u12)))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
 
         // 原子性：拒绝后组成员仍为原样，不残留部分写入
         assertThat(sysUserGroupService.listMemberIds(groupId)).containsExactly(u11);
@@ -232,9 +235,9 @@ class UserGroupDataScopeIntegrationTest {
         loginAs(DataScopeType.ALL, u11, 11L, Set.of(), false);
         Long groupId = createGroup("G-11", "研发组", u11);
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                         sysUserGroupService.updateMemberIds(groupId, List.of(u11, disabled)))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
 
         assertThat(sysUserGroupService.listMemberIds(groupId)).containsExactly(u11);
     }
@@ -248,9 +251,9 @@ class UserGroupDataScopeIntegrationTest {
         loginAs(DataScopeType.ALL, u11, 11L, Set.of(), false);
         Long groupId = createGroup("G-11", "研发组", u11);
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                         sysUserGroupService.updateMemberIds(groupId, List.of(u11, locked)))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
 
         assertThat(sysUserGroupService.listMemberIds(groupId)).containsExactly(u11);
     }
@@ -264,9 +267,9 @@ class UserGroupDataScopeIntegrationTest {
         loginAs(DataScopeType.ALL, u11, 11L, Set.of(), false);
         Long groupId = createGroup("G-11", "研发组", u11);
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                         sysUserGroupService.updateMemberIds(groupId, List.of(u11, deleted)))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
 
         assertThat(sysUserGroupService.listMemberIds(groupId)).containsExactly(u11);
     }
@@ -278,9 +281,9 @@ class UserGroupDataScopeIntegrationTest {
         loginAs(DataScopeType.ALL, u11, 11L, Set.of(), false);
         Long groupId = createGroup("G-11", "研发组", u11);
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                         sysUserGroupService.updateMemberIds(groupId, List.of(u11, 999999L)))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
 
         assertThat(sysUserGroupService.listMemberIds(groupId)).containsExactly(u11);
     }
@@ -298,9 +301,9 @@ class UserGroupDataScopeIntegrationTest {
         loginAs(DataScopeType.ALL, u11, 11L, Set.of(), false);
         Long groupId = createGroup("G-11", "研发组", u11);
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+        Assertions.assertThatThrownBy(() ->
                         sysUserGroupService.updateMemberIds(groupId, List.of(u11, 77777L)))
-                .isInstanceOf(com.sw.ck.common.exception.BaseException.class);
+                .isInstanceOf(BaseException.class);
 
         assertThat(sysUserGroupService.listMemberIds(groupId)).containsExactly(u11);
     }
@@ -368,12 +371,12 @@ class UserGroupDataScopeIntegrationTest {
         @Bean
         public SysUserGroupService sysUserGroupService(SysUserGroupMemberMapper memberMapper, SysUserMapper userMapper,
                                                        LoginContextProvider loginContextProvider) {
-            return new SysUserGroupServiceImpl(memberMapper, userMapper, loginContextProvider);
+            return new SysUserGroupServiceImpl();
         }
 
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean

@@ -2,6 +2,7 @@ package com.sw.ck.system.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.StringUtils;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.page.PageParam;
@@ -19,10 +20,15 @@ import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
 import com.sw.ck.security.cache.LoginUserLoader;
 import com.sw.ck.system.service.SysRoleService;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
+import org.springframework.context.annotation.Lazy;
 
+import java.io.Serializable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,43 +36,29 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 系统角色 Service 实现。
  */
 @Service
+@Log4j2
 public class SysRoleServiceImpl
         extends BaseServiceImpl<SysRoleMapper, SysRole>
         implements SysRoleService {
 
-    private static final org.slf4j.Logger log =
-            org.slf4j.LoggerFactory.getLogger(SysRoleServiceImpl.class);
-
-    private final SysRoleDeptMapper sysRoleDeptMapper;
-    private final SysRoleMenuMapper sysRoleMenuMapper;
-    private final SysUserRoleMapper sysUserRoleMapper;
-    private final SysUserMapper sysUserMapper;
+    @Autowired
+    private SysRoleDeptMapper sysRoleDeptMapper;
+    @Autowired
+    private SysRoleMenuMapper sysRoleMenuMapper;
+    @Autowired
+    private SysUserRoleMapper sysUserRoleMapper;
+    @Autowired
+    private SysUserMapper sysUserMapper;
 
     /** 可选协同组件：角色停用/授权变更后立即踢出成员登录缓存，权限即时收敛。 */
-    private final LoginUserLoader loginUserLoader;
-
-    public SysRoleServiceImpl(SysRoleDeptMapper sysRoleDeptMapper) {
-        this(sysRoleDeptMapper, null);
-    }
-
-    public SysRoleServiceImpl(SysRoleDeptMapper sysRoleDeptMapper, SysRoleMenuMapper sysRoleMenuMapper) {
-        this(sysRoleDeptMapper, sysRoleMenuMapper, null, null, null);
-    }
-
     @Autowired
-    public SysRoleServiceImpl(SysRoleDeptMapper sysRoleDeptMapper, SysRoleMenuMapper sysRoleMenuMapper,
-                              SysUserRoleMapper sysUserRoleMapper, SysUserMapper sysUserMapper,
-                              @org.springframework.context.annotation.Lazy LoginUserLoader loginUserLoader) {
-        this.sysRoleDeptMapper = sysRoleDeptMapper;
-        this.sysRoleMenuMapper = sysRoleMenuMapper;
-        this.sysUserRoleMapper = sysUserRoleMapper;
-        this.sysUserMapper = sysUserMapper;
-        this.loginUserLoader = loginUserLoader;
-    }
+    @Lazy
+    private LoginUserLoader loginUserLoader;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -132,7 +124,7 @@ public class SysRoleServiceImpl
             return PageResult.empty();
         }
         return PageResult.of(sysUserMapper.selectUsersByRole(
-                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
+                new Page<>(pageParam.getPageNum(), pageParam.getPageSize()),
                 roleId));
     }
 
@@ -163,7 +155,7 @@ public class SysRoleServiceImpl
     }
 
     @Override
-    public SysRole getById(java.io.Serializable id) {
+    public SysRole getById(Serializable id) {
         SysRole role = super.getById(id);
         if (role != null) {
             role.setDeptIds(listDeptIds(role.getId()));
@@ -253,7 +245,7 @@ public class SysRoleServiceImpl
         }
         try {
             loginUserLoader.kickOut(userId);
-        } catch (org.springframework.beans.factory.NoSuchBeanDefinitionException e) {
+        } catch (NoSuchBeanDefinitionException e) {
             // 非生产装配上下文：无登录缓存可驱逐
         } catch (Exception e) {
             log.error("角色权限变更后踢出成员登录缓存失败，变更将回滚 userId={}", userId, e);

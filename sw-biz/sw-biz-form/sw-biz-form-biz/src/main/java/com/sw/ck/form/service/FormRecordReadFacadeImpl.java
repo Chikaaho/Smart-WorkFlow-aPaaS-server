@@ -1,19 +1,30 @@
 package com.sw.ck.form.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.facade.FormRecordReadFacade;
+import com.sw.ck.form.dynamic.ColumnValidation;
 import com.sw.ck.form.dynamic.FieldType;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
+import java.sql.Date;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 /**
  * 表单记录读取 Facade 实现（P63）。
  * <p>
@@ -23,24 +34,17 @@ import java.util.Optional;
  * </p>
  */
 @Service
+@Log4j2
 public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
 
-    private static final Logger log = LoggerFactory.getLogger(FormRecordReadFacadeImpl.class);
-
-    private final FormDataQueryService queryService;
-    private final FormDefService formDefService;
-    private final FormFieldValidator formFieldValidator;
-    private final ObjectMapper objectMapper;
-
-    public FormRecordReadFacadeImpl(FormDataQueryService queryService,
-                                    FormDefService formDefService,
-                                    FormFieldValidator formFieldValidator,
-                                    ObjectMapper objectMapper) {
-        this.queryService = queryService;
-        this.formDefService = formDefService;
-        this.formFieldValidator = formFieldValidator;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private FormDataQueryService queryService;
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
     public Optional<FormRecordData> findRecord(Long tenantId, String formKey, String recordId) {
@@ -48,7 +52,7 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
                 || recordId == null || recordId.isBlank()) {
             return Optional.empty();
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null) {
             return Optional.empty();
         }
@@ -57,8 +61,8 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
             raw = queryService.getRecordDetailForSystem(tenantId, formKey, recordId);
         } catch (Exception e) {
             // 记录不存在/已删除按 empty 契约返回；基础设施异常不吞（查询服务已抛受控错误码）
-            if (e instanceof com.sw.ck.common.exception.BaseException base
-                    && com.sw.ck.form.api.exception.FormErrorCode.RECORD_NOT_FOUND.getCode() == base.getCode()) {
+            if (e instanceof BaseException base
+                    && FormErrorCode.RECORD_NOT_FOUND.getCode() == base.getCode()) {
                 return Optional.empty();
             }
             throw e;
@@ -70,14 +74,14 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
         Map<String, List<Map<String, Object>>> tables = new LinkedHashMap<>();
         for (Map.Entry<String, FormFieldValidator.FieldDef> entry : fieldDefs.entrySet()) {
             FormFieldValidator.FieldDef def = entry.getValue();
-            if ("TABLE".equals(def.type())) {
+            if (FieldType.TABLE.name().equals(def.type())) {
                 List<Map<String, Object>> rows = raw.get(def.name()) instanceof List<?> list
                         ? decodeRows(def, list)
                         : List.of();
                 tables.put(def.name(), rows);
                 continue;
             }
-            if ("LABEL".equals(def.type())) {
+            if (FieldType.LABEL.name().equals(def.type())) {
                 continue;
             }
             Object value = raw.get(columnOf(def.name(), def.type()));
@@ -118,11 +122,11 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
             return null;
         }
         boolean listLike = "MULTISELECT".equals(type) || "ATTACHMENT".equals(type) || "IMAGE".equals(type)
-                || (multiple && ("USER".equals(type) || "DEPT".equals(type)));
+                || (multiple && (FormAppScopeTypes.USER.equals(type) || FormAppScopeTypes.DEPT.equals(type)));
         if (listLike && value instanceof String text && text.startsWith("[")) {
             try {
                 return objectMapper.readValue(text,
-                        new com.fasterxml.jackson.core.type.TypeReference<List<Object>>() { });
+                        new TypeReference<List<Object>>() { });
             } catch (Exception e) {
                 log.warn("Failed to decode list value for type {}: keep raw", type);
                 return value;
@@ -131,22 +135,22 @@ public class FormRecordReadFacadeImpl implements FormRecordReadFacade {
         if ("DATASOURCE".equals(type) && value instanceof String text && text.startsWith("{")) {
             try {
                 return objectMapper.readValue(text,
-                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+                        new TypeReference<Map<String, Object>>() { });
             } catch (Exception e) {
                 log.warn("Failed to decode datasource value: keep raw");
                 return value;
             }
         }
-        if (value instanceof java.time.LocalDateTime || value instanceof java.time.LocalDate
-                || value instanceof java.time.LocalTime || value instanceof java.sql.Timestamp
-                || value instanceof java.sql.Date || value instanceof java.sql.Time) {
+        if (value instanceof LocalDateTime || value instanceof LocalDate
+                || value instanceof LocalTime || value instanceof Timestamp
+                || value instanceof Date || value instanceof Time) {
             return String.valueOf(value);
         }
         return value;
     }
 
     private String columnOf(String name, String type) {
-        return com.sw.ck.form.dynamic.ColumnValidation.physicalColumnName(name,
+        return ColumnValidation.physicalColumnName(name,
                 FieldType.valueOf(type));
     }
 }

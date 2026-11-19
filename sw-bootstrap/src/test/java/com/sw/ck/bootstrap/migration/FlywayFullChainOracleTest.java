@@ -11,6 +11,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -39,7 +41,7 @@ class FlywayFullChainOracleTest {
 
         try (Connection connection = DriverManager.getConnection(url, user, password);
              Statement statement = connection.createStatement()) {
-            java.util.List<String> tables = new java.util.ArrayList<>();
+            List<String> tables = new ArrayList<>();
             try (ResultSet rs = statement.executeQuery("SELECT table_name FROM user_tables")) {
                 while (rs.next()) {
                     tables.add(rs.getString(1));
@@ -49,7 +51,7 @@ class FlywayFullChainOracleTest {
                 statement.executeUpdate("DROP TABLE \"" + table + "\" CASCADE CONSTRAINTS PURGE");
             }
             statement.execute("PURGE RECYCLEBIN");
-            java.util.List<String> views = new java.util.ArrayList<>();
+            List<String> views = new ArrayList<>();
             try (ResultSet rs = statement.executeQuery("SELECT view_name FROM user_views")) {
                 while (rs.next()) {
                     views.add(rs.getString(1));
@@ -58,7 +60,7 @@ class FlywayFullChainOracleTest {
             for (String view : views) {
                 statement.executeUpdate("DROP VIEW \"" + view + "\"");
             }
-            java.util.List<String> sequences = new java.util.ArrayList<>();
+            List<String> sequences = new ArrayList<>();
             try (ResultSet rs = statement.executeQuery("SELECT sequence_name FROM user_sequences")) {
                 while (rs.next()) {
                     sequences.add(rs.getString(1));

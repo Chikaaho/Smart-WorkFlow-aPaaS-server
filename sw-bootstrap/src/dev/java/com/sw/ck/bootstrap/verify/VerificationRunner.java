@@ -1,8 +1,11 @@
 package com.sw.ck.bootstrap.verify;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import com.baomidou.dynamic.datasource.toolkit.DynamicDataSourceContextHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.context.annotation.Profile;
@@ -12,6 +15,7 @@ import javax.sql.DataSource;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 启动后自动验证多数据源 + 租户 DS 感知：
  * <ol>
@@ -27,17 +31,13 @@ import java.util.Map;
  */
 @Profile("dev")
 @Component
+@Log4j2
 public class VerificationRunner implements CommandLineRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(VerificationRunner.class);
-
-    private final VerifyMapper verifyMapper;
-    private final DataSource dataSource;
-
-    public VerificationRunner(VerifyMapper verifyMapper, DataSource dataSource) {
-        this.verifyMapper = verifyMapper;
-        this.dataSource = dataSource;
-    }
+    @Autowired
+    private VerifyMapper verifyMapper;
+    @Autowired
+    private DataSource dataSource;
 
     @Override
     public void run(String... args) {
@@ -45,15 +45,15 @@ public class VerificationRunner implements CommandLineRunner {
 
         // 仅 dev 验证骨架：以系统操作人身份（租户 0）运行——I5 fail-closed 的租户
         // 拦截器要求业务查询携带已认证身份，本 Runner 无真实登录态
-        com.sw.ck.security.holder.LoginUser systemOperator = new com.sw.ck.security.holder.LoginUser();
+        LoginUser systemOperator = new LoginUser();
         systemOperator.setUserId(0L);
         systemOperator.setTenantId(0L);
         systemOperator.setUsername("verify-runner");
-        com.sw.ck.security.holder.LoginUserHolder.set(systemOperator);
+        LoginUserHolder.set(systemOperator);
         try {
             doVerify();
         } finally {
-            com.sw.ck.security.holder.LoginUserHolder.clear();
+            LoginUserHolder.clear();
         }
         log.info("========== 多数据源验证完成 ==========");
     }

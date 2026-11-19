@@ -2,8 +2,8 @@ package com.sw.ck.bootstrap.compat;
 
 import com.sw.ck.common.jdbc.DatabaseVendor;
 import com.sw.ck.common.jdbc.JdbcVendorSupport;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 迁移前数据库兼容性检查。
  * <p>
@@ -28,13 +29,15 @@ import java.util.Map;
  * </ul>
  */
 @Component
+@Log4j2
 public class DatabaseCompatibilityGuard {
 
-    private static final Logger log = LoggerFactory.getLogger(DatabaseCompatibilityGuard.class);
+    @Autowired
+    private DataSource dataSource;
+    private JdbcTemplate jdbcTemplate;
 
-    private final JdbcTemplate jdbcTemplate;
-
-    public DatabaseCompatibilityGuard(DataSource dataSource) {
+    @PostConstruct
+    void initJdbcTemplate() {
         // 直接依赖 DataSource，避免 JdbcTemplate/MyBatis 初始化与 Flyway 迁移策略形成循环依赖。
         this.jdbcTemplate = new JdbcTemplate(dataSource);
     }

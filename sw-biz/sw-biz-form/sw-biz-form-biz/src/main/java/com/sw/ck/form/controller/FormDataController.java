@@ -1,16 +1,16 @@
 package com.sw.ck.form.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.response.R;
 import com.sw.ck.form.api.dto.FormDataUpdateRequest;
+import com.sw.ck.form.vo.FormDataRecordVO;
 import com.sw.ck.form.service.FormDataQueryService;
 import com.sw.ck.form.service.FormDataUpdateService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单数据详情与更新入口。
  *
@@ -24,33 +24,28 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/form/data")
+@Log4j2
 public class FormDataController {
 
-    private static final Logger log = LoggerFactory.getLogger(FormDataController.class);
-
-    private final FormDataQueryService formDataQueryService;
-    private final FormDataUpdateService formDataUpdateService;
-
-    public FormDataController(FormDataQueryService formDataQueryService,
-                              FormDataUpdateService formDataUpdateService) {
-        this.formDataQueryService = formDataQueryService;
-        this.formDataUpdateService = formDataUpdateService;
-    }
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private FormDataUpdateService formDataUpdateService;
 
     /**
      * 查询单条记录详情（含子表行，供编辑回显）。
      *
      * @param formKey  表单业务标识
      * @param recordId 主表记录 UUID
-     * @return {@code R<Map>} 主记录字段 + 各子表行列表
+     * @return {@code R<FormDataRecordVO>} 主记录字段 + 各子表行列表（动态字段）
      */
     @GetMapping("/{formKey}/{recordId}")
     @PreAuthorize("@ss.hasPermi('form:data:query')")
-    public R<Map<String, Object>> getDetail(@PathVariable("formKey") String formKey,
-                                            @PathVariable("recordId") String recordId) {
+    public R<FormDataRecordVO> getDetail(@PathVariable("formKey") String formKey,
+                                          @PathVariable("recordId") String recordId) {
         log.info("Form data detail: formKey={}, recordId={}", formKey, recordId);
-        Map<String, Object> detail = formDataQueryService.getRecordDetail(formKey, recordId);
-        return R.ok(detail);
+        return R.ok(new FormDataRecordVO(
+                formDataQueryService.getRecordDetail(formKey, recordId)));
     }
 
     /**

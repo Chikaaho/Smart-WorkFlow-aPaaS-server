@@ -1,13 +1,17 @@
 package com.sw.ck.form.service.impl;
 
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.vo.FormSnapshotDetailVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
-import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.form.entity.FormStatusEnum;
 import com.sw.ck.form.service.FormDataQueryService;
+import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormFieldEnrichmentService;
-import org.springframework.stereotype.Service;
 
 import java.util.Optional;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 /**
  * {@link FormDefinitionService} 实现。
@@ -23,17 +27,12 @@ import java.util.Optional;
 @Service
 public class FormDefinitionServiceImpl implements FormDefinitionService {
 
-    private final FormDefService formDefService;
-    private final FormDataQueryService formDataQueryService;
-    private final FormFieldEnrichmentService formFieldEnrichmentService;
-
-    public FormDefinitionServiceImpl(FormDefService formDefService,
-                                     FormDataQueryService formDataQueryService,
-                                     FormFieldEnrichmentService formFieldEnrichmentService) {
-        this.formDefService = formDefService;
-        this.formDataQueryService = formDataQueryService;
-        this.formFieldEnrichmentService = formFieldEnrichmentService;
-    }
+    @Autowired
+    private FormDefService formDefService;
+    @Autowired
+    private FormDataQueryService formDataQueryService;
+    @Autowired
+    private FormFieldEnrichmentService formFieldEnrichmentService;
 
     @Override
     public Optional<String> getFormDefinition(String formKey) {
@@ -46,7 +45,7 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
     }
 
     @Override
-    public Optional<FormDefDTO> getFormDef(String formKey) {
+    public Optional<FormDefVO> getFormDef(String formKey) {
         return Optional.ofNullable(formDefService.getFormDefByKey(formKey));
     }
 
@@ -55,13 +54,13 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
         if (formKey == null || formKey.isBlank() || formVersion == null) {
             return Optional.empty();
         }
-        FormDefDTO def = formDefService.getFormDefByKey(formKey);
+        FormDefVO def = formDefService.getFormDefByKey(formKey);
         if (def == null || def.getId() == null) {
             return Optional.empty();
         }
         try {
             return Optional.ofNullable(formDefService.getSnapshot(def.getId(), formVersion))
-                    .map(com.sw.ck.form.api.dto.FormSnapshotDetailDTO::getDefinition);
+                    .map(FormSnapshotDetailVO::getDefinition);
         } catch (RuntimeException e) {
             // 该版本无快照（历史数据）按目标缺失处理，由调用方回退当前定义
             return Optional.empty();
@@ -81,11 +80,11 @@ public class FormDefinitionServiceImpl implements FormDefinitionService {
         if (formKey == null || formKey.isBlank()) {
             return Optional.empty();
         }
-        FormDefDTO formDef = formDefService.getFormDefByKey(formKey);
+        FormDefVO formDef = formDefService.getFormDefByKey(formKey);
         if (formDef == null || !formDefService.isCurrentUserVisible(formKey)) {
             return Optional.of(false);
         }
-        if (!"view".equals(action) && !"PUBLISHED".equals(formDef.getStatus())) {
+        if (!"view".equals(action) && !FormStatusEnum.PUBLISHED.getCode().equals(formDef.getStatus())) {
             return Optional.of(false);
         }
         return Optional.of(formFieldEnrichmentService == null

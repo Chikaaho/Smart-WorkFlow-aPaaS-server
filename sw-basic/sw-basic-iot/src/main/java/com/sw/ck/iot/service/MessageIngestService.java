@@ -1,9 +1,13 @@
 package com.sw.ck.iot.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+
+import com.sw.ck.common.trace.DiagnosticText;
 import com.sw.ck.iot.entity.IotCommand;
 import com.sw.ck.iot.entity.IotDevice;
 import com.sw.ck.iot.entity.IotEventRecord;
@@ -20,8 +24,7 @@ import com.sw.ck.iot.mapper.IotProductMapper;
 import com.sw.ck.iot.mapper.IotPropertyRecordMapper;
 import com.sw.ck.iot.mapper.IotThingModelMapper;
 import com.sw.ck.iot.mapper.IotTopicMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +36,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.iot.entity.IotCommandStatusEnum;
+import com.sw.ck.iot.entity.IotDirectionEnum;
+import com.sw.ck.iot.entity.IotMessageParseStatusEnum;
 /**
  * 自建 MQTT 订阅消息统一入口。
  * <p>
@@ -42,47 +49,36 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Log4j2
 public class MessageIngestService {
-
-    private static final Logger log = LoggerFactory.getLogger(MessageIngestService.class);
 
     public static final String TYPE_PROPERTY = "PROPERTY";
     public static final String TYPE_EVENT = "EVENT";
     public static final String TYPE_ACTION_RESULT = "ACTION_RESULT";
     public static final String TYPE_RAW = "RAW";
 
-    private final IotTopicMapper topicMapper;
-    private final IotDeviceMapper deviceMapper;
-    private final IotMessageLogMapper messageLogMapper;
-    private final IotPropertyRecordMapper propertyRecordMapper;
-    private final IotEventRecordMapper eventRecordMapper;
-    private final IotCommandMapper commandMapper;
-    private final IotProductMapper productMapper;
-    private final IotThingModelMapper thingModelMapper;
-    private final RuleEngineService ruleEngineService;
-    private final IotScriptService scriptService;
-
-    public MessageIngestService(IotTopicMapper topicMapper,
-                                IotDeviceMapper deviceMapper,
-                                IotMessageLogMapper messageLogMapper,
-                                IotPropertyRecordMapper propertyRecordMapper,
-                                IotEventRecordMapper eventRecordMapper,
-                                IotCommandMapper commandMapper,
-                                IotProductMapper productMapper,
-                                IotThingModelMapper thingModelMapper,
-                                @Lazy RuleEngineService ruleEngineService,
-                                @Lazy IotScriptService scriptService) {
-        this.topicMapper = topicMapper;
-        this.deviceMapper = deviceMapper;
-        this.messageLogMapper = messageLogMapper;
-        this.propertyRecordMapper = propertyRecordMapper;
-        this.eventRecordMapper = eventRecordMapper;
-        this.commandMapper = commandMapper;
-        this.productMapper = productMapper;
-        this.thingModelMapper = thingModelMapper;
-        this.ruleEngineService = ruleEngineService;
-        this.scriptService = scriptService;
-    }
+    @Autowired
+    private IotTopicMapper topicMapper;
+    @Autowired
+    private IotDeviceMapper deviceMapper;
+    @Autowired
+    private IotMessageLogMapper messageLogMapper;
+    @Autowired
+    private IotPropertyRecordMapper propertyRecordMapper;
+    @Autowired
+    private IotEventRecordMapper eventRecordMapper;
+    @Autowired
+    private IotCommandMapper commandMapper;
+    @Autowired
+    private IotProductMapper productMapper;
+    @Autowired
+    private IotThingModelMapper thingModelMapper;
+    @Autowired
+    @Lazy
+    private RuleEngineService ruleEngineService;
+    @Autowired
+    @Lazy
+    private IotScriptService scriptService;
 
     /**
      * 消息统一入口（由 MqttBrokerManager 回调）。
@@ -91,7 +87,7 @@ public class MessageIngestService {
      * 无事务时 TransactionalEventListener 将静默丢弃事件。
      * </p>
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void ingest(Long connId, String topic, String payload, int qos, String messageId) {
         IotTopic topicCfg = resolveTopicConfig(connId, topic);
         String dedupKey = sha256(topic + "|" + payload);
@@ -99,7 +95,7 @@ public class MessageIngestService {
         IotMessageLog msgLog = new IotMessageLog();
         msgLog.setConnId(connId);
         msgLog.setTopic(topic);
-        msgLog.setDirection("UP");
+        msgLog.setDirection(IotDirectionEnum.UP.getCode());
         msgLog.setMessageId(messageId);
         msgLog.setDedupKey(dedupKey);
         msgLog.setPayload(payload);
@@ -108,9 +104,9 @@ public class MessageIngestService {
         // 重复消息去重：同 dedupKey 已存在则仅记录
         Long dup = messageLogMapper.selectCount(new LambdaQueryWrapper<IotMessageLog>()
                 .eq(IotMessageLog::getDedupKey, dedupKey)
-                .ne(IotMessageLog::getParseStatus, "DUPLICATED"));
+                .ne(IotMessageLog::getParseStatus, IotMessageParseStatusEnum.DUPLICATED.getCode()));
         if (dup != null && dup > 0) {
-            msgLog.setParseStatus("DUPLICATED");
+            msgLog.setParseStatus(IotMessageParseStatusEnum.DUPLICATED.getCode());
             messageLogMapper.insert(msgLog);
             return;
         }
@@ -125,19 +121,19 @@ public class MessageIngestService {
                 case TYPE_PROPERTY -> {
                     requireDevice(device, topic);
                     handleProperty(device, payload, msgLog, dedupKey);
-                    msgLog.setParseStatus("PARSED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.PARSED.getCode());
                 }
                 case TYPE_EVENT -> {
                     requireDevice(device, topic);
                     handleEvent(device, payload, msgLog, dedupKey);
-                    msgLog.setParseStatus("PARSED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.PARSED.getCode());
                 }
                 case TYPE_ACTION_RESULT -> {
                     handleActionResult(payload, msgLog);
-                    msgLog.setParseStatus("PARSED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.PARSED.getCode());
                 }
                 default -> {
-                    msgLog.setParseStatus("RECEIVED");
+                    msgLog.setParseStatus(IotMessageParseStatusEnum.RECEIVED.getCode());
                     // RAW 消息同样进入 MESSAGE 触发脚本路径
                     if (device != null) {
                         scriptService.onMessageTriggered(device, topic, payload, dedupKey);
@@ -145,8 +141,8 @@ public class MessageIngestService {
                 }
             }
         } catch (Exception e) {
-            msgLog.setParseStatus("FAILED");
-            msgLog.setParseError(com.sw.ck.common.trace.DiagnosticText.sanitize(e.getMessage(), 500));
+            msgLog.setParseStatus(IotMessageParseStatusEnum.FAILED.getCode());
+            msgLog.setParseError(DiagnosticText.sanitize(e.getMessage(), 500));
             log.warn("消息解析失败: topic={}, error={}", topic, e.getMessage());
         }
         messageLogMapper.insert(msgLog);
@@ -271,7 +267,7 @@ public class MessageIngestService {
         }
         // SUCCESS/FAILED 是设备命令终态。设备重投或网关重复回调只能被记录，
         // 不得覆盖结果、回包时间或触发第二次业务副作用。
-        if ("SUCCESS".equals(command.getStatus()) || "FAILED".equals(command.getStatus())) {
+        if (IotCommandStatusEnum.SUCCESS.getCode().equals(command.getStatus()) || IotCommandStatusEnum.FAILED.getCode().equals(command.getStatus())) {
             log.info("忽略已终态命令的重复行为结果: commandId={}, status={}",
                     commandId, command.getStatus());
             msgLog.setDeviceId(command.getDeviceId());

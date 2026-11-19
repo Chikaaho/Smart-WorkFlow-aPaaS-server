@@ -46,9 +46,9 @@ public interface NotifyTargetResolver {
         }
         return resolvePhone(userId)
                 .map(phone -> phone.isBlank()
-                        ? NotifyTargetResolution.of("UNRESOLVED", "SYS_USER", null)
-                        : NotifyTargetResolution.of("RESOLVED", "SYS_USER", null))
-                .or(() -> Optional.of(NotifyTargetResolution.of("UNRESOLVED", "SYS_USER", null)));
+                        ? NotifyTargetResolution.of(NotifyTargetStatusEnum.UNRESOLVED.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null)
+                        : NotifyTargetResolution.of(NotifyTargetStatusEnum.RESOLVED.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null))
+                .or(() -> Optional.of(NotifyTargetResolution.of(NotifyTargetStatusEnum.UNRESOLVED.getCode(), NotifyTargetSourceEnum.SYS_USER.getCode(), null)));
     }
 
     // ==================== I6 扩展 ====================

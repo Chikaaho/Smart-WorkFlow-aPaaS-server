@@ -7,6 +7,7 @@ import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysRole;
 import com.sw.ck.system.entity.SysRoleMenu;
 import com.sw.ck.system.entity.SysTenant;
+import com.sw.ck.system.entity.SysTenantStatusAudit;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.entity.SysUserRole;
 import com.sw.ck.system.mapper.SysDeptMapper;
@@ -16,13 +17,19 @@ import com.sw.ck.system.mapper.SysTenantMapper;
 import com.sw.ck.system.mapper.SysTenantStatusAuditMapper;
 import com.sw.ck.system.mapper.SysUserMapper;
 import com.sw.ck.system.mapper.SysUserRoleMapper;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
@@ -31,7 +38,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -41,20 +47,29 @@ import static org.mockito.Mockito.when;
  * T020 租户管理行为证据：授权边界、租户 0 保留、原子初始化与启停入参校验。
  * 数据库层由真实迁移与实体映射承担，本测试锁定服务层可观察行为。
  */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 @DisplayName("T020 租户管理服务行为")
 class TenantAdminServiceTest {
 
-    private final SysTenantMapper tenantMapper = mock(SysTenantMapper.class);
-    private final SysDeptMapper deptMapper = mock(SysDeptMapper.class);
-    private final SysUserMapper userMapper = mock(SysUserMapper.class);
-    private final SysRoleMapper roleMapper = mock(SysRoleMapper.class);
-    private final SysRoleMenuMapper roleMenuMapper = mock(SysRoleMenuMapper.class);
-    private final SysUserRoleMapper userRoleMapper = mock(SysUserRoleMapper.class);
-    private final SysTenantStatusAuditMapper statusAuditMapper = mock(SysTenantStatusAuditMapper.class);
-    private final PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
-    private final TenantAdminService service = new TenantAdminService(
-            tenantMapper, deptMapper, userMapper, roleMapper, roleMenuMapper, userRoleMapper, statusAuditMapper, passwordEncoder,
-            mock(PlatformTransactionManager.class));
+    @Mock
+    private SysTenantMapper tenantMapper;
+    @Mock
+    private SysDeptMapper deptMapper;
+    @Mock
+    private SysUserMapper userMapper;
+    @Mock
+    private SysRoleMapper roleMapper;
+    @Mock
+    private SysRoleMenuMapper roleMenuMapper;
+    @Mock
+    private SysUserRoleMapper userRoleMapper;
+    @Mock
+    private SysTenantStatusAuditMapper statusAuditMapper;
+    @Mock
+    private PasswordEncoder passwordEncoder;
+    @InjectMocks
+    private TenantAdminService service;
 
     @BeforeEach
     void setUp() {
@@ -233,8 +248,8 @@ class TenantAdminServiceTest {
                 .hasMessageContaining("变更原因");
         service.updateStatus(93L, 1, "季度暂停");
 
-        ArgumentCaptor<com.sw.ck.system.entity.SysTenantStatusAudit> audit =
-                ArgumentCaptor.forClass(com.sw.ck.system.entity.SysTenantStatusAudit.class);
+        ArgumentCaptor<SysTenantStatusAudit> audit =
+                ArgumentCaptor.forClass(SysTenantStatusAudit.class);
         verify(statusAuditMapper).insert(audit.capture());
         assertThat(audit.getValue().getTenantId()).isEqualTo(93L);
         assertThat(audit.getValue().getAction()).isEqualTo("DISABLE");

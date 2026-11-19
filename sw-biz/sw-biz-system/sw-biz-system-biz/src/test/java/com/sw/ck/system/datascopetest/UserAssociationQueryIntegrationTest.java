@@ -9,6 +9,8 @@ import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.UserPageQuery;
+
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -70,7 +74,7 @@ class UserAssociationQueryIntegrationTest {
     @Test
     void invalidRole_rollsBackUserAndRelationsTogether() {
         SysUser user = new SysUser(); user.setUsername("rollback-user"); user.setRealName("rollback"); user.setStatus(0); user.setTenantId(1L);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createWithAssociations(user, "secret", java.util.List.of(999L), java.util.List.of()))
+        Assertions.assertThatThrownBy(() -> service.createWithAssociations(user, "secret", List.of(999L), List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_user WHERE username='rollback-user'", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_user_role ur JOIN sys_user u ON u.id=ur.user_id WHERE u.username='rollback-user'", Integer.class)).isZero();
@@ -78,7 +82,7 @@ class UserAssociationQueryIntegrationTest {
 
     @Test
     void directBinding_superadminIsRejected() {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.updateRoleIds(100L, java.util.List.of(12L)))
+        Assertions.assertThatThrownBy(() -> service.updateRoleIds(100L, List.of(12L)))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sys_user_role WHERE user_id=100 AND role_id=12 AND deleted=0", Integer.class)).isZero();
     }

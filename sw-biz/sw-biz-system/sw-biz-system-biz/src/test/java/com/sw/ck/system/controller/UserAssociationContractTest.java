@@ -2,6 +2,9 @@ package com.sw.ck.system.controller;
 
 import com.sw.ck.common.datascope.DataScope;
 import com.sw.ck.system.mapper.SysUserMapper;
+import com.sw.ck.system.service.UserPageQuery;
+
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,8 +22,8 @@ class UserAssociationContractTest {
 
     @Test
     void associationQueryMustRemainDataScoped() throws NoSuchMethodException {
-        DataScope scope = SysUserMapper.class.getMethod("selectUserPageByQuery", com.baomidou.mybatisplus.extension.plugins.pagination.Page.class,
-                com.sw.ck.system.service.UserPageQuery.class).getAnnotation(DataScope.class);
+        DataScope scope = SysUserMapper.class.getMethod("selectUserPageByQuery", Page.class,
+                UserPageQuery.class).getAnnotation(DataScope.class);
         assertThat(scope).isNotNull();
         assertThat(scope.deptAlias()).isEqualTo("u");
         assertThat(scope.userAlias()).isEqualTo("u");

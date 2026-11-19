@@ -5,13 +5,14 @@ import com.sw.ck.bpm.api.node.BpmNodeCapability;
 import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
-import org.flowable.bpmn.model.FlowElement;
-import org.flowable.bpmn.model.StartEvent;
-import org.springframework.stereotype.Component;
 
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+
+import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.StartEvent;
+import org.springframework.stereotype.Component;
 
 import static com.sw.ck.bpm.api.node.BpmNodeCapability.CONFIG_VALIDATE;
 import static com.sw.ck.bpm.api.node.BpmNodeCapability.DESIGN;
@@ -30,7 +31,7 @@ public class StartEventTranslator implements NodeTypeTranslator {
 
     @Override
     public Optional<String> type() {
-        return Optional.of("START");
+        return Optional.of(GraphElement.TYPE_START);
     }
 
     @Override

@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.BpmResourceOpsViews;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.service.ResourcePolicyService;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import com.sw.ck.bpm.process.vo.BpmResourcePolicyVO;
 
 /**
  * P62 资源保障运维入口（复用现有流程运维域，不新增外部路由）。
@@ -29,56 +32,52 @@ import java.util.List;
 @RequestMapping("/workflow/resource")
 public class BpmResourceOpsController {
 
-    private final ResourcePolicyService policyService;
-    private final BpmResourceOpsService opsService;
-
-    public BpmResourceOpsController(ResourcePolicyService policyService,
-                                    BpmResourceOpsService opsService) {
-        this.policyService = policyService;
-        this.opsService = opsService;
-    }
+    @Autowired
+    private ResourcePolicyService policyService;
+    @Autowired
+    private BpmResourceOpsService opsService;
 
     // ==================== 策略（RG01：服务端策略配置/授权及发布校验） ====================
 
     @GetMapping("/policy")
     @PreAuthorize("@ss.hasPermi('workflow:resource:view')")
-    public R<List<BpmResourcePolicy>> listPolicies() {
-        return R.ok(policyService.listAll());
+    public R<List<BpmResourcePolicyVO>> listPolicies() {
+        return R.ok(policyService.listAll() == null ? List.of() : policyService.listAll().stream().map(BpmResourcePolicyVO::from).toList());
     }
 
     @GetMapping("/policy/{id}")
     @PreAuthorize("@ss.hasPermi('workflow:resource:view')")
-    public R<BpmResourcePolicy> getPolicy(@PathVariable Long id) {
-        return R.ok(policyService.getById(id));
+    public R<BpmResourcePolicyVO> getPolicy(@PathVariable Long id) {
+        return R.ok(BpmResourcePolicyVO.from(policyService.getById(id)));
     }
 
     /** 创建新策略版本（DRAFT、默认关闭；非法额度在保存与启用检查中均被拒绝）。 */
     @PostMapping("/policy")
     @PreAuthorize("@ss.hasPermi('workflow:resource:manage')")
-    public R<BpmResourcePolicy> createPolicy(@RequestBody BpmResourcePolicy policy) {
-        return R.ok(policyService.create(policy));
+    public R<BpmResourcePolicyVO> createPolicy(@RequestBody BpmResourcePolicy policy) {
+        return R.ok(BpmResourcePolicyVO.from(policyService.create(policy)));
     }
 
     /** 启用检查 + 启用（保留份额/消费者/预算相容性检查失败明确拒绝并留审计）。 */
     @PostMapping("/policy/{id}/enable")
     @PreAuthorize("@ss.hasPermi('workflow:resource:manage')")
-    public R<BpmResourcePolicy> enablePolicy(@PathVariable Long id,
+    public R<BpmResourcePolicyVO> enablePolicy(@PathVariable Long id,
                                              @RequestBody(required = false) PolicyRemarkRequest request) {
-        return R.ok(policyService.enable(id, request == null ? null : request.remark()));
+        return R.ok(BpmResourcePolicyVO.from(policyService.enable(id, request == null ? null : request.remark())));
     }
 
     @PostMapping("/policy/{id}/disable")
     @PreAuthorize("@ss.hasPermi('workflow:resource:manage')")
-    public R<BpmResourcePolicy> disablePolicy(@PathVariable Long id) {
-        return R.ok(policyService.disable(id));
+    public R<BpmResourcePolicyVO> disablePolicy(@PathVariable Long id) {
+        return R.ok(BpmResourcePolicyVO.from(policyService.disable(id)));
     }
 
     /** 停新受理开关：TRUE 后新受理明确拒绝，已有工作按原合同结算。 */
     @PostMapping("/policy/{id}/stop-acceptance")
     @PreAuthorize("@ss.hasPermi('workflow:resource:manage')")
-    public R<BpmResourcePolicy> stopAcceptance(@PathVariable Long id,
+    public R<BpmResourcePolicyVO> stopAcceptance(@PathVariable Long id,
                                                @RequestBody StopAcceptanceRequest request) {
-        return R.ok(policyService.stopAcceptance(id, request != null && Boolean.TRUE.equals(request.stop())));
+        return R.ok(BpmResourcePolicyVO.from(policyService.stopAcceptance(id, request != null && Boolean.TRUE.equals(request.stop()))));
     }
 
     /** 启用检查预检（不落库；供启用前校验与画像页面展示）。 */

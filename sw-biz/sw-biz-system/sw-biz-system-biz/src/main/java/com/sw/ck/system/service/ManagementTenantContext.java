@@ -1,13 +1,19 @@
 package com.sw.ck.system.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.entity.SysTenant;
+import com.sw.ck.system.entity.SysUser;
 import com.sw.ck.system.mapper.SysTenantMapper;
+
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -20,13 +26,10 @@ import java.util.stream.Collectors;
 /** 管理操作的操作者与目标租户分别校验；筛选不改写登录身份。 */
 @Service
 public class ManagementTenantContext {
-    private final SysTenantMapper tenants;
-    private final TenantValidityService validity;
-
-    public ManagementTenantContext(SysTenantMapper tenants, TenantValidityService validity) {
-        this.tenants = tenants;
-        this.validity = validity;
-    }
+    @Autowired
+    private SysTenantMapper tenants;
+    @Autowired
+    private TenantValidityService validity;
 
     public record Option(Long id, String name, String code, boolean writable) {}
 
@@ -86,16 +89,16 @@ public class ManagementTenantContext {
         }
     }
 
-    public List<com.sw.ck.system.entity.SysUser> decorateUsers(List<com.sw.ck.system.entity.SysUser> rows) {
+    public List<SysUser> decorateUsers(List<SysUser> rows) {
         if (rows == null || rows.isEmpty()) return rows;
-        Map<Long, String> labels = names(rows.stream().map(com.sw.ck.system.entity.SysUser::getTenantId).toList());
+        Map<Long, String> labels = names(rows.stream().map(SysUser::getTenantId).toList());
         rows.forEach(row -> row.setTenantName(labels.get(row.getTenantId())));
         return rows;
     }
 
-    public List<com.sw.ck.system.entity.SysDept> decorateDepartments(List<com.sw.ck.system.entity.SysDept> rows) {
+    public List<SysDept> decorateDepartments(List<SysDept> rows) {
         if (rows == null || rows.isEmpty()) return rows;
-        Map<Long, String> labels = names(rows.stream().map(com.sw.ck.system.entity.SysDept::getTenantId).toList());
+        Map<Long, String> labels = names(rows.stream().map(SysDept::getTenantId).toList());
         rows.forEach(row -> row.setTenantName(labels.get(row.getTenantId())));
         return rows;
     }

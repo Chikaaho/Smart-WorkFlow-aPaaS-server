@@ -1,5 +1,7 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -14,6 +16,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Optional;
+import com.sw.ck.system.vo.SysDictTypeVO;
+import com.sw.ck.system.vo.SysDictDataVO;
 
 /**
  * 字典管理控制器。
@@ -25,17 +29,12 @@ import java.util.Optional;
 @RequestMapping("/system/dict")
 public class DictController {
 
-    private final SysDictTypeService sysDictTypeService;
-    private final SysDictDataService sysDictDataService;
-    private final DictFacade dictFacade;
-
-    public DictController(SysDictTypeService sysDictTypeService,
-                          SysDictDataService sysDictDataService,
-                          DictFacade dictFacade) {
-        this.sysDictTypeService = sysDictTypeService;
-        this.sysDictDataService = sysDictDataService;
-        this.dictFacade = dictFacade;
-    }
+    @Autowired
+    private SysDictTypeService sysDictTypeService;
+    @Autowired
+    private SysDictDataService sysDictDataService;
+    @Autowired
+    private DictFacade dictFacade;
 
     // ========== 字典类型 ==========
 
@@ -43,21 +42,21 @@ public class DictController {
      * 分页查询字典类型。
      */
     @PostMapping("/type/page")
-    public R<PageResult<SysDictType>> pageType(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysDictTypeVO>> pageType(@RequestParam(defaultValue = "1") long pageNum,
                                                 @RequestParam(defaultValue = "10") long pageSize,
                                                 @RequestBody(required = false) SysDictType query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysDictTypeService.page(pageParam, query));
+        return R.ok(PageResult.map(sysDictTypeService.page(pageParam, query), SysDictTypeVO::from));
     }
 
     /**
      * 获取字典类型详情。
      */
     @GetMapping("/type/{id}")
-    public R<SysDictType> getType(@PathVariable Long id) {
-        return R.ok(sysDictTypeService.getById(id));
+    public R<SysDictTypeVO> getType(@PathVariable Long id) {
+        return R.ok(SysDictTypeVO.from(sysDictTypeService.getById(id)));
     }
 
     /**
@@ -92,13 +91,13 @@ public class DictController {
      * 分页查询字典数据项。
      */
     @PostMapping("/data/page")
-    public R<PageResult<SysDictData>> pageData(@RequestParam(defaultValue = "1") long pageNum,
+    public R<PageResult<SysDictDataVO>> pageData(@RequestParam(defaultValue = "1") long pageNum,
                                                 @RequestParam(defaultValue = "10") long pageSize,
                                                 @RequestBody(required = false) SysDictData query) {
         PageParam pageParam = new PageParam();
         pageParam.setPageNum(pageNum);
         pageParam.setPageSize(pageSize);
-        return R.ok(sysDictDataService.page(pageParam, query));
+        return R.ok(PageResult.map(sysDictDataService.page(pageParam, query), SysDictDataVO::from));
     }
 
     /**
@@ -118,8 +117,8 @@ public class DictController {
      * 获取字典数据项详情。
      */
     @GetMapping("/data/{id}")
-    public R<SysDictData> getData(@PathVariable Long id) {
-        return R.ok(sysDictDataService.getById(id));
+    public R<SysDictDataVO> getData(@PathVariable Long id) {
+        return R.ok(SysDictDataVO.from(sysDictDataService.getById(id)));
     }
 
     /**

@@ -1,14 +1,26 @@
 package com.sw.ck.system.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
+import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.common.exception.CommonErrorCode;
 import com.sw.ck.common.response.R;
 import com.sw.ck.system.entity.SysDept;
 import com.sw.ck.system.service.DeptQuery;
+import com.sw.ck.system.service.ManagementTenantContext;
 import com.sw.ck.system.service.SysDeptService;
+
 import jakarta.validation.Valid;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
+import com.sw.ck.system.vo.SysDeptVO;
 
 /**
  * 部门管理控制器。
@@ -17,14 +29,10 @@ import java.util.List;
 @RequestMapping("/system/dept")
 public class DeptController {
 
-    private final SysDeptService sysDeptService;
-    private final com.sw.ck.system.service.ManagementTenantContext tenantContext;
-
-    public DeptController(SysDeptService sysDeptService,
-                          com.sw.ck.system.service.ManagementTenantContext tenantContext) {
-        this.sysDeptService = sysDeptService;
-        this.tenantContext = tenantContext;
-    }
+    @Autowired
+    private SysDeptService sysDeptService;
+    @Autowired
+    private ManagementTenantContext tenantContext;
 
     /**
      * 查询部门树。
@@ -37,7 +45,7 @@ public class DeptController {
      */
     @GetMapping("/tree")
     @PreAuthorize("@ss.hasPermi('system:dept:list')")
-    public R<List<SysDept>> tree(@RequestParam(required = false) String name,
+    public R<List<SysDeptVO>> tree(@RequestParam(required = false) String name,
                                  @RequestParam(required = false) Integer status,
                                  @RequestParam(required = false) Long tenantId) {
         DeptQuery query = new DeptQuery();
@@ -46,7 +54,7 @@ public class DeptController {
         query.setTenantId(tenantContext.readTarget(tenantId));
         List<SysDept> rows = sysDeptService.listTree(query);
         tenantContext.decorateDepartments(rows);
-        return R.ok(rows);
+        return R.ok(rows.stream().map(SysDeptVO::from).toList());
     }
 
     /**
@@ -63,7 +71,7 @@ public class DeptController {
         query.setStatus(0);
         query.setTenantId(tenantContext.readTarget(null));
         List<SysDept> rows = sysDeptService.listTree(query);
-        List<DeptOptionDTO> out = new java.util.ArrayList<>(rows.size());
+        List<DeptOptionDTO> out = new ArrayList<>(rows.size());
         for (SysDept row : rows) {
             out.add(new DeptOptionDTO(String.valueOf(row.getId()), row.getName(),
                     row.getParentId() == null ? null : String.valueOf(row.getParentId())));
@@ -72,9 +80,9 @@ public class DeptController {
     }
 
     /** 内嵌 DTO：部门候选最小字段（id/name/parentId）。 */
-    @lombok.Data
-    @lombok.AllArgsConstructor
-    @lombok.NoArgsConstructor
+    @Data
+    @AllArgsConstructor
+    @NoArgsConstructor
     public static class DeptOptionDTO {
         private String id;
         private String name;
@@ -86,10 +94,10 @@ public class DeptController {
      */
     @GetMapping("/{id}")
     @PreAuthorize("@ss.hasPermi('system:dept:list')")
-    public R<SysDept> get(@PathVariable Long id) {
+    public R<SysDeptVO> get(@PathVariable Long id) {
         SysDept dept = sysDeptService.getById(id);
         if (dept != null) tenantContext.decorateDepartments(List.of(dept));
-        return R.ok(dept);
+        return R.ok(SysDeptVO.from(dept));
     }
 
     /**
@@ -126,8 +134,8 @@ public class DeptController {
     }
     private SysDept requireManagementDepartment(Long id) {
         SysDept dept = sysDeptService.getById(id);
-        if (dept == null) throw new com.sw.ck.common.exception.BaseException(
-                com.sw.ck.common.exception.CommonErrorCode.PARAM_ERROR, "部门不存在或无权访问");
+        if (dept == null) throw new BaseException(
+                CommonErrorCode.PARAM_ERROR, "部门不存在或无权访问");
         return dept;
     }
 }

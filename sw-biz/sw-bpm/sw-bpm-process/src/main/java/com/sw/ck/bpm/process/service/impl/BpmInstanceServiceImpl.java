@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.process.dto.InstanceFilterDTO;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.mapper.BpmInstanceMapper;
@@ -23,14 +25,10 @@ public class BpmInstanceServiceImpl
         extends BaseServiceImpl<BpmInstanceMapper, BpmInstance>
         implements BpmInstanceService {
 
-    private final LoginContextProvider loginContextProvider;
-    private final DeptScopeProvider deptScopeProvider;
-
-    public BpmInstanceServiceImpl(LoginContextProvider loginContextProvider,
-                                  DeptScopeProvider deptScopeProvider) {
-        this.loginContextProvider = loginContextProvider;
-        this.deptScopeProvider = deptScopeProvider;
-    }
+    @Autowired
+    private LoginContextProvider loginContextProvider;
+    @Autowired
+    private DeptScopeProvider deptScopeProvider;
 
     @Override
     public Optional<BpmInstance> findByProcessInstanceId(String processInstanceId) {

@@ -22,6 +22,7 @@ import com.sw.ck.system.service.SysDeptService;
 import com.sw.ck.system.service.SysUserService;
 import com.sw.ck.system.service.impl.SysDeptServiceImpl;
 import com.sw.ck.system.service.impl.SysUserServiceImpl;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -40,6 +41,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -316,7 +318,7 @@ class SysDeptQueryIntegrationTest {
 
         List<SysDept> scoped = scopedMapper.selectScoped();
 
-        assertThat(scoped.stream().map(SysDept::getId).collect(java.util.stream.Collectors.toSet()))
+        assertThat(scoped.stream().map(SysDept::getId).collect(Collectors.toSet()))
                 .as("SELF 范围仅 create_by=900：他人部门(7)被数据范围拦截；"
                         + "租户 2 的 100/101 被租户拦截；已删除 200 被逻辑删除拦截——"
                         + "证明走同一授权查询通道时三层约束全部生效")
@@ -374,19 +376,19 @@ class SysDeptQueryIntegrationTest {
         @Bean
         public DeptScopeProvider deptScopeProvider(@Lazy SysDeptMapper sysDeptMapper) {
             // @Lazy 对齐生产装配：DeptScopeProviderImpl 处于拦截器链依赖图中
-            return new DeptScopeProviderImpl(sysDeptMapper);
+            return new DeptScopeProviderImpl();
         }
 
         @Bean
         public SysDeptService sysDeptService(SysUserService sysUserService) {
-            return new SysDeptServiceImpl(sysUserService);
+            return new SysDeptServiceImpl();
         }
 
         @Bean
         public SysUserService sysUserService(PasswordEncoder passwordEncoder, SysUserRoleMapper userRoleMapper,
                                              SysUserPostMapper userPostMapper, SysRoleMapper roleMapper,
                                              SysPostMapper postMapper) {
-            return new SysUserServiceImpl(passwordEncoder, userRoleMapper, userPostMapper, roleMapper, postMapper);
+            return new SysUserServiceImpl();
         }
 
         @Bean

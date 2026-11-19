@@ -1,13 +1,13 @@
 package com.sw.ck.bpm.process.tool;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Agent 内部工具：查询近期流程实例记录（0.2.4，通用能力，经工具白名单注册）。
  * <p>
@@ -27,17 +28,13 @@ import java.util.Map;
  * </p>
  */
 @Component("agentProcessQueryTool")
+@Log4j2
 public class AgentProcessQueryTool {
-
-    private static final Logger log = LoggerFactory.getLogger(AgentProcessQueryTool.class);
 
     private static final int MAX_LIMIT = 20;
 
-    private final ObjectProvider<BpmInstanceService> instanceServiceProvider;
-
-    public AgentProcessQueryTool(ObjectProvider<BpmInstanceService> instanceServiceProvider) {
-        this.instanceServiceProvider = instanceServiceProvider;
-    }
+    @Autowired
+    private ObjectProvider<BpmInstanceService> instanceServiceProvider;
 
     /** 内部工具统一签名：单字符串入参、字符串出参。 */
     public String execute(String inputJson) {

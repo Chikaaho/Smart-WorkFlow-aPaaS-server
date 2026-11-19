@@ -1,26 +1,38 @@
 package com.sw.ck.bootstrap.p63;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.api.IotCommandReservationFacade;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,7 +74,7 @@ class P63ConfigAuthorityTypePgTest {
     void setUp() throws Exception {
         pg = EmbeddedPostgres.builder().start();
         String pgUrl = "jdbc:postgresql://127.0.0.1:" + pg.getPort() + "/postgres?stringtype=unspecified";
-        Map<String, Object> props = new java.util.HashMap<>();
+        Map<String, Object> props = new HashMap<>();
         props.put("server.port", "0");
         props.put("spring.main.allow-bean-definition-overriding", "true");
         props.put("spring.datasource.dynamic.datasource.master.driver-class-name", "org.postgresql.Driver");
@@ -70,31 +82,31 @@ class P63ConfigAuthorityTypePgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p63-ca-type-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p63-ca-type-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.iot.enabled", "true");
         props.put("sw.iot.receipt.secret", "p63-ca-type-receipt-secret");
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p63-ca-type", props));
+                            new MapPropertySource("p63-ca-type", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p63CaTypeLoginContextProvider", provider);
                 })
                 .run();
         jdbc = app.getBean(JdbcTemplate.class);
         reservationFacade = app.getBean(IotCommandReservationFacade.class);
-        tx = new TransactionTemplate(app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        tx = new TransactionTemplate(app.getBean(PlatformTransactionManager.class));
 
         jdbc.update("INSERT INTO sys_user (id, username, password, real_name, tenant_id, status) "
                 + "VALUES (?, 'p63-ca-operator', 'seed-not-a-login-secret', '同租普通配置者', ?, 0) "
@@ -154,7 +166,7 @@ class P63ConfigAuthorityTypePgTest {
         // 合法对照：同租同产品同功能，仅接入授权=1 → 正常冻结 PENDING
         String okPi = "p63-ca-access-pi";
         LocalDateTime dueUtc = LocalDateTime.now(ZoneOffset.UTC).plusMinutes(30);
-        java.util.Optional<Long> intentId = asUser(() -> tx.execute(status ->
+        Optional<Long> intentId = asUser(() -> tx.execute(status ->
                 reservationFacade.createIntent(TENANT, okPi, "p63_ca_proc", 1, "p63_ca_form", "rec-ca-2",
                         ACCESS_DEVICE_KEY, "P63-CA-PROD", ACCESS_DEVICE_NAME,
                         "power_off", "PROPERTY", "{\"power_off\":true}", dueUtc,
@@ -219,7 +231,7 @@ class P63ConfigAuthorityTypePgTest {
         assertThat(commandCount(processInstanceId)).as("拒绝后零外发").isZero();
     }
 
-    private java.util.Optional<Long> callCreateIntent(String processInstanceId, String deviceKey,
+    private Optional<Long> callCreateIntent(String processInstanceId, String deviceKey,
                                                       String deviceName, String commandKey,
                                                       String commandType, String payload,
                                                       LocalDateTime dueUtc) {
@@ -230,8 +242,8 @@ class P63ConfigAuthorityTypePgTest {
     }
 
     private int reservationCount(String processInstanceId) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return jdbc.queryForObject(
                     "SELECT COUNT(*) FROM sw_iot_command_reservation WHERE process_instance_id = ?",
                     Integer.class, processInstanceId);
@@ -241,8 +253,8 @@ class P63ConfigAuthorityTypePgTest {
     }
 
     private int commandCount(String processInstanceId) {
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             return jdbc.queryForObject(
                     "SELECT COUNT(*) FROM sw_iot_device_command WHERE approval_biz_id = ?",
                     Integer.class, processInstanceId);
@@ -273,14 +285,4 @@ class P63ConfigAuthorityTypePgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator gen = java.security.KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            java.security.KeyPair pair = gen.generateKeyPair();
-            return java.util.Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

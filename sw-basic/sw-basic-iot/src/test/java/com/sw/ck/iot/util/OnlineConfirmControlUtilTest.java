@@ -12,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -33,11 +34,17 @@ class OnlineConfirmControlUtilTest {
 
     @BeforeEach
     void setUp() {
-        // provider 可缺省：装配存在与否决定控制通道是否可用
-        onlineConfirmControlUtil = new OnlineConfirmControlUtil(iotDeviceService,
-                provider(deviceControlProvider));
-        onlineConfirmControlUtilWithoutProvider = new OnlineConfirmControlUtil(iotDeviceService,
-                provider(null));
+        // provider 可缺省：装配存在与否决定控制通道是否可用。
+        // 生产类已统一 @Autowired 字段注入（d53c7fb6）：同一生产类需要「有/无 provider」两个
+        // 装配实例，无法用单一 @InjectMocks 表达，改经 ReflectionTestUtils 逐字段注入；
+        // provider 两态沿用本类 DefaultListableBeanFactory provider 助手构造。
+        onlineConfirmControlUtil = new OnlineConfirmControlUtil();
+        ReflectionTestUtils.setField(onlineConfirmControlUtil, "iotDeviceService", iotDeviceService);
+        ReflectionTestUtils.setField(onlineConfirmControlUtil, "deviceControlProvider", provider(deviceControlProvider));
+
+        onlineConfirmControlUtilWithoutProvider = new OnlineConfirmControlUtil();
+        ReflectionTestUtils.setField(onlineConfirmControlUtilWithoutProvider, "iotDeviceService", iotDeviceService);
+        ReflectionTestUtils.setField(onlineConfirmControlUtilWithoutProvider, "deviceControlProvider", provider(null));
 
         testDevice = new IotDevice();
         testDevice.setId(1L);

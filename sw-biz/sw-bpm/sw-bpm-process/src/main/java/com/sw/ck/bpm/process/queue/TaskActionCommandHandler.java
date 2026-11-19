@@ -1,16 +1,22 @@
 package com.sw.ck.bpm.process.queue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
 import com.sw.ck.bpm.process.service.ApprovalActionService;
 import com.sw.ck.bpm.process.service.TaskActionService;
 import com.sw.ck.common.exception.BaseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.entity.BpmCommandResultStatusEnum;
 /**
  * 审批动作命令处理器：消费 TASK_APPROVE/TASK_REJECT/TASK_RETURN 受理，
  * 汇入 {@link TaskActionService} 唯一执行核心（与同步 HTTP 入口共享语义）。
@@ -23,34 +29,20 @@ import org.springframework.stereotype.Component;
  * </p>
  */
 @Component
+@Log4j2
 public class TaskActionCommandHandler implements BpmCommandHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(TaskActionCommandHandler.class);
-
-    private final TaskActionService taskActionService;
-    private final ApprovalActionService approvalActionService;
-    private final ObjectMapper objectMapper;
-
-    /** 兼容既有隔离测试构造器（无动作记录服务时结果不携带 actionRecordId）。 */
-    public TaskActionCommandHandler(TaskActionService taskActionService,
-                                    ObjectMapper objectMapper) {
-        this(taskActionService, null, objectMapper);
-    }
-
-    /** 生产构造器（Spring 注入动作记录服务，结果可携带 actionRecordId）。 */
-    @org.springframework.beans.factory.annotation.Autowired
-    public TaskActionCommandHandler(TaskActionService taskActionService,
-                                    ApprovalActionService approvalActionService,
-                                    ObjectMapper objectMapper) {
-        this.taskActionService = taskActionService;
-        this.approvalActionService = approvalActionService;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private TaskActionService taskActionService;
+    @Autowired
+    private ApprovalActionService approvalActionService;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Override
-    public java.util.Set<CommandTypeEnum> types() {
+    public Set<CommandTypeEnum> types() {
         // 三种审批动作共用本 handler，动作取自 payload.action
-        return java.util.Set.of(CommandTypeEnum.TASK_APPROVE, CommandTypeEnum.TASK_REJECT,
+        return Set.of(CommandTypeEnum.TASK_APPROVE, CommandTypeEnum.TASK_REJECT,
                 CommandTypeEnum.TASK_RETURN);
     }
 
@@ -88,7 +80,7 @@ public class TaskActionCommandHandler implements BpmCommandHandler {
                     envelope.getCommandId(), taskId, prior.getId(), prior.getActorId(),
                     prior.getAction());
             throw new BaseException(
-                    com.sw.ck.bpm.api.exception.BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
+                    BpmErrorCode.COMMAND_PAYLOAD_MISMATCH);
         }
         taskActionService.execute(taskId, request, envelope.getCommandId());
 
@@ -97,7 +89,7 @@ public class TaskActionCommandHandler implements BpmCommandHandler {
         boolean recoveredByIdentity = replay || sameOperationPrior;
         ApprovalActionRecord committed = recoveredByIdentity ? prior
                 : (approvalActionService == null ? null : approvalActionService.findByTaskId(taskId));
-        String result = "{\"status\":\"" + (recoveredByIdentity ? "RECOVERED" : "DONE") + "\""
+        String result = "{\"status\":\"" + (recoveredByIdentity ? BpmCommandResultStatusEnum.RECOVERED.getCode() : BpmCommandResultStatusEnum.DONE.getCode()) + "\""
                 + (committed == null ? "" : ",\"actionRecordId\":" + committed.getId())
                 + "}";
         log.info("审批命令已执行: commandId={}, taskId={}, action={}, result={}",

@@ -1,8 +1,11 @@
 package com.sw.ck.bpm.process.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
-import com.sw.ck.bpm.process.dto.CommandAcceptRespDTO;
+import com.sw.ck.bpm.process.vo.CommandAcceptRespVO;
 import com.sw.ck.bpm.process.entity.BpmDraft;
 import com.sw.ck.bpm.process.entity.CommandChannelEnum;
 import com.sw.ck.bpm.process.entity.CommandTypeEnum;
@@ -11,20 +14,21 @@ import com.sw.ck.bpm.process.queue.BpmCommandQueue;
 import com.sw.ck.bpm.process.queue.CommandEnvelope;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.exception.CommonErrorCode;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.facade.FormDataSubmitFacade;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 草稿正式提交服务（D3 校验 + 冻结 + 统一命令受理）。
  * <p>
@@ -33,45 +37,36 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Log4j2
 public class DraftSubmitService {
 
-    private static final Logger log = LoggerFactory.getLogger(DraftSubmitService.class);
-
-    private final BpmDraftService draftService;
-    private final BpmFormBindingService bindingService;
-    private final FormDefinitionService formDefinitionService;
-    private final BpmCommandQueue commandQueue;
-    private final ObjectMapper objectMapper;
-    private final FormDataSubmitFacade formDataSubmitFacade;
-
-    public DraftSubmitService(BpmDraftService draftService,
-                              BpmFormBindingService bindingService,
-                              FormDefinitionService formDefinitionService,
-                              BpmCommandQueue commandQueue,
-                              ObjectMapper objectMapper,
-                              FormDataSubmitFacade formDataSubmitFacade) {
-        this.draftService = draftService;
-        this.bindingService = bindingService;
-        this.formDefinitionService = formDefinitionService;
-        this.commandQueue = commandQueue;
-        this.objectMapper = objectMapper;
-        this.formDataSubmitFacade = formDataSubmitFacade;
-    }
+    @Autowired
+    private BpmDraftService draftService;
+    @Autowired
+    private BpmFormBindingService bindingService;
+    @Autowired
+    private FormDefinitionService formDefinitionService;
+    @Autowired
+    private BpmCommandQueue commandQueue;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private FormDataSubmitFacade formDataSubmitFacade;
 
     /**
      * 正式提交草稿（D3 校验 + 冻结快照 + 受理，同事务提交）。
      * 受理中/已提交重复调用返回既有受理（duplicated=true）。
      */
-    @Transactional
-    public CommandAcceptRespDTO submit(Long id) {
+    @Transactional(rollbackFor = Exception.class)
+    public CommandAcceptRespVO submit(Long id) {
         return submit(id, CommandChannelEnum.NORMAL);
     }
 
     /**
      * 正式提交草稿并指定受理通道。通道仅由受信任的控制器传入，业务校验和幂等规则不变。
      */
-    @Transactional
-    public CommandAcceptRespDTO submit(Long id, CommandChannelEnum channel) {
+    @Transactional(rollbackFor = Exception.class)
+    public CommandAcceptRespVO submit(Long id, CommandChannelEnum channel) {
         LoginUser loginUser = LoginUserHolder.get();
         requireConsumableTenant(loginUser);
         BpmDraft draft = loadOwned(id);
@@ -81,7 +76,7 @@ public class DraftSubmitService {
             CommandEnvelope existing = draft.getCommandId() == null ? null
                     : commandQueue.findById(draft.getCommandId()).orElse(null);
             if (existing != null) {
-                CommandAcceptRespDTO resp = new CommandAcceptRespDTO();
+                CommandAcceptRespVO resp = new CommandAcceptRespVO();
                 resp.setCommandId(existing.getCommandId());
                 resp.setCommandKey(existing.getCommandKey());
                 resp.setCommandType(existing.getCommandType().getCode());
@@ -94,7 +89,7 @@ public class DraftSubmitService {
         requireEditable(draft);
 
         // D3 提交校验：表单仍发布 + 版本仍可用
-        FormDefDTO formDef = requirePublishedForm(draft.getFormKey());
+        FormDefVO formDef = requirePublishedForm(draft.getFormKey());
         if (draft.getFormVersion() != null && formDef.getFormVersion() != null
                 && !draft.getFormVersion().equals(Long.valueOf(formDef.getFormVersion()))) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
@@ -151,7 +146,7 @@ public class DraftSubmitService {
         draft.setCommandId(envelope.getCommandId());
         draftService.updateById(draft);
 
-        CommandAcceptRespDTO resp = new CommandAcceptRespDTO();
+        CommandAcceptRespVO resp = new CommandAcceptRespVO();
         resp.setCommandId(envelope.getCommandId());
         resp.setCommandKey(envelope.getCommandKey());
         resp.setCommandType(envelope.getCommandType().getCode());
@@ -209,7 +204,7 @@ public class DraftSubmitService {
     /**
      * 判定类契约统一 fail closed：empty（缺少判定目标/上下文）与 present-false 同判拒绝。
      */
-    private static boolean isAllowed(java.util.Optional<Boolean> decision) {
+    private static boolean isAllowed(Optional<Boolean> decision) {
         return decision.isPresent() && decision.get();
     }
 
@@ -220,16 +215,16 @@ public class DraftSubmitService {
     }
 
     /** 已发布表单校验（保存/提交共用）。 */
-    public FormDefDTO requirePublishedForm(String formKey) {
+    public FormDefVO requirePublishedForm(String formKey) {
         if (formKey == null || formKey.isBlank()) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "formKey 不能为空");
         }
         // empty = 该 formKey 无表单定义（原 null 返回路径）：与“表单不存在”同判
-        java.util.Optional<FormDefDTO> formDefLookup = formDefinitionService.getFormDef(formKey);
+        Optional<FormDefVO> formDefLookup = formDefinitionService.getFormDef(formKey);
         if (formDefLookup.isEmpty()) {
             throw new BaseException(CommonErrorCode.NOT_FOUND.getCode(), "表单 '" + formKey + "' 不存在");
         }
-        FormDefDTO formDef = formDefLookup.get();
+        FormDefVO formDef = formDefLookup.get();
         if (!"PUBLISHED".equals(formDef.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(),
                     "表单 '" + formKey + "' 未发布，不能保存/提交草稿");

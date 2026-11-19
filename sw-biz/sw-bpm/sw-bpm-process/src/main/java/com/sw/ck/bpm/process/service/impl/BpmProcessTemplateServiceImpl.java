@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.process.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
@@ -13,14 +15,14 @@ import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.entity.BpmTemplateStatusEnum;
 /**
  * 流程模板中心实现（I4 §3.2）。
  * <p>
@@ -30,18 +32,13 @@ import java.util.List;
  * </p>
  */
 @Service
+@Log4j2
 public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService {
 
-    private static final Logger log = LoggerFactory.getLogger(BpmProcessTemplateServiceImpl.class);
-
-    private final BpmProcessTemplateMapper mapper;
-    private final BpmProcessDefService bpmProcessDefService;
-
-    public BpmProcessTemplateServiceImpl(BpmProcessTemplateMapper mapper,
-                                         BpmProcessDefService bpmProcessDefService) {
-        this.mapper = mapper;
-        this.bpmProcessDefService = bpmProcessDefService;
-    }
+    @Autowired
+    private BpmProcessTemplateMapper mapper;
+    @Autowired
+    private BpmProcessDefService bpmProcessDefService;
 
     @Override
     public PageResult<BpmProcessTemplate> page(PageParam pageParam, String keyword,
@@ -86,7 +83,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessTemplate create(String name, String category, String description, String formKey,
                                      String graphJson, String scopeType, Long scopeDeptId,
                                      Long sourceDefId, Integer sourceDefVersion) {
@@ -98,7 +95,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
         template.setFormKey(formKey);
         template.setGraphJson(graphJson);
         template.setTemplateVersion(1);
-        template.setStatus("ENABLED");
+        template.setStatus(BpmTemplateStatusEnum.ENABLED.getCode());
         template.setScopeType("DEPT".equalsIgnoreCase(scopeType) ? "DEPT" : "GLOBAL");
         template.setScopeDeptId("DEPT".equalsIgnoreCase(scopeType) ? scopeDeptId : null);
         template.setSourceDefId(sourceDefId);
@@ -111,7 +108,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessTemplate update(Long id, String name, String category, String description,
                                      String graphJson, String scopeType, Long scopeDeptId) {
         BpmProcessTemplate template = get(id);
@@ -141,22 +138,22 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessTemplate changeStatus(Long id, boolean enabled) {
         BpmProcessTemplate template = get(id);
         requireManager();
-        template.setStatus(enabled ? "ENABLED" : "DISABLED");
+        template.setStatus(enabled ? BpmTemplateStatusEnum.ENABLED.getCode() : BpmTemplateStatusEnum.DISABLED.getCode());
         template.setUpdateTime(LocalDateTime.now());
         mapper.updateById(template);
         return template;
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessDef copyToDefinition(Long templateId, String name) {
         BpmProcessTemplate template = get(templateId);
         requireManager();
-        if (!"ENABLED".equals(template.getStatus())) {
+        if (!BpmTemplateStatusEnum.ENABLED.getCode().equals(template.getStatus())) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR.getCode(), "模板已停用，不可复制创建定义");
         }
         // 受控来源：走正式定义创建链；模板本身零改写
@@ -172,7 +169,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         BpmProcessTemplate template = get(id);
         requireManager();

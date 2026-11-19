@@ -1,6 +1,6 @@
 package com.sw.ck.bpm.process.service;
 
-import com.sw.ck.bpm.process.dto.CategoryDTO;
+import com.sw.ck.bpm.process.vo.CategoryVO;
 import com.sw.ck.bpm.process.dto.CategorySaveReq;
 import com.sw.ck.bpm.process.entity.BpmCategory;
 
@@ -10,7 +10,7 @@ import java.util.List;
 public interface BpmCategoryService {
 
     /** 分类列表（按 sortNo 升序、createTime 升序），附事项归属计数。 */
-    List<CategoryDTO> listCategories();
+    List<CategoryVO> listCategories();
 
     BpmCategory createCategory(CategorySaveReq req);
 

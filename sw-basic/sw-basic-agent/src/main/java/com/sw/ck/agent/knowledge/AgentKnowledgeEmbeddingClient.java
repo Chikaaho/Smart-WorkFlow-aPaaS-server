@@ -1,5 +1,7 @@
 package com.sw.ck.agent.knowledge;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.agent.orchestration.AgentModelRuntimeService;
 import com.sw.ck.knowledge.spi.KnowledgeEmbeddingClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -15,11 +17,8 @@ import java.util.List;
 @ConditionalOnProperty(prefix = "sw.agent", name = "enabled", havingValue = "true")
 public class AgentKnowledgeEmbeddingClient implements KnowledgeEmbeddingClient {
 
-    private final AgentModelRuntimeService runtimeService;
-
-    public AgentKnowledgeEmbeddingClient(AgentModelRuntimeService runtimeService) {
-        this.runtimeService = runtimeService;
-    }
+    @Autowired
+    private AgentModelRuntimeService runtimeService;
 
     @Override
     public void assertEmbeddingModel(Long modelId) {

@@ -12,8 +12,6 @@ import com.sw.ck.form.mapper.FormAppMapper;
 import com.sw.ck.form.mapper.FormAppScopeMapper;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -21,6 +19,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 应用范围访问闸门：表单登记应用归属后，应用可见范围与停用状态对用户侧
  * “新访问/新发起”生效（列表、提交、发起共用同一判定）；记录级读取保留合法历史访问。
@@ -40,9 +39,8 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Log4j2
 public class FormAppAccessGuard {
-
-    private static final Logger log = LoggerFactory.getLogger(FormAppAccessGuard.class);
 
     /** 应用访问判定结果。 */
     public enum AppAccess {
@@ -58,26 +56,18 @@ public class FormAppAccessGuard {
 
     private static final String STATUS_ENABLED = "ENABLED";
 
-    private final FormAppMapper appMapper;
-    private final FormAppScopeMapper appScopeMapper;
-    private final FormAppScopeMatcher scopeMatcher;
-    private final JdbcTemplate jdbcTemplate;
+    @Autowired
+    private FormAppMapper appMapper;
+    @Autowired
+    private FormAppScopeMapper appScopeMapper;
+    @Autowired
+    private FormAppScopeMatcher scopeMatcher;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /** 流程参与关系 SPI（可选注入；依据模块装配，未注入时记录级回退只剩本人提交通道）。 */
-    private FormRecordAccessPort formRecordAccessPort;
-
     @Autowired(required = false)
-    public void setFormRecordAccessPort(FormRecordAccessPort formRecordAccessPort) {
-        this.formRecordAccessPort = formRecordAccessPort;
-    }
-
-    public FormAppAccessGuard(FormAppMapper appMapper, FormAppScopeMapper appScopeMapper,
-                              FormAppScopeMatcher scopeMatcher, JdbcTemplate jdbcTemplate) {
-        this.appMapper = appMapper;
-        this.appScopeMapper = appScopeMapper;
-        this.scopeMatcher = scopeMatcher;
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    private FormRecordAccessPort formRecordAccessPort;
 
     /** 判定表单当前应用归属对当前登录用户的可访问性。 */
     public AppAccess evaluate(String appId) {

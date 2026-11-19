@@ -2,6 +2,7 @@ package com.sw.ck.form.service;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
+
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.HashMap;
 
 /**
  * 公式引擎（I2）：definition 中 FORMULA 字段 expression 的唯一解析、依赖校验与求值实现。
@@ -99,7 +101,7 @@ public class FormulaEngine {
      */
     public void validateSyntax(String expression) {
         List<Tok> tokens = new Lexer(expression).tokenize();
-        Map<String, Object> nullValues = new java.util.HashMap<>();
+        Map<String, Object> nullValues = new HashMap<>();
         for (Tok tok : tokens) {
             if (tok.type() == TokType.REF) {
                 nullValues.put(tok.text(), null);

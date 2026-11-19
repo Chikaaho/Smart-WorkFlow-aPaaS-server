@@ -1,5 +1,8 @@
 package com.sw.ck.job.scheduler;
 
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension;
+import com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended;
+import com.sw.ck.common.exception.FailureCategory;
 import com.sw.ck.job.entity.JobInfo;
 import com.sw.ck.job.entity.JobLog;
 import com.sw.ck.job.enums.ExecStatus;
@@ -10,9 +13,8 @@ import com.sw.ck.job.handler.JobHandler;
 import com.sw.ck.job.port.ScheduledFlowStartPort;
 import com.sw.ck.job.service.JobInfoService;
 import com.sw.ck.job.service.JobLogService;
+
 import org.quartz.JobExecutionContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -22,11 +24,14 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Map;
 import java.util.Optional;
 
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * Quartz 任务执行 Bean。
  * <p>
@@ -47,9 +52,8 @@ import com.sw.ck.security.holder.LoginUserHolder;
  * </ol>
  */
 @Component
+@Log4j2
 public class SwJobBean extends QuartzJobBean {
-
-    private static final Logger log = LoggerFactory.getLogger(SwJobBean.class);
 
     /** Quartz JobDataMap 中存储 jobId 的 key */
     public static final String JOB_ID_KEY = "jobId";
@@ -74,7 +78,7 @@ public class SwJobBean extends QuartzJobBean {
     private String flowStageMessage;
 
     @Autowired(required = false)
-    private java.util.Map<String, JobHandler> handlerMap;
+    private Map<String, JobHandler> handlerMap;
 
     @Override
     protected void executeInternal(JobExecutionContext context) {
@@ -90,8 +94,8 @@ public class SwJobBean extends QuartzJobBean {
         // 属调度基础设施读取，显式挂起租户行过滤，随后用任务自身的租户/配置人建立登录上下文，
         // 其后的业务读写（任务日志、流程意图受理）一律回到受租户约束的 fail-closed 边界。
         JobInfo jobInfo;
-        try (com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.Suspended ignored =
-                     com.sw.ck.common.config.mybatis.tenant.TenantLineSuspension.suspended()) {
+        try (Suspended ignored =
+                     TenantLineSuspension.suspended()) {
             jobInfo = jobInfoService.getById(jobId);
         }
         if (jobInfo == null) {
@@ -168,12 +172,12 @@ public class SwJobBean extends QuartzJobBean {
             // P61：完整栈只进日志并与事件引用绑定；sw_job_log 会被任务日志接口原样返回，
             // 因此只落安全结论与引用，不落栈、类名、SQL、路径或第三方原文。
             String eventRef = "job-" + jobId + "-" + jobLog.getStartTime()
-                    .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
             log.error("定时任务 {}（{}）执行失败: eventRef={}", jobId, jobInfo.getJobName(), eventRef, e);
             jobLog.setExecStatus(ExecStatus.FAILED.name());
             jobLog.setResultMsg("任务执行失败，请稍后重试；若持续出现请提供事件引用联系管理员");
             jobLog.setExceptionStack("ref=" + eventRef + " category="
-                    + com.sw.ck.common.exception.FailureCategory.SYSTEM_FAULT.name());
+                    + FailureCategory.SYSTEM_FAULT.name());
         } finally {
             // 5. 更新日志
             jobLog.setEndTime(LocalDateTime.now());
@@ -185,7 +189,7 @@ public class SwJobBean extends QuartzJobBean {
             jobInfo.setLastFireTime(jobLog.getStartTime());
             jobInfo.setNextFireTime(context.getNextFireTime() != null
                     ? context.getNextFireTime().toInstant()
-                            .atZone(java.time.ZoneId.systemDefault())
+                            .atZone(ZoneId.systemDefault())
                             .toLocalDateTime()
                     : null);
             jobInfoService.updateById(jobInfo);

@@ -1,14 +1,17 @@
 package com.sw.ck.form.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -16,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 表单字段显隐联动规则（v0.0.2 OA）。
  * <p>
@@ -35,18 +39,14 @@ import java.util.Set;
  * </p>
  */
 @Component
+@Log4j2
 public class FormVisibilityRules {
 
-    private static final Logger log = LoggerFactory.getLogger(FormVisibilityRules.class);
-
     private static final Set<String> OPS = Set.of("EQ", "NE", "EMPTY", "NOT_EMPTY");
-    private static final Set<String> LOGICS = Set.of("ALL", "ANY");
+    private static final Set<String> LOGICS = Set.of(FormVisibilityLogicEnum.ALL.name(), FormVisibilityLogicEnum.ANY.name());
 
-    private final ObjectMapper objectMapper;
-
-    public FormVisibilityRules(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 模型 ====================
 
@@ -111,7 +111,7 @@ public class FormVisibilityRules {
 
     /** 兼容旧签名：无显示名映射时回退为「键即显示名」。 */
     public List<VisibilityRule> parseAndValidate(String definitionJson, Set<String> fieldNames) {
-        Map<String, String> fieldDisplay = new java.util.LinkedHashMap<>();
+        Map<String, String> fieldDisplay = new LinkedHashMap<>();
         for (String name : fieldNames) {
             fieldDisplay.put(name, name);
         }
@@ -182,7 +182,7 @@ public class FormVisibilityRules {
 
     /** 单规则求值：条件按 logic 组合；条件字段缺失视为 EMPTY。 */
     boolean evaluate(VisibilityRule rule, Map<String, Object> data) {
-        boolean isAll = "ALL".equals(rule.logic());
+        boolean isAll = FormVisibilityLogicEnum.ALL.name().equals(rule.logic());
         boolean result = isAll;
         for (Condition condition : rule.conditions()) {
             boolean matched = match(condition, data.get(condition.field()));
@@ -205,7 +205,7 @@ public class FormVisibilityRules {
         boolean empty = isEmptyValue(rawValue);
         String op = condition.op();
         // 多选字段（List 值）的 EQ/NE 采用包含语义：选中项包含/不包含给定值
-        if (rawValue instanceof java.util.Collection<?> collection) {
+        if (rawValue instanceof Collection<?> collection) {
             boolean contains = condition.value() != null
                     && collection.stream().anyMatch(v -> String.valueOf(v).equals(condition.value()));
             return switch (op) {
@@ -232,7 +232,7 @@ public class FormVisibilityRules {
         if (value instanceof String s) {
             return s.isBlank();
         }
-        if (value instanceof java.util.Collection<?> c) {
+        if (value instanceof Collection<?> c) {
             return c.isEmpty();
         }
         if (value instanceof Map<?, ?> m) {

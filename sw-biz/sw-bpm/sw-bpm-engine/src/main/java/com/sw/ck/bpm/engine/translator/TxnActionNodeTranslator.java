@@ -1,6 +1,5 @@
 package com.sw.ck.bpm.engine.translator;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -9,13 +8,18 @@ import com.sw.ck.bpm.api.node.BpmNodeConfigField;
 import com.sw.ck.bpm.api.node.BpmNodeMetadata;
 import com.sw.ck.bpm.api.node.BpmNodeTopology;
 import com.sw.ck.form.api.port.FormTxnActionPort;
+
 import org.flowable.bpmn.model.FlowElement;
+import org.flowable.bpmn.model.ServiceTask;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.sw.ck.bpm.api.node.ProcessDefStatusEnum;
 
 /**
  * 事务动作节点（P62 分级执行 · 生产轻流程）：经 form-api 受控 Port 调用已发布事务动作。
@@ -29,13 +33,8 @@ import java.util.Optional;
 @Component
 public class TxnActionNodeTranslator extends ServiceTaskNodeTranslator {
 
-    private final org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider;
-
-    public TxnActionNodeTranslator(ObjectMapper objectMapper,
-                                   org.springframework.beans.factory.ObjectProvider<FormTxnActionPort> txnActionPortProvider) {
-        super(objectMapper);
-        this.txnActionPortProvider = txnActionPortProvider;
-    }
+    @Autowired(required = false)
+    private ObjectProvider<FormTxnActionPort> txnActionPortProvider;
 
     @Override
     public Optional<String> type() {
@@ -77,7 +76,7 @@ public class TxnActionNodeTranslator extends ServiceTaskNodeTranslator {
     @Override
     public FlowElement translate(GraphElement node) {
         FlowElement element = super.translate(node);
-        if (element instanceof org.flowable.bpmn.model.ServiceTask task) {
+        if (element instanceof ServiceTask task) {
             task.setAsynchronous(true);
         }
         return element;
@@ -103,7 +102,7 @@ public class TxnActionNodeTranslator extends ServiceTaskNodeTranslator {
         if (descriptor.isEmpty()) {
             return Optional.of(List.of(error(node, "绑定动作不存在或跨租户不可达: " + actionId)));
         }
-        if (!"PUBLISHED".equals(descriptor.get().status())) {
+        if (!ProcessDefStatusEnum.PUBLISHED.getCode().equals(descriptor.get().status())) {
             return Optional.of(List.of(error(node,
                     "绑定动作未发布（当前状态 " + descriptor.get().status() + "），发布前请先发布该动作")));
         }

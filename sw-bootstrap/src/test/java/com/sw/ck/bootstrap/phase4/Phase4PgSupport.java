@@ -1,21 +1,39 @@
 package com.sw.ck.bootstrap.phase4;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.service.FormDefService;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import org.flowable.engine.RepositoryService;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.Assumptions;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.function.BooleanSupplier;
+import javax.sql.DataSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -148,12 +166,12 @@ abstract class Phase4PgSupport {
         // 迁移由本类显式执行（clean + migrate 原始输出即证据），应用不再自行迁移
         props.put("spring.flyway.enabled", "false");
         props.put("sw.security.jwt.secret", "phase4-pg-test-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", rsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "phase4-pg-test-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         props.put("sw.bpm.enabled", "true");
         props.put("sw.form.enabled", "true");
         props.put("sw.iot.enabled", "true");
@@ -179,11 +197,11 @@ abstract class Phase4PgSupport {
                             new MapPropertySource("phase4-pg-test-" + tag, props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("phase4PgTestLoginContextProvider" + tag, provider);
                 })
                 .run();
@@ -196,7 +214,7 @@ abstract class Phase4PgSupport {
         if (app != null) {
             app.close();
         }
-        com.sw.ck.security.holder.LoginUserHolder.clear();
+        LoginUserHolder.clear();
     }
 
     // ==================== 断言与查询助手 ====================
@@ -212,7 +230,7 @@ abstract class Phase4PgSupport {
     }
 
     /** 轮询等待某个可回读事实成立；超时返回最后观测值（由断言负责失败）。 */
-    protected void await(String description, java.util.function.BooleanSupplier condition, long timeoutMillis) {
+    protected void await(String description, BooleanSupplier condition, long timeoutMillis) {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         while (System.currentTimeMillis() < deadline) {
             if (condition.getAsBoolean()) {
@@ -230,13 +248,13 @@ abstract class Phase4PgSupport {
         System.out.println("[P4-PG] await-timeout " + description);
     }
 
-    protected static <T> T asTenant(Long tenantId, Long userId, java.util.concurrent.Callable<T> action) {
-        com.sw.ck.security.holder.LoginUser previous = com.sw.ck.security.holder.LoginUserHolder.get();
-        com.sw.ck.security.holder.LoginUser user = new com.sw.ck.security.holder.LoginUser();
+    protected static <T> T asTenant(Long tenantId, Long userId, Callable<T> action) {
+        LoginUser previous = LoginUserHolder.get();
+        LoginUser user = new LoginUser();
         user.setUserId(userId);
         user.setTenantId(tenantId);
         try {
-            com.sw.ck.security.holder.LoginUserHolder.set(user);
+            LoginUserHolder.set(user);
             return action.call();
         } catch (RuntimeException e) {
             throw e;
@@ -244,18 +262,18 @@ abstract class Phase4PgSupport {
             throw new IllegalStateException(e);
         } finally {
             if (previous == null) {
-                com.sw.ck.security.holder.LoginUserHolder.clear();
+                LoginUserHolder.clear();
             } else {
-                com.sw.ck.security.holder.LoginUserHolder.set(previous);
+                LoginUserHolder.set(previous);
             }
         }
     }
 
     /** 租户内事务执行：用于证明"业务提交/回滚"边界（租户上下文由辅助方法建立，与生产调用方一致）。 */
-    protected <T> T inTransaction(boolean commit, java.util.concurrent.Callable<T> action) {
-        org.springframework.transaction.support.TransactionTemplate template =
-                new org.springframework.transaction.support.TransactionTemplate(
-                        app.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+    protected <T> T inTransaction(boolean commit, Callable<T> action) {
+        TransactionTemplate template =
+                new TransactionTemplate(
+                        app.getBean(PlatformTransactionManager.class));
         return asTenant(TENANT_A, USER_A, () -> template.execute(status -> {
             try {
                 T value = action.call();
@@ -273,10 +291,10 @@ abstract class Phase4PgSupport {
 
     /** 发布一张最小表单（供流程绑定/提交校验使用）。 */
     protected void publishForm(String formKey) {
-        com.sw.ck.form.api.dto.FormDefDTO draft =
-                app.getBean(com.sw.ck.form.service.FormDefService.class)
+        FormDefVO draft =
+                app.getBean(FormDefService.class)
                         .createDraft(formKey, "P4-" + formKey, null, null);
-        com.sw.ck.form.service.FormDefService service = app.getBean(com.sw.ck.form.service.FormDefService.class);
+        FormDefService service = app.getBean(FormDefService.class);
         service.saveConfig(draft.getId(), """
                 {"fields":[{"name":"name","type":"TEXT","label":"名称"}]}
                 """);
@@ -293,8 +311,8 @@ abstract class Phase4PgSupport {
 
     /** 部署 BPMN 并登记已发布流程定义（真实引擎发起所需）。 */
     protected void deployBpmn(String processKey, String bpmnXml, String formKey, boolean iotAccess) {
-        org.flowable.engine.RepositoryService repositoryService =
-                app.getBean(org.flowable.engine.RepositoryService.class);
+        RepositoryService repositoryService =
+                app.getBean(RepositoryService.class);
         var deployment = repositoryService.createDeployment()
                 .name("p4-" + processKey)
                 .tenantId(String.valueOf(TENANT_A))
@@ -322,18 +340,18 @@ abstract class Phase4PgSupport {
      * @return 被终止的后端 pid（供证据记录）
      */
     protected int killCurrentTransactionBackend() {
-        javax.sql.DataSource ds = app.getBean(javax.sql.DataSource.class);
+        DataSource ds = app.getBean(DataSource.class);
         try {
-            java.sql.Connection bound = org.springframework.jdbc.datasource.DataSourceUtils.getConnection(ds);
+            Connection bound = DataSourceUtils.getConnection(ds);
             int pid;
-            try (java.sql.Statement stmt = bound.createStatement();
-                 java.sql.ResultSet rs = stmt.executeQuery("select pg_backend_pid()")) {
+            try (Statement stmt = bound.createStatement();
+                 ResultSet rs = stmt.executeQuery("select pg_backend_pid()")) {
                 rs.next();
                 pid = rs.getInt(1);
             }
-            try (java.sql.Statement stmt = bound.createStatement()) {
+            try (Statement stmt = bound.createStatement()) {
                 stmt.execute("select pg_terminate_backend(" + pid + ")");
-            } catch (java.sql.SQLException e) {
+            } catch (SQLException e) {
                 // 终止自身连接时 PG 会先回 FATAL(57P01)；连接已断即注入成功。
                 if (!"57P01".equals(e.getSQLState())) {
                     throw e;
@@ -354,17 +372,5 @@ abstract class Phase4PgSupport {
                 + " VALUES (" + userId + ", CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, " + tenantId
                 + ", 0, 'p4" + tag + "user', '$2a$10$GQx6ILw5jsPhqHxJ6/AcmOzSM8xRVRwqChiH/B9ylh0srY0/NqXiK', 'P4 user', 0, 0, 1)"
                 + " ON CONFLICT (id) DO NOTHING");
-    }
-
-    /** 与 Phase 3 PG 用例同构：运行期生成 RSA 私钥，避免任何机器相关路径进入仓库。 */
-    private static String rsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
     }
 }

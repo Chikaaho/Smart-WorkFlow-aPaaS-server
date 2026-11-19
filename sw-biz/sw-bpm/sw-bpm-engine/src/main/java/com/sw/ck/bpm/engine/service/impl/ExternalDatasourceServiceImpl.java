@@ -1,17 +1,18 @@
 package com.sw.ck.bpm.engine.service.impl;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.engine.entity.ExternalDatasource;
 import com.sw.ck.bpm.engine.mapper.ExternalDatasourceMapper;
 import com.sw.ck.bpm.engine.service.ExternalDatasourceService;
 import com.sw.ck.common.crypto.AesGcmCipher;
 import com.sw.ck.common.service.BaseServiceImpl;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 外部数据源 Service 实现。
  * <p>
@@ -20,17 +21,13 @@ import java.util.Objects;
  * </p>
  */
 @Service
+@Log4j2
 public class ExternalDatasourceServiceImpl
         extends BaseServiceImpl<ExternalDatasourceMapper, ExternalDatasource>
         implements ExternalDatasourceService {
 
-    private static final Logger log = LoggerFactory.getLogger(ExternalDatasourceServiceImpl.class);
-
-    private final AesGcmCipher cipher;
-
-    public ExternalDatasourceServiceImpl(AesGcmCipher cipher) {
-        this.cipher = cipher;
-    }
+    @Autowired
+    private AesGcmCipher cipher;
 
     @Override
     @Transactional(rollbackFor = Exception.class)

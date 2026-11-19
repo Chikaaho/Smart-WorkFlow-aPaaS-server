@@ -21,6 +21,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -287,17 +288,17 @@ class P62NonEmptyUpgradePgTest {
         return new String[]{"filesystem:" + dir.toAbsolutePath()};
     }
 
-    private static final java.util.Map<Integer, String> LEGACY_TAILS = java.util.Map.ofEntries(
-            java.util.Map.entry(1, "form_local_transaction_actions"),
-            java.util.Map.entry(2, "tiered_command_semantics"),
-            java.util.Map.entry(3, "batch_command"),
-            java.util.Map.entry(4, "resource_assurance"),
-            java.util.Map.entry(5, "p63_dynamic_branch_semantics"),
-            java.util.Map.entry(6, "p63_iot_command_reservation"),
-            java.util.Map.entry(7, "p64_orchestration_data_action"),
-            java.util.Map.entry(8, "p64_phase2_parent_child"),
-            java.util.Map.entry(9, "p64_position_delegate"),
-            java.util.Map.entry(10, "p64_approval_form_type"));
+    private static final Map<Integer, String> LEGACY_TAILS = Map.ofEntries(
+            Map.entry(1, "form_local_transaction_actions"),
+            Map.entry(2, "tiered_command_semantics"),
+            Map.entry(3, "batch_command"),
+            Map.entry(4, "resource_assurance"),
+            Map.entry(5, "p63_dynamic_branch_semantics"),
+            Map.entry(6, "p63_iot_command_reservation"),
+            Map.entry(7, "p64_orchestration_data_action"),
+            Map.entry(8, "p64_phase2_parent_child"),
+            Map.entry(9, "p64_position_delegate"),
+            Map.entry(10, "p64_approval_form_type"));
 
     /** 代表业务数据：0.1.1 时点已可存在的形态（表单元数据 + 动态宽表行）。 */
     private static void seedBusinessData(String db) throws Exception {

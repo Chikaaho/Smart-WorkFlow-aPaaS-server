@@ -7,32 +7,42 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.process.dto.ApprovalAction;
 import com.sw.ck.bpm.process.entity.ApprovalActionRecord;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.BpmProcessDefVersion;
 import com.sw.ck.bpm.process.entity.BpmTaskFormData;
+import com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper;
 import com.sw.ck.bpm.process.mapper.BpmTaskFormDataMapper;
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.i18n.LocalizedMessages;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.system.api.dept.DeptQueryFacade;
+import com.sw.ck.system.api.dict.DictFacade;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * P64 任务级节点业务表单数据服务（ADR-P64-001 §1，A01）。
@@ -42,42 +52,31 @@ import java.util.Set;
  * 字典值域/USER/DEPT 对象存在性），数据本体存 JSON，不走动态宽表、不触发流程发起链。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Service
 public class NodeFormDataService {
 
     public static final String STATUS_DRAFT = "DRAFT";
     public static final String STATUS_SUBMITTED = "SUBMITTED";
 
-    private final BpmTaskFormDataMapper taskFormDataMapper;
-    private final BpmProcessDefService bpmProcessDefService;
-    private final com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper;
-    private final FormDefinitionService formDefinitionService;
-    private final com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService;
-    private final ObjectProvider<UserQueryFacade> userQueryFacadeProvider;
-    private final ObjectProvider<DeptQueryFacade> deptQueryFacadeProvider;
-    private final ObjectProvider<com.sw.ck.system.api.dict.DictFacade> dictFacadeProvider;
-    private final ObjectMapper objectMapper;
-
-    public NodeFormDataService(BpmTaskFormDataMapper taskFormDataMapper,
-                               BpmProcessDefService bpmProcessDefService,
-                               com.sw.ck.bpm.process.mapper.BpmProcessDefVersionMapper versionMapper,
-                               FormDefinitionService formDefinitionService,
-                               com.sw.ck.bpm.process.service.ApprovalActionService approvalActionService,
-                               ObjectProvider<UserQueryFacade> userQueryFacadeProvider,
-                               ObjectProvider<DeptQueryFacade> deptQueryFacadeProvider,
-                               ObjectProvider<com.sw.ck.system.api.dict.DictFacade> dictFacadeProvider,
-                               ObjectMapper objectMapper) {
-        this.taskFormDataMapper = taskFormDataMapper;
-        this.bpmProcessDefService = bpmProcessDefService;
-        this.versionMapper = versionMapper;
-        this.formDefinitionService = formDefinitionService;
-        this.approvalActionService = approvalActionService;
-        this.userQueryFacadeProvider = userQueryFacadeProvider;
-        this.deptQueryFacadeProvider = deptQueryFacadeProvider;
-        this.dictFacadeProvider = dictFacadeProvider;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private BpmTaskFormDataMapper taskFormDataMapper;
+    @Autowired
+    private BpmProcessDefService bpmProcessDefService;
+    @Autowired
+    private BpmProcessDefVersionMapper versionMapper;
+    @Autowired
+    private FormDefinitionService formDefinitionService;
+    @Autowired
+    private ApprovalActionService approvalActionService;
+    @Autowired
+    private ObjectProvider<UserQueryFacade> userQueryFacadeProvider;
+    @Autowired
+    private ObjectProvider<DeptQueryFacade> deptQueryFacadeProvider;
+    @Autowired
+    private ObjectProvider<DictFacade> dictFacadeProvider;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 绑定解析 ====================
 
@@ -98,7 +97,7 @@ public class NodeFormDataService {
         return graph.getElements().stream()
                 .filter(element -> "node".equals(element.getKind()) && nodeKey.equals(element.getId()))
                 .map(GraphElement::getConfig)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .map(config -> config.get("nodeForm"))
                 .filter(Map.class::isInstance)
                 .map(value -> (Map<?, ?>) value)
@@ -112,7 +111,7 @@ public class NodeFormDataService {
             return Optional.empty();
         }
         String formKey = String.valueOf(formKeyObj).trim();
-        Optional<FormDefDTO> def = formDefinitionService.getFormDef(formKey);
+        Optional<FormDefVO> def = formDefinitionService.getFormDef(formKey);
         if (def.isEmpty()) {
             // 配置存在但表单已不可用：fail closed（2432），不静默按未绑定处理
             throw new BaseException(BpmErrorCode.NODE_FORM_NOT_BOUND.getCode(),
@@ -215,7 +214,7 @@ public class NodeFormDataService {
     /**
      * 保存草稿（DRAFT upsert；已 SUBMITTED 的任务拒绝改写 2434）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long saveDraft(String processInstanceId, String processDefKey, String nodeKey, String taskId,
                           String formKey, Long bindingFormVersion, Map<String, Object> data) {
         Long tenantId = currentTenantId();
@@ -254,7 +253,7 @@ public class NodeFormDataService {
      *
      * @return 数据行 ID；data 为 null 且无既有行 = 未填写，不落行（合法：无节点表单数据）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long submitFinal(String processInstanceId, String processDefKey, String nodeKey, String taskId,
                             String formKey, Long bindingFormVersion, Map<String, Object> data, Long actorId) {
         Long tenantId = currentTenantId();
@@ -398,7 +397,7 @@ public class NodeFormDataService {
             return errors;
         }
         Set<String> definedNames = fields.stream()
-                .map(field -> String.valueOf(field.get("name"))).collect(java.util.stream.Collectors.toSet());
+                .map(field -> String.valueOf(field.get("name"))).collect(Collectors.toSet());
         for (String key : data.keySet()) {
             if (!definedNames.contains(key)) {
                 errors.add(nodeFormMessage("unknown_field", "表单内容与当前版本不一致，请重新打开后填写"));
@@ -436,7 +435,7 @@ public class NodeFormDataService {
         switch (type) {
             case "NUMBER" -> {
                 try {
-                    new java.math.BigDecimal(String.valueOf(
+                    new BigDecimal(String.valueOf(
                             value instanceof List<?> list ? list.get(0) : value));
                 } catch (Exception e) {
                     errors.add(nodeFormMessage("number", "「{0}」必须填写数字", name));
@@ -495,7 +494,7 @@ public class NodeFormDataService {
                 if (parsed.isEmpty()) {
                     return;
                 }
-                if ("USER".equals(type)) {
+                if (SubjectTypeEnum.USER.getCode().equals(type)) {
                     UserQueryFacade facade = userQueryFacadeProvider.getIfAvailable();
                     if (facade != null) {
                         List<Long> active = facade.findActiveUserIds(parsed, currentTenantId()).orElse(List.of());
@@ -514,7 +513,7 @@ public class NodeFormDataService {
                 }
             }
             case "DICT" -> {
-                com.sw.ck.system.api.dict.DictFacade dictFacade = dictFacadeProvider.getIfAvailable();
+                DictFacade dictFacade = dictFacadeProvider.getIfAvailable();
                 String dictType = field.get("dictType") == null ? null : String.valueOf(field.get("dictType"));
                 if (dictFacade != null && dictType != null && !dictType.isBlank()) {
                     List<String> values = value instanceof List<?> list
@@ -637,7 +636,7 @@ public class NodeFormDataService {
             for (Object rowObj : rows) {
                 if (rowObj instanceof Map<?, ?> rowMap) {
                     Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) rowMap);
-                    row.putIfAbsent("id", java.util.UUID.randomUUID().toString().replace("-", ""));
+                    row.putIfAbsent("id", UUID.randomUUID().toString().replace("-", ""));
                     enrichedRows.add(row);
                 }
             }

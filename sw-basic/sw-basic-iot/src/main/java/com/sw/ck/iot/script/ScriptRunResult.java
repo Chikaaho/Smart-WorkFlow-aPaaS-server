@@ -1,6 +1,7 @@
 package com.sw.ck.iot.script;
 
 import java.util.List;
+import com.sw.ck.iot.entity.IotScriptExecStatusEnum;
 
 /**
  * 受控脚本执行结果。
@@ -15,7 +16,7 @@ public class ScriptRunResult {
 
     public static ScriptRunResult success(String outputJson, long durationMs, List<String> logs) {
         ScriptRunResult r = new ScriptRunResult();
-        r.status = "SUCCESS";
+        r.status = IotScriptExecStatusEnum.SUCCESS.getCode();
         r.outputJson = outputJson;
         r.durationMs = durationMs;
         r.logs = logs;
@@ -24,7 +25,7 @@ public class ScriptRunResult {
 
     public static ScriptRunResult failure(String error, long durationMs, List<String> logs) {
         ScriptRunResult r = new ScriptRunResult();
-        r.status = "FAILED";
+        r.status = IotScriptExecStatusEnum.FAILED.getCode();
         r.error = error;
         r.durationMs = durationMs;
         r.logs = logs;
@@ -33,7 +34,7 @@ public class ScriptRunResult {
 
     public static ScriptRunResult timeout(String error, long durationMs, List<String> logs) {
         ScriptRunResult r = new ScriptRunResult();
-        r.status = "TIMEOUT";
+        r.status = IotScriptExecStatusEnum.TIMEOUT.getCode();
         r.error = error;
         r.durationMs = durationMs;
         r.logs = logs;

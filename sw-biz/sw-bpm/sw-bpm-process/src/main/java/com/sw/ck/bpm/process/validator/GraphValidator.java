@@ -1,7 +1,10 @@
 package com.sw.ck.bpm.process.validator;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
@@ -9,14 +12,15 @@ import com.sw.ck.bpm.api.node.BpmNodeDefinition;
 import com.sw.ck.bpm.api.node.BpmNodeRegistry;
 import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 import com.sw.ck.form.api.form.FormDefinitionService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * 流程图画布校验器。
  * <p>
@@ -25,9 +29,8 @@ import java.util.regex.Pattern;
  * </p>
  */
 @Component
+@Log4j2
 public class GraphValidator {
-
-    private static final Logger log = LoggerFactory.getLogger(GraphValidator.class);
 
     private static final String KIND_NODE = "node";
     private static final String KIND_EDGE = "edge";
@@ -36,13 +39,10 @@ public class GraphValidator {
     private static final Pattern FORM_COMPARISON = Pattern.compile(
             "(?:form|data)\\.([A-Za-z_][A-Za-z0-9_]*)\\s*(>=|<=|==|!=|>|<)");
 
-    private final BpmNodeRegistry nodeRegistry;
-    private final FormDefinitionService formDefinitionService;
-
-    public GraphValidator(BpmNodeRegistry nodeRegistry, FormDefinitionService formDefinitionService) {
-        this.nodeRegistry = nodeRegistry;
-        this.formDefinitionService = formDefinitionService;
-    }
+    @Autowired
+    private BpmNodeRegistry nodeRegistry;
+    @Autowired
+    private FormDefinitionService formDefinitionService;
 
     /**
      * 校验完整的 ProcessGraph。
@@ -211,7 +211,7 @@ public class GraphValidator {
             for (GraphElement node : nodes) {
                 String type = node.getType();
                 if (type == null) continue;
-                java.util.Optional<BpmNodeDefinition> definitionLookup = nodeRegistry.find(type);
+                Optional<BpmNodeDefinition> definitionLookup = nodeRegistry.find(type);
                 if (definitionLookup.isEmpty()) continue;
                 BpmNodeDefinition definition = definitionLookup.get();
                 // metadata empty = 该定义未提供元数据（旧翻译器兼容路径）：无法做基数校验

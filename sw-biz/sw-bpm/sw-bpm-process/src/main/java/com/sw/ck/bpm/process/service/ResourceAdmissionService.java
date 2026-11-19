@@ -1,6 +1,8 @@
 package com.sw.ck.bpm.process.service;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.entity.BpmResourcePolicy;
 import com.sw.ck.bpm.process.entity.BpmResourceRejectLog;
@@ -11,14 +13,22 @@ import com.sw.ck.bpm.process.mapper.BpmResourcePolicyMapper;
 import com.sw.ck.bpm.process.mapper.BpmResourceRejectLogMapper;
 import com.sw.ck.bpm.process.mapper.BpmResourceUsageMapper;
 import com.sw.ck.common.exception.BaseException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.extern.log4j.Log4j2;
+import com.sw.ck.bpm.process.entity.BpmResourcePolicyStatusEnum;
+import com.sw.ck.bpm.process.entity.ResourceScopeEnum;
 /**
  * 资源准入与占用会计（P62 资源保障）。
  * <p>
@@ -39,45 +49,39 @@ import java.util.List;
  * </p>
  */
 @Service
+@Log4j2
 public class ResourceAdmissionService {
 
-    private static final Logger log = LoggerFactory.getLogger(ResourceAdmissionService.class);
-
-    private final BpmResourcePolicyMapper policyMapper;
-    private final BpmResourceUsageMapper usageMapper;
-    private final BpmResourceRejectLogMapper rejectLogMapper;
-    private final TenantRateBuckets rateBuckets;
-    private final TransactionTemplate rejectAuditTemplate;
-    private final TransactionTemplate usageEnsureTemplate;
+    @Autowired
+    private BpmResourcePolicyMapper policyMapper;
+    @Autowired
+    private BpmResourceUsageMapper usageMapper;
+    @Autowired
+    private BpmResourceRejectLogMapper rejectLogMapper;
+    @Autowired
+    private TenantRateBuckets rateBuckets;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+    private TransactionTemplate rejectAuditTemplate;
+    private TransactionTemplate usageEnsureTemplate;
 
     /**
      * 已建立计数行的租户（进程内加速）：计数行建后不再删除，稳态下受理路径零额外事务与
      * 零唯一键冲突（RA02 时效：原实现每次受理尝试插入-捕获冲突，突发负载下每秒数十次
      * 异常+独立事务，构成可观测的尾延迟成本）。多进程部署不属本阶段画像，届时失效。
      */
-    private final java.util.Set<Long> ensuredTenants = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final Set<Long> ensuredTenants = ConcurrentHashMap.newKeySet();
 
     /** 生产环境由 Spring 注入；单测直接构造时为空，回退原 Mapper 探测。 */
+    @Autowired(required = false)
     private ResourceRowLockProbe rowLockProbe;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    public void setRowLockProbe(ResourceRowLockProbe rowLockProbe) {
-        this.rowLockProbe = rowLockProbe;
-    }
 
     /** 准入凭证：受理冻结到命令行的段与策略版本。 */
     public record AdmissionTicket(String segment, Integer policyVersion, int units) {
     }
 
-    public ResourceAdmissionService(BpmResourcePolicyMapper policyMapper,
-                                    BpmResourceUsageMapper usageMapper,
-                                    BpmResourceRejectLogMapper rejectLogMapper,
-                                    TenantRateBuckets rateBuckets,
-                                    org.springframework.transaction.PlatformTransactionManager transactionManager) {
-        this.policyMapper = policyMapper;
-        this.usageMapper = usageMapper;
-        this.rejectLogMapper = rejectLogMapper;
-        this.rateBuckets = rateBuckets;
+    @PostConstruct
+    void initTemplates() {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.rejectAuditTemplate = template;
@@ -137,7 +141,7 @@ public class ResourceAdmissionService {
             return ticket;
         }
         auditReject(tenantId, policy, resourceClass, units,
-                rejectScope[0] == null ? "QUOTA_SEGMENT" : rejectScope[0],
+                rejectScope[0] == null ? ResourceScopeEnum.QUOTA_SEGMENT.getCode() : rejectScope[0],
                 "适用额度：全局 " + policy.getGlobalMaxOutstanding() + "、每租户 "
                         + policy.getTenantMaxOutstanding() + " 工作单位，当前已满，请稍后重试");
         throw new BaseException(BpmErrorCode.RESOURCE_QUOTA_EXCEEDED);
@@ -160,14 +164,14 @@ public class ResourceAdmissionService {
                 // 借用只在段空闲时发生：对方保留段正被在途事务持有（非空闲）→ 放弃借用，不等待。
                 // 等待会与对方类别的在途受理互等成环（RA02a1），并让保留通道被借用请求排队挤占。
                 if (rejectScope[0] == null) {
-                    rejectScope[0] = "QUOTA_SEGMENT";
+                    rejectScope[0] = ResourceScopeEnum.QUOTA_SEGMENT.getCode();
                 }
                 continue;
             }
             long segmentCap = segmentCapacity(policy, segment);
             if (usageMapper.incrementWithinCap("GLOBAL", 0, segment.getCode(), units, segmentCap) != 1) {
                 if (rejectScope[0] == null) {
-                    rejectScope[0] = "QUOTA_SEGMENT";
+                    rejectScope[0] = ResourceScopeEnum.QUOTA_SEGMENT.getCode();
                 }
                 continue;
             }
@@ -279,9 +283,9 @@ public class ResourceAdmissionService {
     private void forceEnsureUsageRows(Long tenantId) {
         try {
             usageEnsureTemplate.executeWithoutResult(status ->
-                    usageMapper.insertNew(com.baomidou.mybatisplus.core.toolkit.IdWorker.getId(),
+                    usageMapper.insertNew(IdWorker.getId(),
                             "TENANT", tenantId, "TOTAL"));
-        } catch (org.springframework.dao.DuplicateKeyException alreadyExists) {
+        } catch (DuplicateKeyException alreadyExists) {
             // 计数行已存在：另一并发首次受理已建立（或重启后首遇），幂等返回
         }
         ensuredTenants.add(tenantId);
@@ -292,7 +296,7 @@ public class ResourceAdmissionService {
         return policyMapper.selectOne(Wrappers.<BpmResourcePolicy>lambdaQuery()
                 .eq(BpmResourcePolicy::getTenantId, 0L)
                 .eq(BpmResourcePolicy::getEnabled, true)
-                .eq(BpmResourcePolicy::getStatus, "ACTIVE")
+                .eq(BpmResourcePolicy::getStatus, BpmResourcePolicyStatusEnum.ACTIVE.getCode())
                 .orderByDesc(BpmResourcePolicy::getPolicyVersion)
                 .last("LIMIT 1"));
     }

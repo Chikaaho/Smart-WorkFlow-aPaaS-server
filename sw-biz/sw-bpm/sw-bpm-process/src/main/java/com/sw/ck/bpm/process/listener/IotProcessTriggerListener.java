@@ -1,28 +1,38 @@
 package com.sw.ck.bpm.process.listener;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.sw.ck.bpm.api.facade.BpmRuntimeFacade;
+import com.sw.ck.bpm.api.facade.BpmTaskFacade;
+import com.sw.ck.bpm.api.participant.ParticipantStrategy;
 import com.sw.ck.bpm.process.entity.BpmInstance;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
 import com.sw.ck.bpm.process.entity.InstanceStatusEnum;
 import com.sw.ck.bpm.process.service.BpmInstanceService;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.bpm.process.service.ProcessThemeService;
-import com.sw.ck.bpm.api.facade.BpmTaskFacade;
 import com.sw.ck.common.tenant.TenantWorkAdmission;
 import com.sw.ck.iot.api.IotDeviceFacade;
+import com.sw.ck.iot.api.IotDeviceQueryFacade;
 import com.sw.ck.iot.api.IotProcessTriggerFacade;
 import com.sw.ck.iot.event.IotProcessTriggerEvent;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.support.TransactionTemplate;
 /**
  * IoT 事件发起流程（P21：规则/脚本 → 流程实例与表单数据）。
  * <p>
@@ -34,47 +44,33 @@ import java.util.Map;
  * </p>
  */
 @Component
+@Log4j2
 public class IotProcessTriggerListener {
-
-    private static final Logger log = LoggerFactory.getLogger(IotProcessTriggerListener.class);
 
     /** IoT 自动发起使用的受控系统身份（不伪装自然人）。 */
     private static final String IOT_SYSTEM_ACTOR = "iot-system";
 
-    private final ObjectProvider<BpmRuntimeFacade> runtimeFacadeProvider;
-    private final ObjectProvider<BpmProcessDefService> processDefServiceProvider;
-    private final ObjectProvider<IotProcessTriggerFacade> triggerFacadeProvider;
-    private final ObjectProvider<com.sw.ck.iot.api.IotDeviceFacade> deviceFacadeProvider;
-    private final ObjectProvider<com.sw.ck.iot.api.IotDeviceQueryFacade> deviceQueryFacadeProvider;
-    private final ObjectProvider<BpmInstanceService> instanceServiceProvider;
-    private final ObjectProvider<ProcessThemeService> themeServiceProvider;
-    private final ObjectProvider<BpmTaskFacade> taskFacadeProvider;
-    private final TenantWorkAdmission tenantWorkAdmission;
+    @Autowired
+    private ObjectProvider<BpmRuntimeFacade> runtimeFacadeProvider;
+    @Autowired
+    private ObjectProvider<BpmProcessDefService> processDefServiceProvider;
+    @Autowired
+    private ObjectProvider<IotProcessTriggerFacade> triggerFacadeProvider;
+    @Autowired
+    private ObjectProvider<IotDeviceFacade> deviceFacadeProvider;
+    @Autowired
+    private ObjectProvider<IotDeviceQueryFacade> deviceQueryFacadeProvider;
+    @Autowired
+    private ObjectProvider<BpmInstanceService> instanceServiceProvider;
+    @Autowired
+    private ObjectProvider<ProcessThemeService> themeServiceProvider;
+    @Autowired
+    private ObjectProvider<BpmTaskFacade> taskFacadeProvider;
+    @Autowired
+    private TenantWorkAdmission tenantWorkAdmission;
     /** G3b：流程发起与业务实例记录必须落在同一提交边界（引擎命令按 REQUIRED 加入本事务）。 */
-    private final ObjectProvider<org.springframework.transaction.PlatformTransactionManager> transactionManagerProvider;
-
-    public IotProcessTriggerListener(ObjectProvider<BpmRuntimeFacade> runtimeFacadeProvider,
-                                     ObjectProvider<BpmProcessDefService> processDefServiceProvider,
-                                     ObjectProvider<IotProcessTriggerFacade> triggerFacadeProvider,
-                                     ObjectProvider<BpmInstanceService> instanceServiceProvider,
-                                     ObjectProvider<com.sw.ck.bpm.process.service.ProcessThemeService> themeServiceProvider,
-                                     ObjectProvider<BpmTaskFacade> taskFacadeProvider,
-                                     ObjectProvider<com.sw.ck.iot.api.IotDeviceFacade> deviceFacadeProvider,
-                                     ObjectProvider<com.sw.ck.iot.api.IotDeviceQueryFacade> deviceQueryFacadeProvider,
-                                     ObjectProvider<org.springframework.transaction.PlatformTransactionManager>
-                                             transactionManagerProvider,
-                                     TenantWorkAdmission tenantWorkAdmission) {
-        this.runtimeFacadeProvider = runtimeFacadeProvider;
-        this.processDefServiceProvider = processDefServiceProvider;
-        this.triggerFacadeProvider = triggerFacadeProvider;
-        this.instanceServiceProvider = instanceServiceProvider;
-        this.themeServiceProvider = themeServiceProvider;
-        this.taskFacadeProvider = taskFacadeProvider;
-        this.deviceFacadeProvider = deviceFacadeProvider;
-        this.deviceQueryFacadeProvider = deviceQueryFacadeProvider;
-        this.transactionManagerProvider = transactionManagerProvider;
-        this.tenantWorkAdmission = tenantWorkAdmission;
-    }
+    @Autowired
+    private ObjectProvider<PlatformTransactionManager> transactionManagerProvider;
 
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -91,10 +87,10 @@ public class IotProcessTriggerListener {
             return;
         }
         // Phase 4：异步线程无登录态，显式从事件还原租户上下文，否则租户过滤查询/回写全部 fail-closed
-        com.sw.ck.security.holder.LoginUser loginUser = new com.sw.ck.security.holder.LoginUser();
+        LoginUser loginUser = new LoginUser();
         loginUser.setTenantId(event.getTenantId());
         loginUser.setUserId(event.getConfiguredBy());
-        com.sw.ck.security.holder.LoginUserHolder.set(loginUser);
+        LoginUserHolder.set(loginUser);
         BpmRuntimeFacade runtimeFacade = runtimeFacadeProvider.getIfAvailable();
         BpmProcessDefService processDefService = processDefServiceProvider.getIfAvailable();
         IotProcessTriggerFacade triggerFacade = triggerFacadeProvider.getIfAvailable();
@@ -108,7 +104,7 @@ public class IotProcessTriggerListener {
             // iot-{triggerId} 稳定派生，已存在即认定为已完成并发起，直接回写终态。
             BpmInstanceService guardService = instanceServiceProvider.getIfAvailable();
             if (guardService != null && event.getTriggerId() != null) {
-                java.util.Optional<BpmInstance> existing =
+                Optional<BpmInstance> existing =
                         guardService.findByBusinessKey("iot-" + event.getTriggerId());
                 if (existing.isPresent() && existing.get().getProcessInstanceId() != null
                         && !existing.get().getProcessInstanceId().isBlank()) {
@@ -188,9 +184,9 @@ public class IotProcessTriggerListener {
         if (configJson == null || configJson.isBlank()) {
             return null;
         }
-        com.alibaba.fastjson2.JSONObject config;
+        JSONObject config;
         try {
-            config = com.alibaba.fastjson2.JSON.parseObject(configJson);
+            config = JSON.parseObject(configJson);
         } catch (Exception e) {
             return "设备动作配置非法 JSON";
         }
@@ -211,13 +207,13 @@ public class IotProcessTriggerListener {
         switch (source == null ? "FIXED" : source) {
             case "FIXED" -> {
                 Long fixedId = config.getLong("deviceId");
-                java.util.Optional<String> fixedDeviceKey = resolveDeviceKeyById(fixedId);
+                Optional<String> fixedDeviceKey = resolveDeviceKeyById(fixedId);
                 if (fixedDeviceKey.isEmpty()) {
                     return handleFailure(config, "设计时固定设备不存在: deviceId=" + fixedId);
                 }
                 deviceKey = fixedDeviceKey.orElseThrow();
             }
-            case "FORM_FIELD" -> {
+            case ParticipantStrategy.FORM_FIELD -> {
                 Object v = event.getFormData() == null ? null
                         : event.getFormData().get(config.getString("deviceField"));
                 deviceKey = v == null ? null : String.valueOf(v);
@@ -242,8 +238,8 @@ public class IotProcessTriggerListener {
                 : (event.getFormData() == null ? null : event.getFormData().get(paramField));
         String commandKey = config.getString("commandKey") == null ? "iot_action" : config.getString("commandKey");
         // empty = 设备/连接/下行主题不合格（不适用）：交由 failurePolicy 处理，不伪造受理成功
-        java.util.Optional<Long> commandId = deviceFacade.dispatchByDeviceKey(event.getTenantId(), deviceKey,
-                commandKey, param == null ? "{}" : com.alibaba.fastjson2.JSON.toJSONString(param),
+        Optional<Long> commandId = deviceFacade.dispatchByDeviceKey(event.getTenantId(), deviceKey,
+                commandKey, param == null ? "{}" : JSON.toJSONString(param),
                 processInstanceId, source);
         if (commandId.isEmpty()) {
             return handleFailure(config, "运行时校验拒绝或无下行主题: deviceKey=" + deviceKey);
@@ -258,7 +254,7 @@ public class IotProcessTriggerListener {
      *
      * @return null（继续成功路径）或失败原因（BLOCK 回写）
      */
-    private String handleFailure(com.alibaba.fastjson2.JSONObject config, String reason) {
+    private String handleFailure(JSONObject config, String reason) {
         String policy = config.getString("failurePolicy");
         if ("CONTINUE".equals(policy)) {
             log.warn("A6 失败策略 CONTINUE（记录后继续）: {}", reason);
@@ -271,10 +267,10 @@ public class IotProcessTriggerListener {
         return reason;
     }
 
-    private java.util.Optional<String> resolveDeviceKeyById(Long deviceId) {
-        com.sw.ck.iot.api.IotDeviceQueryFacade queryFacade = deviceQueryFacadeProvider.getIfAvailable();
+    private Optional<String> resolveDeviceKeyById(Long deviceId) {
+        IotDeviceQueryFacade queryFacade = deviceQueryFacadeProvider.getIfAvailable();
         if (queryFacade == null) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         return queryFacade.getDeviceKeyById(deviceId);
     }
@@ -288,13 +284,13 @@ public class IotProcessTriggerListener {
      */
     private String startProcessWithInstanceRecord(BpmRuntimeFacade runtimeFacade, IotProcessTriggerEvent event,
                                                   BpmProcessDef def, Map<String, Object> variables) {
-        org.springframework.transaction.PlatformTransactionManager transactionManager =
+        PlatformTransactionManager transactionManager =
                 transactionManagerProvider.getIfAvailable();
         if (transactionManager == null) {
             throw new IllegalStateException("事务管理器未装配：IoT 流程发起与业务实例记录无法保持同一提交边界");
         }
-        org.springframework.transaction.support.TransactionTemplate template =
-                new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        TransactionTemplate template =
+                new TransactionTemplate(transactionManager);
         return template.execute(status -> {
             String processInstanceId = runtimeFacade.startProcess(
                             event.getProcessTemplateKey(),
@@ -308,7 +304,7 @@ public class IotProcessTriggerListener {
                 boolean processActive = true;
                 BpmTaskFacade taskFacade = taskFacadeProvider.getIfAvailable();
                 if (taskFacade != null) {
-                    java.util.Optional<Boolean> activeDecision = taskFacade.isProcessActive(processInstanceId);
+                    Optional<Boolean> activeDecision = taskFacade.isProcessActive(processInstanceId);
                     // empty = 实例标识缺失（此处实例刚创建，契约不产生）：保持原有乐观默认 true
                     if (activeDecision.isPresent()) {
                         processActive = activeDecision.get();

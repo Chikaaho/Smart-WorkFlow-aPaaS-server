@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerIntercept
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.config.mybatis.CommonMetaObjectHandler;
 import com.sw.ck.common.config.mybatis.tenant.CommonTenantLineHandler;
 import com.sw.ck.common.config.mybatis.tenant.TenantProperties;
@@ -20,11 +21,15 @@ import com.sw.ck.security.handler.RestAuthenticationEntryPoint;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
 import com.sw.ck.security.support.PermissionService;
+import com.sw.ck.system.service.SysRoleService;
+
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
+import org.apache.ibatis.session.SqlSessionFactory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +72,7 @@ import javax.sql.DataSource;
 import java.io.IOException;
 import java.util.List;
 import java.util.Set;
+import java.util.ArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -105,7 +111,7 @@ class RoleMenusContractAndSecurityTest {
     private ObjectMapper objectMapper;
 
     @Autowired
-    private com.sw.ck.system.service.SysRoleService sysRoleService;
+    private SysRoleService sysRoleService;
 
     // ==================== 表结构（与 AuthFlowIntegrationTest 同源 DDL） ====================
 
@@ -288,7 +294,7 @@ class RoleMenusContractAndSecurityTest {
         TestAuthenticationFilter.permissions = List.of("system:role:list");
         JsonNode body = getMenus("2");
         assertThat(body.get("code").asInt()).isZero();
-        List<Long> data = new java.util.ArrayList<>();
+        List<Long> data = new ArrayList<>();
         body.get("data").forEach(n -> data.add(n.asLong()));
         assertThat(data).containsExactlyInAnyOrder(18L, 200L, 201L);
     }
@@ -313,7 +319,7 @@ class RoleMenusContractAndSecurityTest {
         assertThat(write.get("code").asInt()).isZero();
         assertThat(countRoleMenuRows(2L)).isEqualTo(2);
         JsonNode read = getMenus("2");
-        List<Long> data = new java.util.ArrayList<>();
+        List<Long> data = new ArrayList<>();
         read.get("data").forEach(n -> data.add(n.asLong()));
         assertThat(data).containsExactlyInAnyOrder(200L, 300L);
     }
@@ -325,7 +331,7 @@ class RoleMenusContractAndSecurityTest {
         JsonNode write = putMenus("2", "[200, 200, 18, 200, 18]");
         assertThat(write.get("code").asInt()).isZero();
         assertThat(countRoleMenuRows(2L)).isEqualTo(2);
-        List<Long> data = new java.util.ArrayList<>();
+        List<Long> data = new ArrayList<>();
         getMenus("2").get("data").forEach(n -> data.add(n.asLong()));
         assertThat(data).containsExactlyInAnyOrder(200L, 18L);
     }
@@ -346,8 +352,8 @@ class RoleMenusContractAndSecurityTest {
     void putMenus_withNullBody_shouldClearAll() throws Exception {
         TestAuthenticationFilter.permissions = List.of("system:role:update");
         // service 级直调无认证过滤器：显式建立种子数据所属的租户 0 上下文（I5 fail-closed 后不再隐式回落）
-        com.sw.ck.security.holder.LoginUserHolder.set(new com.sw.ck.security.holder.LoginUser() {{
-            setUserId(1L); setTenantId(0L); setPermissions(java.util.List.of());
+        LoginUserHolder.set(new LoginUser() {{
+            setUserId(1L); setTenantId(0L); setPermissions(List.of());
         }});
         // 经服务方法直接验证 null 语义：先删后插中的删除已执行，null 不插入任何行
         sysRoleService.updateMenuIds(2L, null);
@@ -499,7 +505,7 @@ class RoleMenusContractAndSecurityTest {
         // 租户 5 用户重新登录：读取 role 3 → 仍为 [300]，原租户数据不受影响
         TestAuthenticationFilter.tenantId = 5L;
         JsonNode ownRead = getMenus("3");
-        List<Long> data = new java.util.ArrayList<>();
+        List<Long> data = new ArrayList<>();
         ownRead.get("data").forEach(n -> data.add(n.asLong()));
         assertThat(data)
                 .as("租户5 读取自身绑定不受跨租户写入影响")
@@ -610,7 +616,7 @@ class RoleMenusContractAndSecurityTest {
         }
 
         @Bean
-        public org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory(
+        public SqlSessionFactory sqlSessionFactory(
                 DataSource dataSource,
                 CommonMetaObjectHandler metaObjectHandler,
                 MybatisPlusInterceptor interceptor) throws Exception {
@@ -639,8 +645,8 @@ class RoleMenusContractAndSecurityTest {
         }
 
         @Bean
-        public RoleController roleController(com.sw.ck.system.service.SysRoleService sysRoleService) {
-            return new RoleController(sysRoleService);
+        public RoleController roleController(SysRoleService sysRoleService) {
+            return new RoleController();
         }
 
         @Bean("ss")
@@ -662,7 +668,7 @@ class RoleMenusContractAndSecurityTest {
         // 方法级鉴权拒绝由生产 GlobalExceptionHandler 的 AuthorizationDeniedException 分支兜底为 403（真实链路）。
         @Bean
         public GlobalExceptionHandler globalExceptionHandler() {
-            return new GlobalExceptionHandler(null);
+            return new GlobalExceptionHandler();
         }
 
         // 生产 401/403 响应处理器：HTTP 401/403 + R{code:401/403} body

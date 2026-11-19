@@ -1,15 +1,18 @@
 package com.sw.ck.bpm.process.validator;
 
-import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
+import com.sw.ck.bpm.api.expression.RestrictedExpressionEvaluator;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
 import com.sw.ck.bpm.process.dto.ApprovalActionRequest;
 import com.sw.ck.common.exception.BaseException;
 
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import com.sw.ck.bpm.api.node.OpinionFieldTypeEnum;
 
 /**
  * 审批意见的后端权威校验器。
@@ -20,7 +23,7 @@ import java.util.Set;
 public final class ApprovalOpinionValidator {
 
     private static final Set<String> SUPPORTED_TYPES = Set.of(
-            "TEXT", "TEXTAREA", "NUMBER", "RADIO", "CHECKBOX", "SELECT", "DATETIME", "NOTE", "USER");
+            OpinionFieldTypeEnum.TEXT.getCode(), OpinionFieldTypeEnum.TEXTAREA.getCode(), OpinionFieldTypeEnum.NUMBER.getCode(), OpinionFieldTypeEnum.RADIO.getCode(), OpinionFieldTypeEnum.CHECKBOX.getCode(), OpinionFieldTypeEnum.SELECT.getCode(), OpinionFieldTypeEnum.DATETIME.getCode(), OpinionFieldTypeEnum.NOTE.getCode(), SubjectTypeEnum.USER.getCode());
 
     /** 单条意见最多选择的人员数：防止借意见字段塞入任意长人员清单。 */
     private static final int MAX_OPINION_USERS = 50;
@@ -68,7 +71,7 @@ public final class ApprovalOpinionValidator {
         if ("DEFAULT_REMARK".equals(formId)) {
             data.putIfAbsent("comment", request.getComment() == null ? "" : request.getComment());
         }
-        Set<String> declaredKeys = new java.util.HashSet<>();
+        Set<String> declaredKeys = new HashSet<>();
         for (Object rawField : fields) {
             if (!(rawField instanceof Map<?, ?> field)) {
                 throw new BaseException(BpmErrorCode.APPROVAL_OPINION_INVALID);
@@ -176,7 +179,7 @@ public final class ApprovalOpinionValidator {
     /** USER 意见字段：只接受稳定用户 ID（正整数，单个或数组），不接受显示名替代。 */
     private static void validateUser(Map<?, ?> field, Object value) {
         String type = text(field.get("type"));
-        if (type == null || !"USER".equalsIgnoreCase(type)) return;
+        if (type == null || !SubjectTypeEnum.USER.getCode().equalsIgnoreCase(type)) return;
         Collection<?> values = value instanceof Collection<?> collection
                 ? collection : List.of(value);
         if (values.isEmpty() || values.size() > MAX_OPINION_USERS) {

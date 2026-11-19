@@ -2,9 +2,13 @@ package com.sw.ck.bpm.process.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.time.LocalDateTime;
 
 /** 沟通征询（I3 §4.7）：不转移任务责任、不授予审批结算权；回复独立于审批意见保存。 */
 @Data
@@ -46,5 +50,5 @@ public class BpmCommunication extends BaseEntity {
     private String status;
 
     @TableField("reply_time")
-    private java.time.LocalDateTime replyTime;
+    private LocalDateTime replyTime;
 }

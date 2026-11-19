@@ -4,10 +4,16 @@ import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.participant.ConsensusSettlementPort;
 import com.sw.ck.bpm.api.participant.ConsensusVotePort;
 import com.sw.ck.common.exception.BaseException;
+import com.sw.ck.security.holder.LoginUser;
+import com.sw.ck.security.holder.LoginUserHolder;
+
 import org.flowable.engine.delegate.DelegateExecution;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.util.Optional;
+import com.sw.ck.bpm.api.node.ConsensusModeEnum;
 
 /**
  * 会签提前结算判定（I3 §4.5）。
@@ -20,32 +26,16 @@ import org.springframework.stereotype.Component;
 @Component("consensusCompletionEvaluator")
 public class ConsensusCompletionEvaluator {
 
+    @Autowired(required = false)
     private ObjectProvider<ConsensusVotePort> votePort;
+    @Autowired(required = false)
     private ObjectProvider<ConsensusSettlementPort> settlementPort;
-
-    @Autowired
-    public ConsensusCompletionEvaluator(ObjectProvider<ConsensusVotePort> votePort,
-                                        ObjectProvider<ConsensusSettlementPort> settlementPort) {
-        this.votePort = votePort;
-        this.settlementPort = settlementPort;
-    }
-
-    /** 兼容旧行为的单测/静态装配：无端口时回退流程变量计数。 */
-    public ConsensusCompletionEvaluator() {
-        this.pay(null, null);
-    }
-
-    private void pay(ObjectProvider<ConsensusVotePort> votePort,
-                     ObjectProvider<ConsensusSettlementPort> settlementPort) {
-        this.votePort = votePort;
-        this.settlementPort = settlementPort;
-    }
 
     public boolean shouldComplete(DelegateExecution execution, String mode, int ratio) {
         // 异步作业线程无登录态：按流程父执行/实例变量还原权威租户（与动作节点同一范式），
         // 否则会签计数查询在租户行拦截器处 fail closed（作业死信、完成命令超期）。
-        com.sw.ck.security.holder.LoginUser previous =
-                com.sw.ck.security.holder.LoginUserHolder.get();
+        LoginUser previous =
+                LoginUserHolder.get();
         boolean restoreNeeded = previous == null;
         if (restoreNeeded) {
             Long tenantId = tenantOf(execution);
@@ -53,19 +43,19 @@ public class ConsensusCompletionEvaluator {
                 throw new BaseException(BpmErrorCode.APPROVER_TENANT_ID_MISSING.getCode(),
                         "会签完成判定缺少租户上下文（tenantId 流程变量缺失）");
             }
-            com.sw.ck.security.holder.LoginUser owner = new com.sw.ck.security.holder.LoginUser();
+            LoginUser owner = new LoginUser();
             owner.setTenantId(tenantId);
             Object submitter = execution.getVariable("submitter");
             if (submitter != null) {
                 owner.setUserId(Long.parseLong(String.valueOf(submitter)));
             }
-            com.sw.ck.security.holder.LoginUserHolder.set(owner);
+            LoginUserHolder.set(owner);
         }
         try {
             return doShouldComplete(execution, mode, ratio);
         } finally {
             if (restoreNeeded) {
-                com.sw.ck.security.holder.LoginUserHolder.clear();
+                LoginUserHolder.clear();
             }
         }
     }
@@ -98,17 +88,17 @@ public class ConsensusCompletionEvaluator {
 
         boolean positive;
         boolean negative;
-        if ("ANY".equals(mode)) {
+        if (ConsensusModeEnum.ANY.getCode().equals(mode)) {
             positive = approved >= 1;
             // ANY 负向阈值与 RATIO 同口径：任一否决不立即终结，
             // 须等参与人全部表决完成（completed >= total）且无足够通过票；
             // 一票否决语义由 VETO 承担，不得混入 ANY。
             negative = !positive && completed >= total;
-        } else if ("VETO".equals(mode)) {
+        } else if (ConsensusModeEnum.VETO.getCode().equals(mode)) {
             // 一票否决：任何否决即节点负向
             positive = approved >= total;
             negative = rejected > 0;
-        } else if ("COUNT".equals(mode)) {
+        } else if (ConsensusModeEnum.COUNT.getCode().equals(mode)) {
             if (total <= 0) {
                 return false;
             }
@@ -116,7 +106,7 @@ public class ConsensusCompletionEvaluator {
             int required = Math.max(1, Math.min(ratio, total));
             positive = approved >= required;
             negative = !positive && completed >= total && approved < required;
-        } else if ("ALL".equals(mode)) {
+        } else if (ConsensusModeEnum.ALL.getCode().equals(mode)) {
             positive = total > 0 && approved >= total;
             negative = !positive && rejected > 0;
         } else {
@@ -148,7 +138,7 @@ public class ConsensusCompletionEvaluator {
         ConsensusVotePort port = votePort == null ? null : votePort.getIfAvailable();
         if (port != null) {
             // empty = 无冻结快照（端口不可用或快照缺失）：回退变量口径（原 -1 哨兵路径）
-            java.util.Optional<Long> frozen = port.total(
+            Optional<Long> frozen = port.total(
                     String.valueOf(execution.getVariable("tenantId")),
                     execution.getProcessInstanceId(), currentActivityId(execution));
             if (frozen.isPresent()) {
@@ -168,7 +158,7 @@ public class ConsensusCompletionEvaluator {
         ConsensusVotePort port = votePort == null ? null : votePort.getIfAvailable();
         if (port != null) {
             // empty = 端口不可用：按既有回退口径读取变量计数（原 -1 哨兵路径）
-            java.util.Optional<Long> counted = port.count(
+            Optional<Long> counted = port.count(
                     String.valueOf(execution.getVariable("tenantId")),
                     execution.getProcessInstanceId(), currentActivityId(execution), outcome);
             if (counted.isPresent()) {

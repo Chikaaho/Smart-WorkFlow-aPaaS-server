@@ -1,5 +1,7 @@
 package com.sw.ck.bpm.engine.script;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
 import com.sw.ck.bpm.api.script.ScriptFunctionContext;
 import com.sw.ck.security.holder.LoginUserHolder;
@@ -19,13 +21,10 @@ import java.util.Optional;
 @Component
 public class BpmScriptEvaluatePortImpl implements BpmScriptEvaluatePort {
 
-    private final BpmScriptRunner runner;
-    private final ScriptWorkerPool workerPool;
-
-    public BpmScriptEvaluatePortImpl(BpmScriptRunner runner, ScriptWorkerPool workerPool) {
-        this.runner = runner;
-        this.workerPool = workerPool;
-    }
+    @Autowired
+    private BpmScriptRunner runner;
+    @Autowired
+    private ScriptWorkerPool workerPool;
 
     @Override
     public Optional<ScriptOutcome> run(String script, Map<String, Object> variables, long timeoutMs) {

@@ -1,5 +1,9 @@
 package com.sw.ck.common.response;
 
+import com.sw.ck.common.exception.ErrorKeyRegistry;
+import com.sw.ck.common.i18n.LocalizedMessages;
+import com.sw.ck.common.trace.EventRef;
+
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 
@@ -60,10 +64,10 @@ public class R<T> implements Serializable {
     public static <T> R<T> fail(int code, String msg) {
         R<T> r = new R<>();
         r.setCode(code);
-        String errorKey = com.sw.ck.common.exception.ErrorKeyRegistry.lookup(code);
+        String errorKey = ErrorKeyRegistry.lookup(code);
         // P61：文案权威在目录；调用方传入的字面量只作兜底（未登记 key 时保持原文）。
-        r.setMsg(com.sw.ck.common.i18n.LocalizedMessages.text(errorKey, msg));
-        r.setEventRef(com.sw.ck.common.trace.EventRef.current());
+        r.setMsg(LocalizedMessages.text(errorKey, msg));
+        r.setEventRef(EventRef.current());
         r.setErrorKey(errorKey);
         return r;
     }

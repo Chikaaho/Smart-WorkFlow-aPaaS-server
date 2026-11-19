@@ -2,9 +2,13 @@ package com.sw.ck.system.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
+import java.util.List;
 
 /**
  * 用户组主记录（租户内扁平虚拟用户集合）。
@@ -36,5 +40,5 @@ public class SysUserGroup extends BaseEntity {
 
     /** 成员用户 ID 列表（非持久字段，回填用） */
     @TableField(exist = false)
-    private java.util.List<Long> memberIds;
+    private List<Long> memberIds;
 }

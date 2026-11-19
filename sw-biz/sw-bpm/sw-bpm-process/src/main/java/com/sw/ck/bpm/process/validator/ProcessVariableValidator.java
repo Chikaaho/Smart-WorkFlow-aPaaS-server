@@ -1,6 +1,9 @@
 package com.sw.ck.bpm.process.validator;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sw.ck.bpm.api.dto.ActionConfig;
+import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.GraphValidationError;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.dto.ProcessNotificationConfig;
@@ -8,17 +11,18 @@ import com.sw.ck.bpm.api.dto.ProcessVariableDef;
 import com.sw.ck.bpm.api.dto.TriggerConfig;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.api.script.BpmScriptEvaluatePort;
+import com.sw.ck.bpm.api.common.SubjectTypeEnum;
+import com.sw.ck.bpm.process.vo.InstanceRelationVO;
 import com.sw.ck.bpm.process.entity.BpmFormBinding;
 import com.sw.ck.bpm.process.service.BpmFormBindingService;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.bpm.process.service.TriggerExecutionService;
+import com.sw.ck.form.api.vo.FormDefVO;
 import com.sw.ck.form.api.form.FormDefinitionService;
 import com.sw.ck.system.api.user.UserQueryFacade;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,6 +31,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import com.sw.ck.bpm.api.node.TriggerStartModeEnum;
+
 /**
  * P64 变量/触发器/节点表单发布校验（ADR-P64-001 §2/§3/§4；挂在图校验之后、冻结之前）。
  * <p>
@@ -34,45 +44,38 @@ import java.util.Set;
  * 冻结版本解析。无 variables/triggers/节点表单绑定的旧图零校验、零行为。
  * </p>
  */
-@Slf4j
+@Log4j2
 @Component
 public class ProcessVariableValidator {
 
     private static final Set<String> VARIABLE_TYPES = Set.of(
-            "NUMBER", "STRING", "BOOLEAN", "USER", "DEPT", "USER_SET", "DEPT_SET", "ROWS");
+            "NUMBER", "STRING", "BOOLEAN", SubjectTypeEnum.USER.getCode(), "DEPT", "USER_SET", "DEPT_SET", "ROWS");
     private static final Set<String> VARIABLE_SOURCES = Set.of("MAIN_FORM", "NODE_FORM", "SYSTEM");
-    private static final Set<String> AGGREGATIONS = Set.of("NONE", "UNION", "CONCAT");
+    private static final Set<String> AGGREGATIONS = Set.of(InstanceRelationVO.RELATION_NONE, "UNION", "CONCAT");
     private static final Set<String> TRIGGER_EVENTS = Set.of(
-            "TASK_SUBMITTED", "NODE_ROUND_COMPLETED", "PROCESS_COMPLETED",
-            "NODE_ENTERING", "PROCESS_START");
+            TriggerExecutionService.EVENT_TASK_SUBMITTED, TriggerExecutionService.EVENT_NODE_ROUND_COMPLETED, TriggerExecutionService.EVENT_PROCESS_COMPLETED,
+            TriggerExecutionService.EVENT_NODE_ENTERING, TriggerExecutionService.EVENT_PROCESS_START);
     /** 无需绑定源节点的事件（流程级：发起/完成）。 */
-    private static final Set<String> PROCESS_LEVEL_EVENTS = Set.of("PROCESS_COMPLETED", "PROCESS_START");
+    private static final Set<String> PROCESS_LEVEL_EVENTS = Set.of(TriggerExecutionService.EVENT_PROCESS_COMPLETED, TriggerExecutionService.EVENT_PROCESS_START);
     private static final Set<String> ACTION_TYPES = Set.of(
-            "START_SINGLE", "START_EACH", "START_GROUPED");
+            TriggerStartModeEnum.START_SINGLE.getCode(), TriggerStartModeEnum.START_EACH.getCode(), TriggerStartModeEnum.START_GROUPED.getCode());
     private static final Set<String> NODE_FORM_CAPABLE_TYPES = Set.of(
-            "APPROVAL", "CONSENSUS", "DYNAMIC_PARALLEL");
+            GraphElement.TYPE_APPROVAL, "CONSENSUS", "DYNAMIC_PARALLEL");
     private static final Set<String> SYSTEM_FIELDS = Set.of(
             "processInstanceId", "processDefKey", "businessKey", "formKey",
             "initiatorId", "tenantId", "currentNodeKey", "roundNo");
     private static final Set<String> MATCH_TYPES = Set.of("NUMBER", "STRING", "BOOLEAN");
 
-    private final FormDefinitionService formDefinitionService;
-    private final BpmFormBindingService formBindingService;
-    private final BpmScriptEvaluatePort scriptRunner;
-    private final ObjectMapper objectMapper;
-    private final UserQueryFacade userQueryFacade;
-
-    public ProcessVariableValidator(FormDefinitionService formDefinitionService,
-                                    BpmFormBindingService formBindingService,
-                                    BpmScriptEvaluatePort scriptRunner,
-                                    ObjectMapper objectMapper,
-                                    UserQueryFacade userQueryFacade) {
-        this.formDefinitionService = formDefinitionService;
-        this.formBindingService = formBindingService;
-        this.scriptRunner = scriptRunner;
-        this.objectMapper = objectMapper;
-        this.userQueryFacade = userQueryFacade;
-    }
+    @Autowired
+    private FormDefinitionService formDefinitionService;
+    @Autowired
+    private BpmFormBindingService formBindingService;
+    @Autowired
+    private BpmScriptEvaluatePort scriptRunner;
+    @Autowired
+    private ObjectMapper objectMapper;
+    @Autowired
+    private UserQueryFacade userQueryFacade;
 
     /**
      * 发布期校验（图内变量、触发器、节点表单绑定一致性）。
@@ -110,7 +113,7 @@ public class ProcessVariableValidator {
                     }
                     for (ActionConfig action : branch.getActions()) {
                         if (action.isChild()
-                                && !"NONE".equalsIgnoreCase(action.getWaitPolicy())) {
+                                && !InstanceRelationVO.RELATION_NONE.equalsIgnoreCase(action.getWaitPolicy())) {
                             waitableActionIds.add(action.getActionId());
                         }
                     }
@@ -173,7 +176,7 @@ public class ProcessVariableValidator {
                 continue;
             }
             String formKey = String.valueOf(formKeyObj).trim();
-            Optional<FormDefDTO> def = formDefinitionService.getFormDef(formKey);
+            Optional<FormDefVO> def = formDefinitionService.getFormDef(formKey);
             if (def.isEmpty() || !"PUBLISHED".equals(def.get().getStatus())) {
                 errors.add(error(element.getId(), BpmErrorCode.NODE_FORM_NOT_BOUND,
                         "节点业务表单不存在或未发布: " + formKey));
@@ -190,7 +193,7 @@ public class ProcessVariableValidator {
         }
         Set<String> varIds = new HashSet<>();
         // 节点表单绑定索引（nodeKey → formKey）
-        Map<String, String> nodeForms = new java.util.HashMap<>();
+        Map<String, String> nodeForms = new HashMap<>();
         if (graph.getElements() != null) {
             for (var element : graph.getElements()) {
                 if ("node".equals(element.getKind()) && element.getConfig() != null
@@ -262,7 +265,7 @@ public class ProcessVariableValidator {
                     // 已在上/source 无效分支处理
                 }
             }
-            String aggregation = def.getAggregation() == null ? "NONE" : def.getAggregation().toUpperCase();
+            String aggregation = def.getAggregation() == null ? InstanceRelationVO.RELATION_NONE : def.getAggregation().toUpperCase();
             if (!AGGREGATIONS.contains(aggregation)) {
                 errors.add(error(locator, BpmErrorCode.VARIABLE_INVALID,
                         "变量 " + def.getVarId() + " 聚合规则无效: " + def.getAggregation()));
@@ -322,9 +325,9 @@ public class ProcessVariableValidator {
             case "STRING" -> ff.equals("TEXT") || ff.equals("RICH_TEXT") || ff.equals("DATE")
                     || ff.equals("TIME") || ff.equals("DICT") || ff.equals("MULTISELECT")
                     || ff.equals("REFERENCE") || ff.equals("LABEL");
-            case "USER" -> "USER".equals(ff) && !multiple;
+            case "USER" -> SubjectTypeEnum.USER.getCode().equals(ff) && !multiple;
             case "DEPT" -> "DEPT".equals(ff) && !multiple;
-            case "USER_SET" -> "USER".equals(ff);
+            case "USER_SET" -> SubjectTypeEnum.USER.getCode().equals(ff);
             case "DEPT_SET" -> "DEPT".equals(ff);
             case "ROWS" -> "TABLE".equals(ff);
             default -> false;
@@ -440,7 +443,7 @@ public class ProcessVariableValidator {
             }
             if (matchType.equals("NUMBER")) {
                 try {
-                    new java.math.BigDecimal(branch.getMatchValue());
+                    new BigDecimal(branch.getMatchValue());
                 } catch (Exception e) {
                     errors.add(error(locator, BpmErrorCode.TRIGGER_INVALID,
                             "触发器 " + trigger.getTriggerId() + " 分支匹配值不是数字: " + branch.getMatchValue()));
@@ -489,13 +492,13 @@ public class ProcessVariableValidator {
                         "动作类型无效: " + action.getType()));
                 continue;
             }
-            if (!"START_SINGLE".equals(type)
+            if (!TriggerStartModeEnum.START_SINGLE.getCode().equals(type)
                     && (action.getSourceVariable() == null || action.getSourceVariable().isBlank())) {
                 errors.add(error(locator, BpmErrorCode.ACTION_INVALID,
                         "动作 " + action.getActionId() + ": 集合动作缺少 sourceVariable"));
                 continue;
             }
-            if ("START_GROUPED".equals(type)
+            if (TriggerStartModeEnum.START_GROUPED.getCode().equals(type)
                     && (action.getGroupBy() == null || action.getGroupBy().isBlank())) {
                 errors.add(error(locator, BpmErrorCode.ACTION_INVALID,
                         "动作 " + action.getActionId() + ": 分组动作缺少 groupBy 稳定分组身份"));
@@ -517,7 +520,7 @@ public class ProcessVariableValidator {
 
     // ==================== CHILD 子流程动作（P64 阶段Ⅱ A05/A06） ====================
 
-    private static final Set<String> WAIT_POLICIES = Set.of("ALL", "ANY", "COUNT", "NONE");
+    private static final Set<String> WAIT_POLICIES = Set.of("ALL", "ANY", "COUNT", InstanceRelationVO.RELATION_NONE);
 
     /** CHILD 配置校验：等待策略/K 值/输出回写结构与父表单目标字段存在性。 */
     private void validateChildAction(ProcessGraph graph, ActionConfig action, String locator,
@@ -634,7 +637,7 @@ public class ProcessVariableValidator {
                     "动作 " + action.getActionId() + ": 缺少目标表单 targetFormKey"));
             return;
         }
-        Optional<FormDefDTO> targetForm = formDefinitionService.getFormDef(action.getTargetFormKey());
+        Optional<FormDefVO> targetForm = formDefinitionService.getFormDef(action.getTargetFormKey());
         if (targetForm.isEmpty() || !"PUBLISHED".equals(targetForm.get().getStatus())) {
             errors.add(error(locator, BpmErrorCode.ACTION_TARGET_INVALID,
                     "动作 " + action.getActionId() + ": 目标表单不存在或未发布 " + action.getTargetFormKey()));

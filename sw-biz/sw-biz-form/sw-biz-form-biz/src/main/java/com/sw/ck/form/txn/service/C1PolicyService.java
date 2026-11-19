@@ -1,7 +1,10 @@
 package com.sw.ck.form.txn.service;
 
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.dynamic.DynamicTableSql;
@@ -15,19 +18,20 @@ import com.sw.ck.form.txn.model.C1PolicyModel;
 import com.sw.ck.form.txn.model.C1PolicyView;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import lombok.extern.log4j.Log4j2;
 /**
  * C1 关键数据保护策略：声明、既有数据校验与写路径断言。
  * <ul>
@@ -36,27 +40,19 @@ import java.util.Set;
  * </ul>
  */
 @Service
+@Log4j2
 public class C1PolicyService {
 
-    private static final Logger log = LoggerFactory.getLogger(C1PolicyService.class);
-
-    private final C1PolicyMapper policyMapper;
-    private final TxnFormBinding binding;
-    private final FormIdGenerator idGenerator;
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
-
-    public C1PolicyService(C1PolicyMapper policyMapper,
-                           TxnFormBinding binding,
-                           FormIdGenerator idGenerator,
-                           JdbcTemplate jdbcTemplate,
-                           ObjectMapper objectMapper) {
-        this.policyMapper = policyMapper;
-        this.binding = binding;
-        this.idGenerator = idGenerator;
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private C1PolicyMapper policyMapper;
+    @Autowired
+    private TxnFormBinding binding;
+    @Autowired
+    private FormIdGenerator idGenerator;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private ObjectMapper objectMapper;
 
     // ==================== 查询 ====================
 
@@ -106,7 +102,7 @@ public class C1PolicyService {
                     throw new BaseException(FormErrorCode.ACTION_FIELD_BINDING_INVALID,
                             "受保护字段不在表单定义中：" + f);
                 }
-                if ("TABLE".equalsIgnoreCase(def.type())) {
+                if (FieldType.TABLE.name().equalsIgnoreCase(def.type())) {
                     throw new BaseException(FormErrorCode.ACTION_FIELD_BINDING_INVALID,
                             "受保护字段不能为表格类型：" + f);
                 }
@@ -208,7 +204,7 @@ public class C1PolicyService {
         if (model == null || fieldDefs == null || fieldDefs.isEmpty()) {
             return;
         }
-        List<String> writeColumns = new java.util.ArrayList<>();
+        List<String> writeColumns = new ArrayList<>();
         for (Map.Entry<String, FormFieldValidator.FieldDef> entry : fieldDefs.entrySet()) {
             String type = entry.getValue().type();
             if ("TABLE".equalsIgnoreCase(type) || "LABEL".equalsIgnoreCase(type)) {

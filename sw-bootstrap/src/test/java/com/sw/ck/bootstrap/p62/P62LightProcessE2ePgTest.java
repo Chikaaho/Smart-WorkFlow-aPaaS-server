@@ -1,15 +1,18 @@
 package com.sw.ck.bootstrap.p62;
 
 import com.sw.ck.bootstrap.i5.ProdBootTestApplication;
+import com.sw.ck.bootstrap.support.LoginRsaTestKeyFiles;
 import com.sw.ck.bpm.api.dto.GraphElement;
 import com.sw.ck.bpm.api.dto.ProcessGraph;
 import com.sw.ck.bpm.api.exception.BpmErrorCode;
 import com.sw.ck.bpm.process.entity.BpmCommand;
 import com.sw.ck.bpm.process.entity.BpmProcessDef;
+import com.sw.ck.bpm.process.job.BpmInstanceStateSyncJob;
 import com.sw.ck.bpm.process.mapper.BpmCommandMapper;
 import com.sw.ck.bpm.process.service.BpmProcessDefService;
 import com.sw.ck.common.exception.BaseException;
-import com.sw.ck.form.api.dto.FormDefDTO;
+import com.sw.ck.form.api.vo.FormDefVO;
+import com.sw.ck.form.api.exception.FormErrorCode;
 import com.sw.ck.form.api.port.FormTxnActionPort;
 import com.sw.ck.form.service.FormDefService;
 import com.sw.ck.form.service.FormSubmitService;
@@ -19,18 +22,26 @@ import com.sw.ck.form.txn.model.TxnInvokeRequest;
 import com.sw.ck.form.txn.service.TxnActionService;
 import com.sw.ck.security.holder.LoginUser;
 import com.sw.ck.security.holder.LoginUserHolder;
+import com.sw.ck.security.support.SecurityLoginContextProvider;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -82,23 +93,23 @@ class P62LightProcessE2ePgTest {
         props.put("spring.datasource.dynamic.datasource.master.username", "postgres");
         props.put("spring.datasource.dynamic.datasource.master.password", "postgres");
         props.put("sw.security.jwt.secret", "p62-lp-e2e-jwt-secret-0123456789abcdef0123456789abcdef");
-        props.put("sw.security.login.rsa-private-key", generatedRsaPkcs8Base64());
+        props.put("sw.security.login.rsa-private-key-file", LoginRsaTestKeyFiles.create());
         props.put("sw.security.login.digest-secret", "p62-lp-e2e-digest-secret");
-        props.put("sw.security.sso.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.agent.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.external-datasource.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
-        props.put("sw.iot.cipher.cipher-key", java.util.Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.security.sso.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.agent.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.external-datasource.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
+        props.put("sw.iot.cipher.cipher-key", Base64.getEncoder().encodeToString(new byte[32]));
         app = new SpringApplicationBuilder(ProdBootTestApplication.class)
                 .initializers(context -> {
                     context.getEnvironment().getPropertySources().addFirst(
-                            new org.springframework.core.env.MapPropertySource("p62-lp-e2e", props));
+                            new MapPropertySource("p62-lp-e2e", props));
                     context.getEnvironment().getSystemProperties()
                             .put("spring.main.allow-bean-definition-overriding", "true");
-                    org.springframework.beans.factory.support.RootBeanDefinition provider =
-                            new org.springframework.beans.factory.support.RootBeanDefinition(
-                                    com.sw.ck.security.support.SecurityLoginContextProvider.class);
+                    RootBeanDefinition provider =
+                            new RootBeanDefinition(
+                                    SecurityLoginContextProvider.class);
                     provider.setPrimary(true);
-                    ((org.springframework.beans.factory.support.DefaultListableBeanFactory) context.getBeanFactory())
+                    ((DefaultListableBeanFactory) context.getBeanFactory())
                             .registerBeanDefinition("p62LpE2eLoginContextProvider", provider);
                 })
                 .run();
@@ -266,7 +277,7 @@ class P62LightProcessE2ePgTest {
                         invocationKey(processInstanceId), null, null))))
                 .isInstanceOfSatisfying(BaseException.class, e ->
                         assertThat(e.getCode()).isEqualTo(
-                                com.sw.ck.form.api.exception.FormErrorCode.ACTION_IDEMPOTENCY_CONFLICT.getCode()));
+                                FormErrorCode.ACTION_IDEMPOTENCY_CONFLICT.getCode()));
         assertThat(reservedOf(recordId)).as("冲突路径原结果不变").isEqualByComparingTo("2");
         System.out.println("[P62-EV] s2.e2e replay replay=true effect-once=true same-key-diff-payload=REJECTED"
                 + " reserved=2 invocations=1");
@@ -316,7 +327,7 @@ class P62LightProcessE2ePgTest {
 
     private String toJson(ProcessGraph graph) {
         try {
-            return app.getBean(com.fasterxml.jackson.databind.ObjectMapper.class).writeValueAsString(graph);
+            return app.getBean(ObjectMapper.class).writeValueAsString(graph);
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
@@ -326,7 +337,7 @@ class P62LightProcessE2ePgTest {
 
     private BpmCommand findFlowStartCommand(String recordId) {
         return asOperator(() -> commandMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<BpmCommand>()
+                new LambdaQueryWrapper<BpmCommand>()
                         .eq(BpmCommand::getCommandKey, "FLOW_START:" + recordId)
                         .eq(BpmCommand::getTenantId, TENANT)
                         .orderByDesc(BpmCommand::getId)
@@ -343,7 +354,7 @@ class P62LightProcessE2ePgTest {
                 return String.valueOf(rows.get(0).get("process_instance_id"));
             }
             // TXN_ACTION async 独立短事务：触发实例状态对账收敛（不依赖调度时序）
-            asOperator(() -> app.getBean(com.sw.ck.bpm.process.job.BpmInstanceStateSyncJob.class).sweepOnce());
+            asOperator(() -> app.getBean(BpmInstanceStateSyncJob.class).sweepOnce());
             try {
                 Thread.sleep(200);
             } catch (InterruptedException e) {
@@ -368,12 +379,12 @@ class P62LightProcessE2ePgTest {
 
     private void seedStockForm() {
         asOperator(() -> {
-            FormDefDTO draft = formDefService.createDraft(FORM_KEY, "P62轻流程库存", null, null);
+            FormDefVO draft = formDefService.createDraft(FORM_KEY, "P62轻流程库存", null, null);
             formDefService.saveConfig(draft.getId(), stockDefinition());
             formDefService.publish(draft.getId());
             return null;
         });
-        FormDefDTO def = asOperator(() -> formDefService.getFormDefByKey(FORM_KEY));
+        FormDefVO def = asOperator(() -> formDefService.getFormDefByKey(FORM_KEY));
         stockTable = def.getPhysicalTableName();
         assertThat(stockTable).isNotBlank();
     }
@@ -443,14 +454,4 @@ class P62LightProcessE2ePgTest {
         }
     }
 
-    private static String generatedRsaPkcs8Base64() {
-        try {
-            java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
-            generator.initialize(2048);
-            return java.util.Base64.getEncoder()
-                    .encodeToString(generator.generateKeyPair().getPrivate().getEncoded());
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 }

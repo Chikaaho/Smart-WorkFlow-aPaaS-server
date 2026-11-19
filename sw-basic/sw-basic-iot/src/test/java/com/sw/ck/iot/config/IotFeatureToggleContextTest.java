@@ -2,21 +2,34 @@ package com.sw.ck.iot.config;
 
 import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.iot.entity.IotDevice;
+import com.sw.ck.iot.entity.IotDeviceCommand;
 import com.sw.ck.iot.hook.TencentDeviceStatusHook;
+import com.sw.ck.iot.mapper.IotConnectionMapper;
+import com.sw.ck.iot.mapper.IotTopicMapper;
+import com.sw.ck.iot.mqtt.MqttBrokerManager;
 import com.sw.ck.iot.mqtt.MqttDownlinkPublisher;
 import com.sw.ck.iot.provider.DeviceControlProvider;
 import com.sw.ck.iot.provider.MockCloudProvider;
 import com.sw.ck.iot.service.CommandQueueService;
+import com.sw.ck.iot.service.IotConnectionService;
 import com.sw.ck.iot.service.IotDeviceService;
 import com.sw.ck.iot.util.DeferredControlUtil;
 import com.sw.ck.iot.util.OnlineConfirmControlUtil;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Clock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -41,7 +54,7 @@ class IotFeatureToggleContextTest {
             .withConfiguration(AutoConfigurations.of(IotPropertiesAutoConfiguration.class,
                     IotAutoConfiguration.class))
             .withUserConfiguration(IotComponentsConfiguration.class)
-            .withBean(java.time.Clock.class, java.time.Clock::systemUTC);
+            .withBean(Clock.class, Clock::systemUTC);
 
     @BeforeEach
     void stubDeviceLookup() {
@@ -91,8 +104,8 @@ class IotFeatureToggleContextTest {
                                     .controlProperty("test-product", "test-device", "{\"power\":true}", null));
                     assertThat(deferred.getCode()).isEqualTo(503);
                     // 无控制通道时连"已入队"都不产生：调用点在任何副作用前失败
-                    verify(COMMAND_QUEUE_SERVICE, org.mockito.Mockito.never())
-                            .enqueue(org.mockito.ArgumentMatchers.any());
+                    verify(COMMAND_QUEUE_SERVICE, Mockito.never())
+                            .enqueue(ArgumentMatchers.any());
                 });
     }
 
@@ -114,7 +127,7 @@ class IotFeatureToggleContextTest {
                     assertThat(provider).isInstanceOf(MockCloudProvider.class);
                     ((MockCloudProvider) provider).setDeviceStatus("test-product", "test-device", "online");
 
-                    com.sw.ck.iot.entity.IotDeviceCommand command =
+                    IotDeviceCommand command =
                             context.getBean(OnlineConfirmControlUtil.class)
                                     .controlPropertyOnline("test-product", "test-device", "{\"power\":true}");
                     assertThat(command.getStatus()).isEqualTo("SENT");
@@ -137,17 +150,26 @@ class IotFeatureToggleContextTest {
 
         /**
          * 自建 MQTT 下行通道：本上下文只装配开关语义所需组件，通道依赖以 mock 提供。
+         * 生产类已统一 @Autowired 字段注入（d53c7fb6）：通道与依赖改为已实例化单例直进
+         * 容器（BeanFactoryPostProcessor + registerSingleton），字段经反射装配等价原
+         * 构造注入 —— 若走 @Bean 定义，AutowiredAnnotationBeanPostProcessor 会继续装配
+         * bean 自身的 @Autowired 字段（MqttBrokerManager → MessageIngestService 整树下游），
+         * 测试只需空 mock。DeferredControlUtil 的字段注入按类型解析可命中手工单例。
          * 解析不到启用中的 MQTT 连接（mapper 返回 null）即视为「非 MQTT 设备」，
          * 与生产语义一致：通道缺失时由 provider 路径 fail closed。
          */
         @Bean
-        MqttDownlinkPublisher mqttDownlinkPublisher() {
-            return new MqttDownlinkPublisher(
-                    mock(com.sw.ck.iot.mapper.IotConnectionMapper.class),
-                    mock(com.sw.ck.iot.mapper.IotTopicMapper.class),
-                    mock(com.sw.ck.iot.mqtt.MqttBrokerManager.class),
-                    new org.springframework.beans.factory.support.DefaultListableBeanFactory()
-                            .getBeanProvider(com.sw.ck.iot.service.IotConnectionService.class));
+        static BeanFactoryPostProcessor mqttChannelSingletonRegistrar() {
+            return beanFactory -> {
+                MqttDownlinkPublisher publisher = new MqttDownlinkPublisher();
+                ReflectionTestUtils.setField(publisher, "connectionMapper", mock(IotConnectionMapper.class));
+                ReflectionTestUtils.setField(publisher, "topicMapper", mock(IotTopicMapper.class));
+                ReflectionTestUtils.setField(publisher, "mqttBrokerManager", mock(MqttBrokerManager.class));
+                // 原「空 provider」语义：容器内无 IotConnectionService bean，getIfAvailable() 返回 null
+                ReflectionTestUtils.setField(publisher, "connectionServiceProvider",
+                        new DefaultListableBeanFactory().getBeanProvider(IotConnectionService.class));
+                beanFactory.registerSingleton("mqttDownlinkPublisher", publisher);
+            };
         }
     }
 }

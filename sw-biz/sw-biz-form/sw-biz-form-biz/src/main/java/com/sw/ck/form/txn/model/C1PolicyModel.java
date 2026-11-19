@@ -1,9 +1,13 @@
 package com.sw.ck.form.txn.model;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * C1 关键数据保护策略（表单模型级声明）。
@@ -29,10 +33,10 @@ public class C1PolicyModel {
     private Boolean nonNegativeAvailable;
 
     /** 模型未声明的键（仅内存收集用于明确拒绝；不序列化、不持久化）。 */
-    @com.fasterxml.jackson.annotation.JsonIgnore
-    private final java.util.Map<String, Object> unsupportedKeys = new java.util.LinkedHashMap<>();
+    @JsonIgnore
+    private final Map<String, Object> unsupportedKeys = new LinkedHashMap<>();
 
-    @com.fasterxml.jackson.annotation.JsonAnySetter
+    @JsonAnySetter
     void collectUnsupported(String key, Object value) {
         unsupportedKeys.put(key, value);
     }

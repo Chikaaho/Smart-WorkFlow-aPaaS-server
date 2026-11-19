@@ -2,7 +2,7 @@ package com.sw.ck.bpm.api.participant;
 
 import java.util.List;
 import java.util.Map;
-
+import java.util.Optional;
 /** 统一人员型节点参与人策略标识。配置值属于产品契约，不是 Bean/class 名称。 */
 public final class ParticipantStrategy {
 
@@ -38,21 +38,21 @@ public final class ParticipantStrategy {
      *
      * @return present = 面向用户的错误说明；empty = 形状合法
      */
-    public static java.util.Optional<String> nodeFormAggregateConfigError(Object value) {
+    public static Optional<String> nodeFormAggregateConfigError(Object value) {
         if (!(value instanceof Map<?, ?> mapping)) {
-            return java.util.Optional.of("NODE_FORM_AGGREGATE 必须配置 {nodeKey, formField[, round]}");
+            return Optional.of("NODE_FORM_AGGREGATE 必须配置 {nodeKey, formField[, round]}");
         }
         if (text(mapping.get("nodeKey")) == null) {
-            return java.util.Optional.of("NODE_FORM_AGGREGATE.nodeKey 必须配置来源节点 key");
+            return Optional.of("NODE_FORM_AGGREGATE.nodeKey 必须配置来源节点 key");
         }
         if (text(mapping.get("formField")) == null) {
-            return java.util.Optional.of("NODE_FORM_AGGREGATE.formField 必须配置人员字段名");
+            return Optional.of("NODE_FORM_AGGREGATE.formField 必须配置人员字段名");
         }
         String round = text(mapping.get("round"));
         if (round != null && !"CURRENT".equalsIgnoreCase(round) && !"PREVIOUS".equalsIgnoreCase(round)) {
-            return java.util.Optional.of("NODE_FORM_AGGREGATE.round 只能是 CURRENT 或 PREVIOUS");
+            return Optional.of("NODE_FORM_AGGREGATE.round 只能是 CURRENT 或 PREVIOUS");
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 
     /**
@@ -60,27 +60,28 @@ public final class ParticipantStrategy {
      *
      * @return present = 面向用户的错误说明；empty = 形状合法
      */
-    public static java.util.Optional<String> formFieldConfigError(Object value) {
+    public static Optional<String> formFieldConfigError(Object value) {
         if (!(value instanceof Map<?, ?> mapping)) {
-            return java.util.Optional.of("FORM_FIELD 必须配置 {objectType, scope, field[, tableField, column]}");
+            return Optional.of("FORM_FIELD 必须配置 {objectType, scope, field[, tableField, column]}");
         }
         String objectType = text(mapping.get("objectType"));
-        if (!"USER".equalsIgnoreCase(objectType) && !"DEPT".equalsIgnoreCase(objectType)) {
-            return java.util.Optional.of("FORM_FIELD.objectType 只能是 USER 或 DEPT");
+        if (!ParticipantObjectTypeEnum.USER.getCode().equalsIgnoreCase(objectType)
+                && !ParticipantObjectTypeEnum.DEPT.getCode().equalsIgnoreCase(objectType)) {
+            return Optional.of("FORM_FIELD.objectType 只能是 USER 或 DEPT");
         }
         String scope = text(mapping.get("scope"));
-        if (!"MAIN".equalsIgnoreCase(scope) && !"TABLE".equalsIgnoreCase(scope)) {
-            return java.util.Optional.of("FORM_FIELD.scope 只能是 MAIN 或 TABLE");
+        if (!ParticipantScopeEnum.MAIN.getCode().equalsIgnoreCase(scope) && !ParticipantScopeEnum.TABLE.getCode().equalsIgnoreCase(scope)) {
+            return Optional.of("FORM_FIELD.scope 只能是 MAIN 或 TABLE");
         }
         if (text(mapping.get("field")) == null) {
-            return java.util.Optional.of("FORM_FIELD.field 必须配置来源字段名");
+            return Optional.of("FORM_FIELD.field 必须配置来源字段名");
         }
-        if ("TABLE".equalsIgnoreCase(scope)) {
+        if (ParticipantScopeEnum.TABLE.getCode().equalsIgnoreCase(scope)) {
             if (text(mapping.get("tableField")) == null || text(mapping.get("column")) == null) {
-                return java.util.Optional.of("FORM_FIELD scope=TABLE 时必须配置 tableField 与 column");
+                return Optional.of("FORM_FIELD scope=TABLE 时必须配置 tableField 与 column");
             }
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 
     private static String text(Object value) {

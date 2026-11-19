@@ -2,9 +2,14 @@ package com.sw.ck.system.entity;
 
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import com.sw.ck.common.entity.BaseEntity;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonProperty.Access;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+
 import java.util.List;
 
 /**
@@ -21,7 +26,7 @@ public class SysUser extends BaseEntity {
 
     /** 密码（BCrypt 散列）；仅服务端校验使用，任何 HTTP 响应不得回传（R9 脱敏）。 */
     @TableField("password")
-    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
+    @JsonProperty(access = Access.WRITE_ONLY)
     private String password;
 
     /** 真实姓名 */

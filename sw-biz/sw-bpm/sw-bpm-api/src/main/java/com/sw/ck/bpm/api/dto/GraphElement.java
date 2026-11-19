@@ -1,13 +1,13 @@
 package com.sw.ck.bpm.api.dto;
 
+import java.io.Serializable;
+import java.util.List;
+import java.util.Map;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-
-import java.io.Serializable;
-import java.util.List;
-import java.util.Map;
 
 /**
  * 图元素 —— 节点或边。
@@ -24,6 +24,21 @@ import java.util.Map;
 @AllArgsConstructor
 @Builder
 public class GraphElement implements Serializable {
+
+    /** 节点类型：开始节点（第一方设计器核心类型，可扩展）。 */
+    public static final String TYPE_START = "START";
+
+    /** 节点类型：结束节点。 */
+    public static final String TYPE_END = "END";
+
+    /** 节点类型：审批节点。 */
+    public static final String TYPE_APPROVAL = "APPROVAL";
+
+    /** 节点类型：条件分支节点（轻流程方向）。 */
+    public static final String TYPE_CONDITION = "CONDITION";
+
+    /** 节点类型：事务动作节点（轻流程方向）。 */
+    public static final String TYPE_TXN_ACTION = "TXN_ACTION";
 
     /** 元素唯一标识（设计器分配）。 */
     private String id;
@@ -53,5 +68,5 @@ public class GraphElement implements Serializable {
     private Double y;
 
     /** 边折点列表 [{x,y},...]（第一方设计器显式契约；为空时前端按直线渲染）。 */
-    private List<java.util.Map<String, Object>> waypoints;
+    private List<Map<String, Object>> waypoints;
 }
