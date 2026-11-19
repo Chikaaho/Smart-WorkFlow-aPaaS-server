@@ -16,7 +16,7 @@ public class CommandRetryService {
     @Autowired
     private BpmCommandQueue commandQueue;
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long requeueFailed(CommandEnvelope envelope) {
         return commandQueue.requeueFailed(envelope);
     }

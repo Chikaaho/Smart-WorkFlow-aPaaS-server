@@ -58,7 +58,7 @@ public class BpmLifecycleController {
     @Autowired
     private BpmTaskFacade bpmTaskFacade;
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:transfer')")
     @PostMapping("/tasks/{taskId}/transfer")
     public R<Void> transfer(@PathVariable String taskId,
@@ -67,7 +67,7 @@ public class BpmLifecycleController {
         return lifecycleService.executeTaskAction(taskId, request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:delegate')")
     @PostMapping("/tasks/{taskId}/delegate")
     public R<Void> delegate(@PathVariable String taskId,
@@ -76,7 +76,7 @@ public class BpmLifecycleController {
         return lifecycleService.executeTaskAction(taskId, request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:communicate')")
     @PostMapping("/tasks/{taskId}/communicate")
     public R<Void> communicate(@PathVariable String taskId,
@@ -85,7 +85,7 @@ public class BpmLifecycleController {
         return lifecycleService.executeTaskAction(taskId, request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:add-sign')")
     @PostMapping("/tasks/{taskId}/add-sign")
     public R<Void> addSign(@PathVariable String taskId,
@@ -95,7 +95,7 @@ public class BpmLifecycleController {
     }
 
     /** 补签：任务已越过节点后按原实例/原节点/原终态补充确认。 */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:add-sign')")
     @PostMapping("/instances/{instanceId}/supplement-sign")
     public R<Void> supplementSign(@PathVariable String instanceId,
@@ -183,7 +183,7 @@ public class BpmLifecycleController {
         }
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/sign/pending")
     public R<List<PendingSignVO>> pendingSigns() {
@@ -229,7 +229,7 @@ public class BpmLifecycleController {
         return R.ok(out);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/sign/{recordId}/express")
     public R<Void> expressSign(@PathVariable Long recordId,
@@ -241,7 +241,7 @@ public class BpmLifecycleController {
         return lifecycleService.expressSign(recordId, request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:add-sign')")
     @PostMapping("/sign/{recordId}/cancel")
     public R<Void> cancelSign(@PathVariable Long recordId,
@@ -249,7 +249,7 @@ public class BpmLifecycleController {
         return lifecycleService.cancelSign(recordId, request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/communications/{communicationId}/reply")
     public R<Void> replyCommunication(@PathVariable Long communicationId,
@@ -257,7 +257,7 @@ public class BpmLifecycleController {
         return lifecycleService.replyCommunication(communicationId, request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:withdraw')")
     @PostMapping("/my/instances/{instanceId}/withdraw")
     public R<Void> withdraw(@PathVariable String instanceId,
@@ -266,7 +266,7 @@ public class BpmLifecycleController {
                 request == null ? new ApprovalActionRequest() : request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:discard')")
     @PostMapping("/instances/{instanceId}/discard")
     public R<Void> discard(@PathVariable String instanceId,
@@ -277,14 +277,14 @@ public class BpmLifecycleController {
 
     // ==================== 授权代理规则 ====================
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:design') or @ss.hasPermi('workflow:task:authorize')")
     @PostMapping("/authorize-rules")
     public R<Long> saveAuthorizeRule(@RequestBody ApprovalActionRequest request) {
         return lifecycleService.saveAuthorizeRule(request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:task:authorize')")
     @DeleteMapping("/authorize-rules/{ruleId}")
     public R<Void> revokeAuthorizeRule(@PathVariable Long ruleId) {

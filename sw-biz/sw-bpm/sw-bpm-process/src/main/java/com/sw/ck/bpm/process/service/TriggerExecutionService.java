@@ -234,7 +234,7 @@ public class TriggerExecutionService {
     /**
      * 任务合法完成（APPROVE/DISAPPROVE）后触发：TASK_SUBMITTED + NODE_ROUND_COMPLETED 判定。
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void onTaskActionCompleted(BpmInstance instance, BpmTaskVO task, ApprovalAction action) {
         if (action != ApprovalAction.APPROVE && action != ApprovalAction.DISAPPROVE) {
             // 退回/驳回等生命周期动作各自处置，不冒充合法完成（方向 §3.2）
@@ -272,7 +272,7 @@ public class TriggerExecutionService {
      * 的终态监听在终态提交后执行——失败不回滚已成立终态，回滚的办理不产生副作用。
      * </p>
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void onProcessCompleted(BpmInstance instance, String terminalStatus) {
         if (!InstanceStatusEnum.APPROVED.getCode().equals(terminalStatus)) {
             return;
@@ -341,7 +341,7 @@ public class TriggerExecutionService {
     /**
      * BF20261013-022⑥：流程发起（实例创建成功、同事务）后触发 PROCESS_START 判定。
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public long onProcessStarted(BpmInstance instance) {
         ProcessGraph graph = nodeFormDataService.loadGraph(instance.getProcessDefKey(), instance.getDefVersion());
         if (graph == null || graph.getTriggers() == null || graph.getTriggers().isEmpty()) {
@@ -360,7 +360,7 @@ public class TriggerExecutionService {
     /**
      * BF20261013-022①：节点开始（审批任务创建、办理人办理前）触发 NODE_ENTERING 判定。
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public long onNodeEntering(BpmInstance instance, String nodeKey) {
         if (nodeKey == null || nodeKey.isBlank()) {
             return 0L;

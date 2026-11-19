@@ -57,7 +57,7 @@ public class DraftSubmitService {
      * 正式提交草稿（D3 校验 + 冻结快照 + 受理，同事务提交）。
      * 受理中/已提交重复调用返回既有受理（duplicated=true）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public CommandAcceptRespVO submit(Long id) {
         return submit(id, CommandChannelEnum.NORMAL);
     }
@@ -65,7 +65,7 @@ public class DraftSubmitService {
     /**
      * 正式提交草稿并指定受理通道。通道仅由受信任的控制器传入，业务校验和幂等规则不变。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public CommandAcceptRespVO submit(Long id, CommandChannelEnum channel) {
         LoginUser loginUser = LoginUserHolder.get();
         requireConsumableTenant(loginUser);

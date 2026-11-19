@@ -161,7 +161,7 @@ public class ProcessThemeService {
      * @param themeRule  规则；空/空白按默认规则
      * @param initiatorId 发起人用户 ID（{@code {INITIATOR}} 取展示名；0=系统身份）
      */
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public String generate(String processKey, String themeRule, Long initiatorId) {
         String effective = (themeRule == null || themeRule.isBlank()) ? DEFAULT_RULE : themeRule;
         LocalDateTime now = LocalDateTime.now();

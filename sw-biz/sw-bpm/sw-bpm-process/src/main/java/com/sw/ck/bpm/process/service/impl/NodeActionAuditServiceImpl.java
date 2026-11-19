@@ -26,7 +26,7 @@ public class NodeActionAuditServiceImpl implements NodeActionAuditPort {
     private ObjectMapper objectMapper;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Optional<MutationOutcome> recordCopy(String processInstanceId, String nodeKey, String taskId,
                                                 String recipientId, String status, String reason, Long tenantId) {
         CopyRecord row = new CopyRecord();
@@ -42,7 +42,7 @@ public class NodeActionAuditServiceImpl implements NodeActionAuditPort {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Optional<MutationOutcome> recordBranch(String processInstanceId, String nodeKey, String branchId,
                                                   String conditionVersion, Map<String, Object> inputSummary,
                                                   Long tenantId) {

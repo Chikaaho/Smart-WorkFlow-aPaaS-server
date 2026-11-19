@@ -63,7 +63,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     private TenantWorkAdmission tenantWorkAdmission;
 
     @Override
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public Long enqueue(CommandEnvelope envelope) {
         BpmCommand command = new BpmCommand();
         command.setCommandKey(envelope.getCommandKey());
@@ -83,7 +83,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     }
 
     @Override
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public Long requeueFailed(CommandEnvelope envelope) {
         BpmCommand command = commandService.lambdaQuery()
                 .eq(BpmCommand::getTenantId, envelope.getTenantId())
@@ -236,7 +236,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     }
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void complete(Long commandId, String claimToken, String resultJson) {
         // PROCESSING + 当前租约令牌双守卫：stale 回收后旧领取者迟到的完成
         // 因令牌不匹配被拒，不覆盖新消费者（仍在 PROCESSING）的结果。
@@ -257,7 +257,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     }
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void reject(Long commandId, String claimToken, String reason) {
         boolean updated = commandService.lambdaUpdate()
                 .eq(BpmCommand::getId, commandId)
@@ -278,7 +278,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
     }
 
     @Override
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public boolean failAndScheduleRetry(Long commandId, String claimToken, String reason,
                                         int maxRetries, long backoffMillis) {
         BpmCommand command = readCommandForFailure(commandId);
@@ -462,7 +462,7 @@ public class PersistentBpmCommandQueue implements BpmCommandQueue {
      *
      * @return 本次过期条数
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public int expireDue(LocalDateTime now) {
         try (Suspended ignored =
                      TenantLineSuspension.suspended()) {

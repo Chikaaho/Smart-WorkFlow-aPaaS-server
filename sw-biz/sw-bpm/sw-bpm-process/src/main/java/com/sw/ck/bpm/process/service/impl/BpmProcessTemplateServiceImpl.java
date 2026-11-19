@@ -83,7 +83,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessTemplate create(String name, String category, String description, String formKey,
                                      String graphJson, String scopeType, Long scopeDeptId,
                                      Long sourceDefId, Integer sourceDefVersion) {
@@ -108,7 +108,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessTemplate update(Long id, String name, String category, String description,
                                      String graphJson, String scopeType, Long scopeDeptId) {
         BpmProcessTemplate template = get(id);
@@ -138,7 +138,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessTemplate changeStatus(Long id, boolean enabled) {
         BpmProcessTemplate template = get(id);
         requireManager();
@@ -149,7 +149,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessDef copyToDefinition(Long templateId, String name) {
         BpmProcessTemplate template = get(templateId);
         requireManager();
@@ -169,7 +169,7 @@ public class BpmProcessTemplateServiceImpl implements BpmProcessTemplateService 
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         BpmProcessTemplate template = get(id);
         requireManager();

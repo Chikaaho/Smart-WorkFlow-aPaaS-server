@@ -289,7 +289,7 @@ public class ChildOrchestrationService {
      * 子流程实例终态回调：本实例作为子流程时回写并推进父批次结算；
      * 非子流程实例零行为。
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void onChildProcessTerminal(BpmInstance child, String terminalStatus) {
         if (child == null || child.getBusinessKey() == null || child.getTenantId() == null) {
             return;
@@ -855,7 +855,7 @@ public class ChildOrchestrationService {
     /**
      * 父流程终态化（取消/退回/驳回/撤回/废弃/合法完成）：未完成批次失去写回推进权。
      */
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public void cancelBatchesForParent(BpmInstance parent, String reason) {
         if (parent == null || parent.getTenantId() == null) {
             return;
@@ -892,7 +892,7 @@ public class ChildOrchestrationService {
     public record WritebackRetryOutcome(String status, String message) {
     }
 
-    @Transactional(propagation = Propagation.REQUIRED)
+    @Transactional(propagation = Propagation.REQUIRED, rollbackFor = Exception.class)
     public WritebackRetryOutcome retryWriteback(Long tenantId, Long itemId, Long actorId) {
         BpmChildItem item = itemMapper.selectById(itemId);
         if (item == null || !tenantId.equals(item.getTenantId())) {

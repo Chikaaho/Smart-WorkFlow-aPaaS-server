@@ -214,7 +214,7 @@ public class NodeFormDataService {
     /**
      * 保存草稿（DRAFT upsert；已 SUBMITTED 的任务拒绝改写 2434）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long saveDraft(String processInstanceId, String processDefKey, String nodeKey, String taskId,
                           String formKey, Long bindingFormVersion, Map<String, Object> data) {
         Long tenantId = currentTenantId();
@@ -253,7 +253,7 @@ public class NodeFormDataService {
      *
      * @return 数据行 ID；data 为 null 且无既有行 = 未填写，不落行（合法：无节点表单数据）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long submitFinal(String processInstanceId, String processDefKey, String nodeKey, String taskId,
                             String formKey, Long bindingFormVersion, Map<String, Object> data, Long actorId) {
         Long tenantId = currentTenantId();

@@ -43,7 +43,7 @@ public class IotCommandReservationFacadeImpl implements IotCommandReservationFac
     private Clock clock;
 
     @Override
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public Optional<Long> createIntent(Long tenantId, String processInstanceId, String processDefKey,
                                        Integer defVersion, String formKey, String recordId,
                                        String deviceKey, String productId, String deviceName,

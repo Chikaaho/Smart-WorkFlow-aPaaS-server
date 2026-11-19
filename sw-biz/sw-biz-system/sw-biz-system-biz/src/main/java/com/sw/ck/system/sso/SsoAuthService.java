@@ -103,7 +103,7 @@ public class SsoAuthService {
     /**
      * 保存（或更新）租户级 Provider 配置；secret 明文仅在本方法内加密，不落日志。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void saveConfig(String provider, boolean enabled, String appId,
                            String appSecret, String extraConfig, String redirectPath) {
         configService.saveConfig(provider, enabled, appId, appSecret, extraConfig, redirectPath);
@@ -130,7 +130,7 @@ public class SsoAuthService {
      * 更新基本信息（应用标识＋身份模式/允许企业标识）；启用状态下校验凭据完整性。
      * secret 不在本入口（凭据更新单独权限）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void updateConfigBasic(String provider, String appId, String extraConfig) {
         configService.updateConfigBasic(provider, appId, extraConfig);
     }
@@ -139,7 +139,7 @@ public class SsoAuthService {
      * 启停：保存后对后续授权生效（配置每次直查库）；启用复用启动期完整性校验，
      * 避免保存成功但重启 fail-fast。企业微信不允许启用（延期只读），停用允许。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void updateEnabled(String provider, boolean enabled) {
         configService.updateEnabled(provider, enabled);
     }
@@ -148,7 +148,7 @@ public class SsoAuthService {
      * 应用凭据更新（secret 只写）：仅显式提供的新 secret；明文只在当前调用栈内
      * 加密，不落日志/审计/响应；掩码或占位值拒绝。与系统加密主密钥轮换无关。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void updateSecret(String provider, String appSecret) {
         configService.updateSecret(provider, appSecret);
     }
@@ -175,7 +175,7 @@ public class SsoAuthService {
      * 服务端授权发起：签发一次性 state 并构造 Provider 授权 URL。
      * state 与租户/Provider/发起会话绑定（当前登录用户可为 null——登录页发起）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public AuthorizeStart startAuthorize(String provider, String redirectPath) {
         return authorizeStartService.startAuthorize(provider, redirectPath);
     }
@@ -198,7 +198,7 @@ public class SsoAuthService {
      * 查询发生在免认证路径，挂起租户拦截器（sys_tenant 为全局表）。
      * </p>
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long resolveTenantIdByNameExact(String tenantName) {
         return tenantResolveService.resolveTenantIdByNameExact(tenantName);
     }
@@ -207,7 +207,7 @@ public class SsoAuthService {
      * 登录前安全发起——租户名称入口：登录页免填企业（B021-016）且未提供名称时，
      * 按 Provider 反查唯一可用企业；提供了名称则按名称精确解析（V012-BUG-019 既有语义）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public AuthorizeStart startAuthorizeLogin(String provider, String tenantName, String redirectPath) {
         return authorizeStartService.startAuthorizeLogin(provider, tenantName, redirectPath);
     }
@@ -218,12 +218,12 @@ public class SsoAuthService {
      * 由扫码选择所属企业承接，不在此处任意选中）。停用/过期企业不参与自动识别。
      * 查询发生在免认证路径，挂起租户拦截器（配置表按 tenant_id 显式过滤语义）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Long resolveDefaultTenantIdForProvider(String provider) {
         return tenantResolveService.resolveDefaultTenantIdForProvider(provider);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public AuthorizeStart startAuthorizeLogin(String provider, Long tenantId, String redirectPath) {
         return authorizeStartService.startAuthorizeLogin(provider, tenantId, redirectPath);
     }
@@ -236,7 +236,7 @@ public class SsoAuthService {
      * 返回绑定候选（挂起会话由调用方在受控事务内完成绑定）。
      * </p>
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public CallbackResult handleCallback(String provider, String code, String state) {
         // Provider 回跳路径由 resolveCallbackUrl 小写生成（/api/auth/sso/dingtalk/callback），
         // 而 PROVIDERS 注册与 state.provider 存储为大写：回调入口必须先归一化，
@@ -255,7 +255,7 @@ public class SsoAuthService {
     /**
      * 绑定外部身份到本地账号（必须已认证；同租户内冲突/重复绑定显式拒绝）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void bind(String provider, Long userId, String externalId) {
         userBindingService.bind(provider, userId, externalId);
     }
@@ -267,12 +267,12 @@ public class SsoAuthService {
      * 建立的新会话不受影响，旧 token 无法借新会话的 userId 缓存复活）+ 撤销全部
      * 既有 refresh token。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void unbind(String provider, Long userId) {
         unbind(provider, userId, null);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void unbind(String provider, Long userId, String currentToken) {
         userBindingService.unbind(provider, userId, currentToken);
     }

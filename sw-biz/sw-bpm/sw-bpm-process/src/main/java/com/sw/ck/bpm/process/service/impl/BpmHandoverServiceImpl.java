@@ -52,7 +52,7 @@ public class BpmHandoverServiceImpl implements BpmHandoverService {
     private UserQueryFacade userQueryFacade;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmHandover handover(Long fromUserId, Long toUserId, List<String> scopeDefKeys,
                                 boolean includeProxyRules) {
         Long operator = LoginUserHolder.get() == null ? null : LoginUserHolder.get().getUserId();

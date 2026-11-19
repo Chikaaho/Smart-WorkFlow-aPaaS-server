@@ -60,7 +60,7 @@ public class CommandAcceptService {
      * @param request 动作内容（意见等，可为 null）
      * @param channel 通道（NORMAL；P0 由 P0 同步入口受理）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public CommandAcceptRespVO acceptTaskAction(String taskId, ApprovalAction action,
                                                  ApprovalActionRequest request,
                                                  CommandChannelEnum channel) {

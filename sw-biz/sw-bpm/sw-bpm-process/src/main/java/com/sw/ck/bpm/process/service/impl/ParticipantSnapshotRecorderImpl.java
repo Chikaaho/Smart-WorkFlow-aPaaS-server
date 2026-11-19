@@ -29,7 +29,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
     private ObjectProvider<BpmTaskFacade> taskFacadeProvider;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Optional<MutationOutcome> record(String processInstanceId, String nodeKey, String taskId,
                                             List<String> participantIds, Long tenantId) {
         for (String participantId : participantIds) {
@@ -47,7 +47,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Optional<MutationOutcome> record(String processInstanceId, String nodeKey, String taskId,
                                             List<String> participantIds, Map<String, String> displayNames,
                                             Long tenantId) {
@@ -68,7 +68,7 @@ public class ParticipantSnapshotRecorderImpl implements ParticipantSnapshotRecor
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Optional<MutationOutcome> settle(String processInstanceId, String nodeKey, String taskId,
                                             String actorId, String action, Long tenantId) {
         int invalidatedRows = invalidateStalePending(processInstanceId, nodeKey, actorId, action, tenantId);

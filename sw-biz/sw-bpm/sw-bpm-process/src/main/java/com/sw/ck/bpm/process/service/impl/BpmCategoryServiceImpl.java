@@ -53,7 +53,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmCategory createCategory(CategorySaveReq req) {
         String name = requireValidName(req);
         requireNameAvailable(name, null);
@@ -66,7 +66,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmCategory updateCategory(Long id, CategorySaveReq req) {
         BpmCategory category = getExisting(id);
         String name = requireValidName(req);
@@ -81,7 +81,7 @@ public class BpmCategoryServiceImpl implements BpmCategoryService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void deleteCategory(Long id) {
         BpmCategory category = categoryMapper.selectById(id);
         if (category == null) {

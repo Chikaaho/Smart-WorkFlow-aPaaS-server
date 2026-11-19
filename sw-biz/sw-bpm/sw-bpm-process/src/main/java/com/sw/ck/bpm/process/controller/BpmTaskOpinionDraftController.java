@@ -43,7 +43,7 @@ public class BpmTaskOpinionDraftController {
         return R.ok(draft == null ? null : view(task, draft));
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PutMapping
     @PreAuthorize("isAuthenticated()")
     public R<OpinionDraftVO> save(@PathVariable String taskId,
@@ -83,7 +83,7 @@ public class BpmTaskOpinionDraftController {
         return R.ok(view(task, draft));
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @DeleteMapping
     @PreAuthorize("isAuthenticated()")
     public R<Void> delete(@PathVariable String taskId) {

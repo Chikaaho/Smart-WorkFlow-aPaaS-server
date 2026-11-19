@@ -49,7 +49,7 @@ public class ResourceReleaseService {
      *
      * @param command 终态后命令行（含冻结资源字段）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void onTerminal(BpmCommand command) {
         if (command.getResourceUnits() == null || command.getResourceUnits() <= 0) {
             return;
@@ -74,7 +74,7 @@ public class ResourceReleaseService {
     /**
      * 批量项终态逐项回收（每项 1 个单位；调用方为逐项独立事务）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void onBatchItemTerminal(BpmCommand batchCommand) {
         if (batchCommand.getResourceUnits() == null || batchCommand.getResourceUnits() <= 0) {
             return;
@@ -88,7 +88,7 @@ public class ResourceReleaseService {
      *
      * @return true=本次调用完成释放；false=已被其他轮次释放
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public boolean releaseLightProcessTarget(BpmCommand command) {
         // 调度/对账线程无登录态：与 reclaimStale 同口径挂起租户过滤——
         // 命令行 tenant_id 自承载租户语义，主键定位不涉及租户裁剪

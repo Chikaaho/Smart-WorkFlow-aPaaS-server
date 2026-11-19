@@ -121,7 +121,7 @@ public class TaskActionService {
      * @param taskId  Flowable task ID
      * @param request 动作请求（action 已由入口归一化）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> execute(String taskId, ApprovalActionRequest request) {
         return execute(taskId, request, null);
     }
@@ -230,7 +230,7 @@ public class TaskActionService {
      *
      * @param commandId 受理命令标识；同步 HTTP 入口传 null（无命令语义）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> execute(String taskId, ApprovalActionRequest request,
                                                      Long commandId) {
         LoginUser loginUser = LoginUserHolder.get();

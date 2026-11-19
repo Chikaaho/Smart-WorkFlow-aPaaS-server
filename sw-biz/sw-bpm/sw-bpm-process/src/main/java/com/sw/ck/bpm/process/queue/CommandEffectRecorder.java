@@ -47,7 +47,7 @@ public class CommandEffectRecorder {
      * 当前事务内校验命令执行权（持锁 + 状态 PROCESSING + 令牌一致）。
      * 不满足即抛出并回滚当前业务事务：旧执行者（租约已回收/转手）不得提交效果。
      */
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void assertLease(Long commandId, String claimToken) {
         BpmCommand locked = commandMapper.lockLeaseById(commandId);
         if (locked == null
@@ -67,7 +67,7 @@ public class CommandEffectRecorder {
      * @param resultJson      权威结果（JSON，与命令完成结果一致）
      * @param bizRef          业务对象引用（记录/任务/批次项，可空）
      */
-    @Transactional(propagation = Propagation.MANDATORY)
+    @Transactional(propagation = Propagation.MANDATORY, rollbackFor = Exception.class)
     public void record(Long commandId, String claimToken, String logicalCommandId,
                        String resultJson, String bizRef) {
         assertLease(commandId, claimToken);

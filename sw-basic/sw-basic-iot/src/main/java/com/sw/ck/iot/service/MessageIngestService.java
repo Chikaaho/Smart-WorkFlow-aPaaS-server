@@ -87,7 +87,7 @@ public class MessageIngestService {
      * 无事务时 TransactionalEventListener 将静默丢弃事件。
      * </p>
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void ingest(Long connId, String topic, String payload, int qos, String messageId) {
         IotTopic topicCfg = resolveTopicConfig(connId, topic);
         String dedupKey = sha256(topic + "|" + payload);

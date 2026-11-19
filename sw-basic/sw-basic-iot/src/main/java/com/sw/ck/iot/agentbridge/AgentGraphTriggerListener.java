@@ -51,7 +51,7 @@ public class AgentGraphTriggerListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(
-            propagation = Propagation.REQUIRES_NEW)
+            propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public void onIotTrigger(IotProcessTriggerEvent event) {
         if (event == null || !IotTriggerActionTypeEnum.AGENT.getCode().equals(event.getActionType())) {
             return;

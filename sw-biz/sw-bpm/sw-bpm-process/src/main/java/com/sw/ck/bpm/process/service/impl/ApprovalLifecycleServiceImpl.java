@@ -51,7 +51,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     // ==================== 任务级动作 ====================
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> executeTaskAction(String taskId, ApprovalActionRequest request) {
         taskActionExecutor.executeTaskAction(taskId, request);
         return R.ok();
@@ -60,14 +60,14 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     // ==================== 实例级动作 ====================
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> withdraw(String processInstanceId, ApprovalActionRequest request) {
         instanceActionExecutor.withdraw(processInstanceId, request);
         return R.ok();
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> discard(String processInstanceId, ApprovalActionRequest request) {
         instanceActionExecutor.discard(processInstanceId, request);
         return R.ok();
@@ -76,14 +76,14 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     // ==================== 加签/补签表态 ====================
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> expressSign(Long recordId, ApprovalActionRequest request) {
         signActionExecutor.expressSign(recordId, request);
         return R.ok();
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> cancelSign(Long recordId, ApprovalActionRequest request) {
         signActionExecutor.cancelSign(recordId, request);
         return R.ok();
@@ -92,7 +92,7 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     // ==================== 沟通回复 ====================
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> replyCommunication(Long communicationId, ApprovalActionRequest request) {
         communicationExecutor.replyCommunication(communicationId, request);
         return R.ok();
@@ -101,13 +101,13 @@ public class ApprovalLifecycleServiceImpl implements ApprovalLifecycleService {
     // ==================== 授权代理规则 ====================
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Long> saveAuthorizeRule(ApprovalActionRequest request) {
         return R.ok(authorizeRuleService.saveAuthorizeRule(request));
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<Void> revokeAuthorizeRule(Long ruleId, ApprovalActionRequest request) {
         authorizeRuleService.revokeAuthorizeRule(ruleId, request);
         return R.ok();

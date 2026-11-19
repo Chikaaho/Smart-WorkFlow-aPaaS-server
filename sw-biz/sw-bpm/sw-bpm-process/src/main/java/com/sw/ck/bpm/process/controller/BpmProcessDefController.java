@@ -90,7 +90,7 @@ public class BpmProcessDefController {
      * @param request 创建请求（name + formKey）
      * @return 流程定义 ID + 初始图
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:create')")
     @PostMapping
     public R<CreateProcessDefResponse> create(@Valid @RequestBody CreateProcessDefRequest request) {
@@ -113,7 +113,7 @@ public class BpmProcessDefController {
      * @param request 修改请求
      * @return 更新后的图（含同步后的 name / formKey）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @PutMapping("/{id}")
     public R<ProcessGraph> updateDef(@PathVariable Long id,
@@ -125,7 +125,7 @@ public class BpmProcessDefController {
     }
 
     /** 读取主题生成规则（V012-BUG-010）。 */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @GetMapping("/{id}/theme-rule")
     public R<String> getThemeRule(@PathVariable Long id) {
@@ -161,7 +161,7 @@ public class BpmProcessDefController {
      * @param id    流程定义 ID
      * @param graph 图 JSON（ProcessGraph）
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:save')")
     @PutMapping("/{id}/graph")
     public R<Void> saveDraftGraph(@PathVariable Long id,
@@ -421,7 +421,7 @@ public class BpmProcessDefController {
      * @param id 流程定义 ID
      * @return 发布后的流程定义实体
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/publish")
     public R<BpmProcessDefVO> publish(@PathVariable Long id) {
@@ -461,7 +461,7 @@ public class BpmProcessDefController {
     }
 
     /** 挂起当前发布版本（仅禁止新实例；既有实例可解释）。 */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:suspend')")
     @PostMapping("/{id}/versions/{version}/suspend")
     public R<Void> suspendVersion(@PathVariable Long id, @PathVariable Integer version) {
@@ -471,7 +471,7 @@ public class BpmProcessDefController {
     }
 
     /** 激活当前发布版本（恢复同一版本发起能力）。 */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:suspend')")
     @PostMapping("/{id}/versions/{version}/activate")
     public R<Void> activateVersion(@PathVariable Long id, @PathVariable Integer version) {
@@ -486,7 +486,7 @@ public class BpmProcessDefController {
      * 服务端强制校验：仅已发布定义可开启；关闭后触发时明确拒绝。
      * </p>
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/iot-access/{flag}")
     public R<BpmProcessDefVO> changeIotAccess(@PathVariable Long id, @PathVariable boolean flag) {
@@ -503,7 +503,7 @@ public class BpmProcessDefController {
     /**
      * A6 设备动作配置（三类设备来源 + 失败策略）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PreAuthorize("@ss.hasPermi('workflow:def:publish')")
     @PostMapping("/{id}/iot-device-action")
     public R<BpmProcessDefVO> setIotDeviceAction(@PathVariable Long id,

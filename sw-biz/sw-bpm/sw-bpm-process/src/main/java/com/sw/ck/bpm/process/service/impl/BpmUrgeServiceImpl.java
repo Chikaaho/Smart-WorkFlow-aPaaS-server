@@ -67,19 +67,19 @@ public class BpmUrgeServiceImpl implements BpmUrgeService {
     private JdbcTemplate jdbcTemplate;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public UrgeRespVO urge(Long instanceRecordId) {
         return urge(instanceRecordId, null, null);
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public UrgeRespVO urge(Long instanceRecordId, String message) {
         return urge(instanceRecordId, message, null);
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public UrgeRespVO urge(Long instanceRecordId, String message, List<Long> recipientIds) {
         String normalizedMessage = normalizeMessage(message);
         LoginUser loginUser = LoginUserHolder.get();

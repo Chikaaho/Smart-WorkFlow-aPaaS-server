@@ -163,7 +163,7 @@ public class BpmMonitorServiceImpl implements BpmMonitorService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmInstanceIntervention intervene(String processInstanceId, String action,
                                              String reason, Long toAssignee, List<String> taskIds) {
         if (action == null || !ACTIONS.contains(action)) {

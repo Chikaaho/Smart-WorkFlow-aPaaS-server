@@ -79,7 +79,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void saveLayout(Map<String, Object> layout) {
         Long userId = currentUserId();
         List<SysWorkspaceCardType> cardTypes = cardTypeService.listAvailable();
@@ -113,7 +113,7 @@ public class UserWorkspaceServiceImpl implements UserWorkspaceService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void resetLayout() {
         Long userId = currentUserId();
         // layoutJson 需显式置空：updateById 默认忽略 null 字段

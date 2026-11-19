@@ -62,7 +62,7 @@ public class ActionRefRecoveryService {
     /**
      * 受控恢复入口（事务壳：恢复行登记与意图状态更新同事务提交）。
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public RetryOutcome retry(BpmActionRef ref) {
         // 幂等保护：目标实例已存在 = 已成功启动，任何状态都不再做恢复动作
         if (ref.getTargetRecordId() != null && !ref.getTargetRecordId().isBlank()

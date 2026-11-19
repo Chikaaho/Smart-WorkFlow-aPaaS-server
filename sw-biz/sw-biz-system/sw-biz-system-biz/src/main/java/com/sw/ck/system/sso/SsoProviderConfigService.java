@@ -476,13 +476,13 @@ class SsoProviderConfigService {
             return true;
         }
         String normalized = value.trim().toLowerCase(Locale.ROOT);
-        return normalized.equals("placeholder")
-                || normalized.equals("changeme")
-                || normalized.equals("change-me")
-                || normalized.equals("example")
-                || normalized.equals("secret")
-                || normalized.equals("dummy")
-                || normalized.equals("test")
+        return "placeholder".equals(normalized)
+                || "changeme".equals(normalized)
+                || "change-me".equals(normalized)
+                || "example".equals(normalized)
+                || "secret".equals(normalized)
+                || "dummy".equals(normalized)
+                || "test".equals(normalized)
                 || normalized.startsWith("your-")
                 || normalized.startsWith("your_")
                 || normalized.startsWith("replace-me")

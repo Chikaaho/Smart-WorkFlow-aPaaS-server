@@ -88,7 +88,7 @@ public class BpmDraftController {
 
     /** 新建草稿（formKey 必须为已发布表单；保存不触发流程）。 */
     @PostMapping
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<BpmDraftVO> create(@RequestBody Map<String, Object> body) {
         var loginUser = LoginUserHolder.get();
         String formKey = str(body.get("formKey"));
@@ -117,7 +117,7 @@ public class BpmDraftController {
 
     /** 更新草稿（仅本人；SUBMITTING/SUBMITTED 冻结，FAILED 可修正）。 */
     @PutMapping("/{id}")
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public R<BpmDraftVO> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         BpmDraft draft = draftSubmitService.loadOwned(id);
         requireEditable(draft);

@@ -141,7 +141,7 @@ public enum DatabaseVendor {
         if (p.contains("microsoft sql server") || p.contains("sql server")) {
             return SQL_SERVER;
         }
-        if (p.contains("dameng") || p.equals("dm") || p.startsWith("dm ")) {
+        if (p.contains("dameng") || "dm".equals(p) || p.startsWith("dm ")) {
             return DM;
         }
         return null;
@@ -200,8 +200,10 @@ public enum DatabaseVendor {
         return base + limitOffsetClause(limit, offset);
     }
 
+    private static final Pattern ORDER_BY_PATTERN = Pattern.compile("(?is)\\border\\s+by\\b");
+
     private static boolean hasOrderBy(String sql) {
-        return Pattern.compile("(?is)\\border\\s+by\\b").matcher(sql).find();
+        return ORDER_BY_PATTERN.matcher(sql).find();
     }
 
     /** 是否支持 {@code FOR UPDATE SKIP LOCKED}。达梦待实测，先按不支持处理。 */

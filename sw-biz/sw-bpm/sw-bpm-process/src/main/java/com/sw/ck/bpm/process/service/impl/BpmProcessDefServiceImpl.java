@@ -83,7 +83,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessDef createDef(String name, String formKey) {
         // 校验表单存在（2009）
         if (!formExists(formKey)) {
@@ -114,7 +114,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessDef updateDef(Long id, String name, String formKey) {
         BpmProcessDef entity = getExisting(id);
         if (!STATUS_DRAFT.equals(entity.getStatus())) {
@@ -151,7 +151,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void saveDraftGraph(Long id, String graphJson) {
         BpmProcessDef entity = getExisting(id);
         // 基本格式检查：草稿允许暂时不完整，但必须是可解析的图文档
@@ -179,7 +179,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void markTemplateSource(Long id, Long templateId, Integer templateVersion) {
         BpmProcessDef entity = getExisting(id);
         // 仅 DRAFT 未登记时写入：历史与已发布定义的溯源关系不被改写
@@ -278,7 +278,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessDef publish(Long id) {
         BpmProcessDef def = getExisting(id);
 
@@ -566,7 +566,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void suspendVersion(Long defId, Integer graphVersion) {
         BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
         // present = APPLIED（本次挂起）/ ALREADY_APPLIED（已挂起）；定义不存在继续由引擎抛异常
@@ -578,7 +578,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void activateVersion(Long defId, Integer graphVersion) {
         BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
         // present = APPLIED（本次激活）/ ALREADY_APPLIED（已激活）；定义不存在继续由引擎抛异常
@@ -590,7 +590,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void disableVersion(Long defId, Integer graphVersion) {
         BpmProcessDefVersion version = requireLatestVersion(defId, graphVersion);
         // DISABLED = 业务下线标记：同样挂起 Flowable 定义，历史回看不删除
@@ -718,7 +718,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void updateThemeRule(Long id, String themeRule) {
         BpmProcessDef def = mapper.selectById(id);
         if (def == null) {
@@ -736,7 +736,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessDef changeIotAccess(Long id, boolean flag) {
         BpmProcessDef def = mapper.selectById(id);
         if (def == null) {
@@ -754,7 +754,7 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public BpmProcessDef setIotDeviceAction(Long id, String actionJson) {
         BpmProcessDef def = mapper.selectById(id);
         if (def == null) {

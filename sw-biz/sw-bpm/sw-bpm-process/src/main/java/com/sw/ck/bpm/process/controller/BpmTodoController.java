@@ -159,7 +159,7 @@ public class BpmTodoController {
         return taskActionService.execute(taskId, null);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PostMapping("/{taskId}/complete")
     public R<Void> complete(@PathVariable String taskId,
                             @RequestBody(required = false) ApprovalActionRequest request) {
@@ -179,7 +179,7 @@ public class BpmTodoController {
         return taskActionService.execute(taskId, actionRequest);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PostMapping("/{taskId}/reject")
     public R<Void> reject(@PathVariable String taskId,
                           @RequestBody(required = false) ApprovalActionRequest request) {
@@ -193,7 +193,7 @@ public class BpmTodoController {
         return taskActionService.execute(taskId, actionRequest);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PostMapping("/{taskId}/return")
     public R<Void> returnTask(@PathVariable String taskId,
                               @RequestBody ApprovalActionRequest request) {
@@ -210,7 +210,7 @@ public class BpmTodoController {
      * 不放宽任何读取授权。
      * </p>
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @PostMapping("/{taskId}/claim")
     public R<Void> claim(@PathVariable String taskId) {
         LoginUser loginUser = LoginUserHolder.get();

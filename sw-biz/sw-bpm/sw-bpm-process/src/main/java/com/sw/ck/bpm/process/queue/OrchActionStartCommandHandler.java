@@ -63,7 +63,7 @@ public class OrchActionStartCommandHandler implements BpmCommandHandler {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public String handle(CommandEnvelope envelope) throws Exception {
         Map<String, Object> payload = envelope.getPayload() == null || envelope.getPayload().isBlank()
                 ? Map.of() : JSON.parseObject(envelope.getPayload());
