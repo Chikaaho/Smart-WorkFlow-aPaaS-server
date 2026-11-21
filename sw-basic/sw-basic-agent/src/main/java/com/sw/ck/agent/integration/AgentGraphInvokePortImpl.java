@@ -21,6 +21,7 @@ import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.common.exception.BaseException;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.format.DateTimeFormatter;
@@ -61,6 +62,8 @@ public class AgentGraphInvokePortImpl implements AgentGraphInvokePort {
     private AgentGraphExecutionRequestMapper requestMapper;
     @Autowired
     private AgentGraphSnapshotServiceImpl snapshotService;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
     @Autowired
     private AgentGraphExecutionLifecycleService lifecycleService;
     @Autowired
@@ -172,7 +175,7 @@ public class AgentGraphInvokePortImpl implements AgentGraphInvokePort {
 
         long deadline = System.currentTimeMillis() + waitSeconds * 1000L;
         while (true) {
-            AgentGraphExecutionRequest row = requestMapper.selectById(executionId);
+            AgentGraphExecutionRequest row = pollRow(executionId);
             if (row == null) {
                 return AgentGraphInvocationResult.failure(executionId, "REJECTED", "执行受理记录不存在");
             }
@@ -208,6 +211,37 @@ public class AgentGraphInvokePortImpl implements AgentGraphInvokePort {
                 cancelQuietly(executionId);
                 return AgentGraphInvocationResult.failure(executionId, "TIMEOUT", "同步等待被中断，已请求取消");
             }
+        }
+    }
+
+    /**
+     * X2-expired 根因修复：轮询读用 JdbcTemplate 直查，绕开 MyBatis 一级缓存。
+     * <p>
+     * 调用方（GraphExecNodeDelegate）运行在 Flowable 引擎事务内——Spring 集成下同一事务
+     * 共享 SqlSession，selectById 的首次结果（QUEUED/RUNNING）会被一级缓存固定，
+     * 工作线程在独立事务提交的 SUCCESS/FAILED 永远不可见，轮询必然走到超时取消。
+     * </p>
+     */
+    private AgentGraphExecutionRequest pollRow(Long executionId) {
+        try {
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT id, status, error_category, error_message, outputs_json, latency_ms"
+                            + " FROM sw_agent_graph_execution_request WHERE id = ? AND deleted = 0",
+                    executionId);
+            if (rows.isEmpty()) {
+                return null;
+            }
+            Map<String, Object> r = rows.get(0);
+            AgentGraphExecutionRequest row = new AgentGraphExecutionRequest();
+            row.setId(((Number) r.get("id")).longValue());
+            row.setStatus(String.valueOf(r.get("status")));
+            row.setErrorCategory(r.get("error_category") == null ? null : String.valueOf(r.get("error_category")));
+            row.setErrorMessage(r.get("error_message") == null ? null : String.valueOf(r.get("error_message")));
+            row.setOutputsJson(r.get("outputs_json") == null ? null : String.valueOf(r.get("outputs_json")));
+            row.setLatencyMs(r.get("latency_ms") == null ? null : ((Number) r.get("latency_ms")).longValue());
+            return row;
+        } catch (Exception e) {
+            return null;
         }
     }
 
