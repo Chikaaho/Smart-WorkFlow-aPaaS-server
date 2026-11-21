@@ -30,21 +30,22 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 0.3.2 库（迁移终点 V0.2.9）升级到 1.1.0（终点 V1.1.0）的 H2 / PostgreSQL 真实升级验证。
+ * 0.3.2 库（迁移终点 V0.2.9）升级到 1.2.0（终点 V1.2.0）的 H2 / PostgreSQL 真实升级验证。
  * <p>
  * 0.3.2 的迁移集合 = 当前资源去掉 0.4.0 新增的 {@code V0.4.0__knowledge_vector_persistence.sql}、
- * {@code R__0.4.0_rename_bpm_opinion_comment.sql} 与 1.0.0 新增的
- * {@code V1.0.0__audit_log_and_must_change_password.sql} 后的 28 条（9 个 versioned + 19 个 R__），
+ * {@code R__0.4.0_rename_bpm_opinion_comment.sql}、1.0.0 新增的
+ * {@code V1.0.0__audit_log_and_must_change_password.sql}、1.1.0 与 1.2.0 新增文件后的
+ * 28 条（9 个 versioned + 19 个 R__），
  * 与 develop 分支 0.3.2 终点逐字节一致。测试先把这 28 条复制到临时目录并迁移出 0.3.2 库，
  * 写入一条使用旧列名 {@code comment} 的审批意见草稿，再用当前 classpath 迁移集合升级；
- * 断言只新增 3 条迁移、旧脚本校验和不变、{@code comment} 改名后数据仍在。
+ * 断言只新增 5 条迁移、旧脚本校验和不变、{@code comment} 改名后数据仍在。
  * </p>
  * <p>
  * 使用 run 期复制而不是把旧脚本复制进测试资源，避免测试夹具与生产迁移出现两份真相。
  * H2 与 PG 各跑一次，PG 用 zonky embedded-postgres 启动真实二进制，不依赖本机预置库。
  * </p>
  */
-@DisplayName("0.3.2 库升级到 V1.1.0：数据保留与旧迁移校验和不变")
+@DisplayName("0.3.2 库升级到 V1.2.0：数据保留与旧迁移校验和不变")
 class FlywayUpgradeFrom032Test {
 
     private static final String USER = "postgres";
@@ -65,17 +66,17 @@ class FlywayUpgradeFrom032Test {
     };
 
     private static final int BASELINE_MIGRATIONS = 28;
-    private static final int UPGRADE_MIGRATIONS = 4;
+    private static final int UPGRADE_MIGRATIONS = 5;
 
     @Test
-    @DisplayName("H2：0.3.2 → V1.1.0 保留 opinion_comment 数据，旧迁移校验和不变")
+    @DisplayName("H2：0.3.2 → V1.2.0 保留 opinion_comment 数据，旧迁移校验和不变")
     void h2UpgradeKeepsOpinionData(@TempDir Path tempDir) throws Exception {
         String url = "jdbc:h2:mem:upgrade032_" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1";
         verifyUpgrade("h2", url, "sa", "", tempDir);
     }
 
     @Test
-    @DisplayName("PostgreSQL：0.3.2 → V1.1.0 保留 opinion_comment 数据，旧迁移校验和不变")
+    @DisplayName("PostgreSQL：0.3.2 → V1.2.0 保留 opinion_comment 数据，旧迁移校验和不变")
     void postgresUpgradeKeepsOpinionData(@TempDir Path tempDir) throws Exception {
         try (EmbeddedPostgres pg = EmbeddedPostgres.builder().start()) {
             verifyUpgrade("postgresql", pg.getJdbcUrl(USER, "postgres"), USER, PASSWORD, tempDir);
@@ -123,12 +124,12 @@ class FlywayUpgradeFrom032Test {
                 .locations(locations)
                 .load();
         MigrateResult upgrade = upgradeFlyway.migrate();
-        assertTrue(upgrade.success, "1.1.0 升级迁移应成功");
+        assertTrue(upgrade.success, "1.2.0 升级迁移应成功");
         assertEquals(UPGRADE_MIGRATIONS, upgrade.migrationsExecuted,
-                "0.3.2 → 1.1.0 应只新增 V0.4.0、R__0.4.0、V1.0.0 与 V1.1.0 四条迁移");
+                "0.3.2 → 1.2.0 应只新增 V0.4.0、R__0.4.0、V1.0.0、V1.1.0 与 V1.2.0 五条迁移");
 
         try (Connection connection = DriverManager.getConnection(url, user, password)) {
-            assertEquals("1.1.0", currentVersion(upgradeFlyway), "升级终点版本应为 V1.1.0");
+            assertEquals("1.2.0", currentVersion(upgradeFlyway), "升级终点版本应为 V1.2.0");
             assertFalse(columnExists(connection, "SW_BPM_TASK_OPINION_DRAFT", "COMMENT"),
                     "升级后不应保留旧列 comment");
             assertTrue(columnExists(connection, "SW_BPM_TASK_OPINION_DRAFT", "OPINION_COMMENT"),
@@ -152,7 +153,7 @@ class FlywayUpgradeFrom032Test {
     }
 
     /**
-     * 把 classpath 中的 0.3.2 迁移集合（去掉 0.4.0/1.0.0/1.1.0 新增的四个文件）复制到临时目录。
+     * 把 classpath 中的 0.3.2 迁移集合（去掉 0.4.0/1.0.0/1.1.0/1.2.0 新增的五个文件）复制到临时目录。
      */
     private static int copyBaselineMigrations(String vendor, Path target) throws Exception {
         URL resource = FlywayUpgradeFrom032Test.class.getClassLoader()
@@ -166,7 +167,8 @@ class FlywayUpgradeFrom032Test {
                 if (!name.endsWith(".sql")
                         || name.startsWith("V0.4.0__")
                         || name.startsWith("R__0.4.0_")
-                        || name.startsWith("V1.0.0__") || name.startsWith("V1.1.0__")) {
+                        || name.startsWith("V1.0.0__") || name.startsWith("V1.1.0__")
+                        || name.startsWith("V1.2.0__")) {
                     continue;
                 }
                 Files.copy(file, target.resolve(name), StandardCopyOption.REPLACE_EXISTING);
