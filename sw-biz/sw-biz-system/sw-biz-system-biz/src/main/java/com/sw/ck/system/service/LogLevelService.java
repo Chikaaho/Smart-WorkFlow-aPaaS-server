@@ -96,10 +96,21 @@ public class LogLevelService {
             target = resolveRootDefaultLevel(system);
         }
         // E2 审计与返回口径（iso120 1.2.0 实测）：Log4j2 对 ROOT 的 configuredLevel 恒为 null
-        // （运行值在 effectiveLevel），审计与返回一律用生效等级，避免「默认 → 默认」失真
+        // 且部分运行环境下 getLoggerConfiguration 查询不可靠——审计/返回直接采用
+        // 目标值语义：after = 显式目标（target=null 恢复默认时 = 配置根级别/继承语义）
         LogLevel before = effectiveLevelOf(system, loggerName);
         system.setLogLevel(loggerName, target);
-        LogLevel after = effectiveLevelOf(system, loggerName);
+        LogLevel after;
+        if (target != null) {
+            after = target;
+        } else if (isRoot) {
+            after = resolveRootDefaultLevel(system);
+        } else {
+            after = effectiveLevelOf(system, loggerName);
+            if (after == target) {
+                after = null; // 非 ROOT 恢复默认：配置清除，读侧按继承展示
+            }
+        }
         writeAudit(loggerName, before, after);
         log.info("日志等级调整: logger={}, {} -> {}",
                 loggerName, before == null ? "默认" : before, after == null ? "默认" : after);
