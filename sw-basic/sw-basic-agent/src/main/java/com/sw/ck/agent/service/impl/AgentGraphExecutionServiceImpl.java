@@ -414,10 +414,16 @@ public class AgentGraphExecutionServiceImpl
                         LoginUserHolder.set(loginUser);
                     }
                     try {
-                        // G1-4：结构化入参优先；无结构化入参走旧单文本契约（写入默认变量）
-                        Map<String, String> effectiveInputs = structured
-                                ? inputs
-                                : Map.of(AgentGraphInterpreter.DEFAULT_VARIABLE_NAME, input == null ? "" : input);
+                        // G1-4：结构化入参优先；无结构化入参走旧单文本契约（写入默认变量）。
+                        // G1-4 回归修复（1.2.0 E1 实测）：结构化入参路径下默认变量 input 也要写入
+                        // （值 = 请求 input 文本，可为空串）——「默认变量恒存在」是解释器的既有承诺，
+                        // END 等未命名变量节点的读入参依赖它；缺了会让含此类节点的旧图/新图失败。
+                        Map<String, String> effectiveInputs = new HashMap<>();
+                        if (structured && inputs != null) {
+                            effectiveInputs.putAll(inputs);
+                        }
+                        effectiveInputs.putIfAbsent(AgentGraphInterpreter.DEFAULT_VARIABLE_NAME,
+                                input == null ? "" : input);
                         return interpreter.run(graph, effectiveInputs, runOptions);
                     } finally {
                         LoginUserHolder.clear();
