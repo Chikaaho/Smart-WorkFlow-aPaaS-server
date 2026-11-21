@@ -47,6 +47,7 @@ public class LogLevelController {
                                    @RequestParam(required = false) String level) {
         try {
             var after = logLevelService.setLevel(loggerName, level);
+            // 返回生效等级（ROOT 在 Log4j2 下 configuredLevel 恒 null）
             return R.ok(new LogLevelVO(loggerName, after == null ? null : after.name(),
                     after == null ? null : after.name()));
         } catch (IllegalArgumentException invalid) {

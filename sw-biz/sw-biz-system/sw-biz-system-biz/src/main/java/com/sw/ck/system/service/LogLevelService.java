@@ -95,11 +95,11 @@ public class LogLevelService {
             // （Log4j2 对 ROOT setLevel(null) 不改变运行值，evidence 见 execution-120-04 §5）
             target = resolveRootDefaultLevel(system);
         }
-        LogLevel before = system.getLoggerConfiguration(loggerName) == null
-                ? null : system.getLoggerConfiguration(loggerName).getConfiguredLevel();
+        // E2 审计与返回口径（iso120 1.2.0 实测）：Log4j2 对 ROOT 的 configuredLevel 恒为 null
+        // （运行值在 effectiveLevel），审计与返回一律用生效等级，避免「默认 → 默认」失真
+        LogLevel before = effectiveLevelOf(system, loggerName);
         system.setLogLevel(loggerName, target);
-        LogLevel after = system.getLoggerConfiguration(loggerName) == null
-                ? null : system.getLoggerConfiguration(loggerName).getConfiguredLevel();
+        LogLevel after = effectiveLevelOf(system, loggerName);
         writeAudit(loggerName, before, after);
         log.info("日志等级调整: logger={}, {} -> {}",
                 loggerName, before == null ? "默认" : before, after == null ? "默认" : after);
@@ -110,6 +110,16 @@ public class LogLevelService {
      * 应用配置文件根等级快照：首次需要时取当前 ROOT 生效等级——本服务只在管理动作中
      * 调用，首个动作前 ROOT 未被运行时调整过，effectiveLevel 即配置文件根级别。
      */
+    /** 生效等级读取（ROOT 的 configuredLevel 在 Log4j2 下恒 null，审计/返回用生效值）。 */
+    private LogLevel effectiveLevelOf(LoggingSystem system, String loggerName) {
+        LoggerConfiguration configuration = system.getLoggerConfiguration(loggerName);
+        if (configuration == null) {
+            return null;
+        }
+        return configuration.getEffectiveLevel() == null
+                ? configuration.getConfiguredLevel() : configuration.getEffectiveLevel();
+    }
+
     private LogLevel resolveRootDefaultLevel(LoggingSystem system) {
         if (rootDefaultLevel == null) {
             LoggerConfiguration root = system.getLoggerConfiguration(LoggingSystem.ROOT_LOGGER_NAME);

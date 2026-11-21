@@ -56,13 +56,14 @@ class LogLevelServiceTest {
     }
 
     @Test
-    @DisplayName("level 缺省恢复默认：配置等级回到 null 并写审计")
+    @DisplayName("level 缺省恢复默认：生效等级回落父级（INFO），审计按生效值记录")
     void resetToDefault() {
         realSystem();
         service.setLevel(TEST_LOGGER, "WARN");
         LogLevel after = service.setLevel(TEST_LOGGER, null);
-        assertThat(after).isNull();
-        assertThat(service.list(TEST_LOGGER).get(0).getConfiguredLevel()).isNull();
+        // E2 口径修复（iso120 实测）：返回与审计一律用生效等级（ROOT 的 configuredLevel 在 Log4j2 下恒 null）
+        assertThat(after).isEqualTo(LogLevel.INFO);
+        assertThat(service.list(TEST_LOGGER).get(0).getEffectiveLevel()).isEqualTo(LogLevel.INFO);
     }
 
     @Test
