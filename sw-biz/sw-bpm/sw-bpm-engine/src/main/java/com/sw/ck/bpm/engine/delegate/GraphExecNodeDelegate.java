@@ -94,7 +94,15 @@ public class GraphExecNodeDelegate extends NodeDelegateSupport implements JavaDe
             if (name == null || source == null) {
                 continue;
             }
+            // E1-1 语义：流程变量或表单字段都可映射——顶层变量优先，回退 formData（发起时
+            // 表单数据以 formData map 写入实例变量，字段值不在顶层）
             Object value = execution.getVariable(source);
+            if (value == null) {
+                Object formData = execution.getVariable("formData");
+                if (formData instanceof Map<?, ?> formMap) {
+                    value = formMap.get(source);
+                }
+            }
             if (value == null) {
                 throw new BaseException(BpmErrorCode.NODE_CONFIG_INVALID.getCode(),
                         "Graph 入参映射引用了缺失的流程变量: " + source);
