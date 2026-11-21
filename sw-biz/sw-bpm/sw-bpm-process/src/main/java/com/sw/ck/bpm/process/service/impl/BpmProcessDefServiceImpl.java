@@ -370,8 +370,8 @@ public class BpmProcessDefServiceImpl implements BpmProcessDefService {
 
         // ========== ④ 部署 ==========
         String deploymentName = graph.getName() != null ? graph.getName() : newProcessKey;
-        // deployModelGraph 当前契约恒 present：部署失败继续抛异常（addBpmnModel 绕 XSD）
-        BpmDeployResult deployResult = bpmDeployFacade.deployModelGraph(graph, deploymentName)
+        // deployModel 当前契约恒 present：部署失败继续抛异常
+        BpmDeployResult deployResult = bpmDeployFacade.deployModel(bpmnXml, deploymentName)
                 .orElseThrow(() -> new IllegalStateException(
                         "流程部署未返回部署结果: deploymentName=" + deploymentName));
 

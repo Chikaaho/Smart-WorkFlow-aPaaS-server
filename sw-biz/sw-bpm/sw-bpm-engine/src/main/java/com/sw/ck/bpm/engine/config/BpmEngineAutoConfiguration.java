@@ -184,10 +184,6 @@ public class BpmEngineAutoConfiguration {
             if (transactionManager != null) {
                 config.setTransactionManager(transactionManager);
             }
-            // BPMN XSD 资源（org/flowable/impl/bpmn/parser/BPMN20.xsd）随部署校验加载；
-            // 引擎默认取调用线程 TCCL，跨线程触发部署时可能解析不到资源（iso120 1.2.0
-            // 实测 schema is null），显式绑定到装配类的 classpath 保证 XSD 可达。
-            config.setClassLoader(BpmEngineAutoConfiguration.class.getClassLoader());
             log.info("Flowable engine bound to application DataSource={} transactionManager={} (single commit boundary)",
                     ds != null ? ds.getClass().getSimpleName() : "null",
                     transactionManager != null ? transactionManager.getClass().getSimpleName() : "null");
