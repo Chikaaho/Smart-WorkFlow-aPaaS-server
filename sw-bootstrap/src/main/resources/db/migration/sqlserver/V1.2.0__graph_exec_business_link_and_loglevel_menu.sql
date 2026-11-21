@@ -10,4 +10,4 @@ ALTER TABLE [dbo].[sw_agent_graph_execution_request] ADD [process_instance_id] N
 ALTER TABLE [dbo].[sw_agent_graph_execution_request] ADD [node_id] NVARCHAR(100);
 ALTER TABLE [dbo].[sw_agent_graph_execution_request] ADD [form_record_id] BIGINT;
 CREATE INDEX [idx_sw_agent_exec_req_biz_src] ON [dbo].[sw_agent_graph_execution_request] ([tenant_id], [business_source]);
-CREATE INDEX [idx_sw_agent_exec_req_proc_inst] ON [dbo].[sw_agent_graph_execution_request] ([process_instance_id]);
+CREATE INDEX [idx_sw_agent_exec_req_proc] ON [dbo].[sw_agent_graph_execution_request] ([process_instance_id]);

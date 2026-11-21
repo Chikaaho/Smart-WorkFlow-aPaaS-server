@@ -9,7 +9,7 @@ ALTER TABLE sw_agent_graph_execution_request ADD (
     form_record_id NUMBER(19)
 );
 CREATE INDEX idx_sw_agent_exec_req_biz_src ON sw_agent_graph_execution_request (tenant_id, business_source);
-CREATE INDEX idx_sw_agent_exec_req_proc_inst ON sw_agent_graph_execution_request (process_instance_id);
+CREATE INDEX idx_sw_agent_exec_req_proc ON sw_agent_graph_execution_request (process_instance_id);
 
 -- 日志等级管理（E2）：独立权限点 system:loglevel:manage，查看与调整共用一点；
 -- 超管经 PermissionService 短路默认可见可调，默认不授任何角色，其他角色由菜单管理显式授权。
