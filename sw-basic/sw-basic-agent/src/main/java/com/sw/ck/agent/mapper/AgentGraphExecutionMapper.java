@@ -34,7 +34,7 @@ public interface AgentGraphExecutionMapper extends BaseMapper<AgentGraphExecutio
             SELECT sw_agent_graph_execution.*,
               COALESCE((SELECT MAX(link_req.business_source) FROM sw_agent_graph_execution_request link_req
                         WHERE link_req.result_execution_id = sw_agent_graph_execution.id
-                          AND link_req.business_source IN ('PROCESS', 'FORM') AND link_req.deleted = 0),
+                          AND link_req.business_source IN ('PROCESS', 'FORM', 'IOT') AND link_req.deleted = 0),
                        'DIRECT') AS business_source
             FROM sw_agent_graph_execution
             <where>
@@ -50,10 +50,15 @@ public interface AgentGraphExecutionMapper extends BaseMapper<AgentGraphExecutio
                             WHERE link_req.result_execution_id = sw_agent_graph_execution.id
                               AND link_req.business_source = 'FORM' AND link_req.deleted = 0)
               </if>
+              <if test="businessSource != null and businessSource == 'IOT'">
+                AND EXISTS (SELECT 1 FROM sw_agent_graph_execution_request link_req
+                            WHERE link_req.result_execution_id = sw_agent_graph_execution.id
+                              AND link_req.business_source = 'IOT' AND link_req.deleted = 0)
+              </if>
               <if test="businessSource != null and businessSource == 'DIRECT'">
                 AND NOT EXISTS (SELECT 1 FROM sw_agent_graph_execution_request link_req
                                 WHERE link_req.result_execution_id = sw_agent_graph_execution.id
-                                  AND link_req.business_source IN ('PROCESS', 'FORM')
+                                  AND link_req.business_source IN ('PROCESS', 'FORM', 'IOT')
                                   AND link_req.deleted = 0)
               </if>
               <if test="scope.userIdText != null">AND create_by = #{scope.userIdText}</if>

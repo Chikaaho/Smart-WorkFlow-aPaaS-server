@@ -7,6 +7,7 @@ import com.sw.ck.common.response.R;
 import com.sw.ck.form.entity.FormDefEntity;
 import com.sw.ck.form.mapper.FormDefMapper;
 import com.sw.ck.form.service.FormGraphActionService;
+import com.sw.ck.form.service.FormGraphActionService.ButtonResult;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -44,19 +45,20 @@ public class FormGraphActionController {
 
     @PostMapping("/{formKey}/graph-actions/{actionId}")
     @PreAuthorize("@ss.hasPermi('form:data:submit')")
-    public R<Map<String, String>> runGraphAction(@PathVariable("formKey") String formKey,
-                                                  @PathVariable("actionId") String actionId,
-                                                  @RequestBody GraphActionRequest request) {
+    public R<ButtonResult> runGraphAction(@PathVariable("formKey") String formKey,
+                                           @PathVariable("actionId") String actionId,
+                                           @RequestBody GraphActionRequest request) {
         FormDefEntity formDef = formDefMapper.selectOne(Wrappers.lambdaQuery(FormDefEntity.class)
                 .eq(FormDefEntity::getFormKey, formKey).last("LIMIT 1"));
         if (formDef == null) {
             throw new BaseException(CommonErrorCode.NOT_FOUND, "表单不存在: " + formKey);
         }
-        Map<String, String> outputs = formGraphActionService.runButton(formDef, actionId,
+        // F1-type：类型不符的输出不回填，warnings 随响应提示（不写不合法值）
+        ButtonResult result = formGraphActionService.runButton(formDef, actionId,
                 request == null ? null : request.recordId(),
                 request == null ? Map.of() : request.fieldValues());
-        log.info("Graph 按钮动作执行: formKey={}, action={}, outputs={}",
-                formKey, actionId, outputs.keySet());
-        return R.ok(outputs);
+        log.info("Graph 按钮动作执行: formKey={}, action={}, outputs={}, warnings={}",
+                formKey, actionId, result.outputs().keySet(), result.warnings());
+        return R.ok(result);
     }
 }

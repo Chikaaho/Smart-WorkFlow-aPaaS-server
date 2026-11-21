@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.agent.api.port.AgentGraphBusinessSources;
 import com.sw.ck.agent.vo.AgentGraphExecuteRespVO;
 import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.agent.vo.AgentGraphExecutionEventVO;
@@ -177,7 +178,11 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @Override
     public AgentGraphExecutionAcceptedVO submit(Long graphDefId, String input,
                                                  Map<String, String> inputs, String idempotencyKey) {
-        return submit(graphDefId, null, input, inputs, idempotencyKey, null);
+        // 执行页/调试 API 直调（R3：直接调用的新请求明确写 DIRECT）；IoT 桥/流程/表单
+        // 走六参入口显式携带来源
+        return submit(graphDefId, null, input, inputs, idempotencyKey,
+                new AgentGraphExecutionLifecycleService.BusinessLink(
+                        AgentGraphBusinessSources.DIRECT, null, null, null));
     }
 
     @Override

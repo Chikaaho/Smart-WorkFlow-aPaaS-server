@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import com.alibaba.fastjson2.JSON;
 
+import com.sw.ck.agent.api.port.AgentGraphBusinessSources;
 import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionLifecycleService;
@@ -98,7 +99,9 @@ public class AgentGraphTriggerListener {
         // （含恢复调度重投）提交同一执行；触发记录自身的长幂等键仍由 IoT 侧唯一约束保证
         String submitKey = "iotag-" + event.getTriggerId();
         AgentGraphExecutionAcceptedVO accepted =
-                lifecycleService.submit(graphDefId, input, submitKey);
+                lifecycleService.submit(graphDefId, null, input, null, submitKey,
+                        new AgentGraphExecutionLifecycleService.BusinessLink(
+                                AgentGraphBusinessSources.IOT, null, null, null));
         IotProcessTrigger patch = new IotProcessTrigger();
         patch.setId(event.getTriggerId());
         patch.setAgentExecutionId(accepted.getExecutionId());

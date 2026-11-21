@@ -10,6 +10,8 @@ public final class AgentGraphBusinessSources {
     public static final String PROCESS = "PROCESS";
     /** 表单服务端动作触发。 */
     public static final String FORM = "FORM";
+    /** IoT 桥触发（planning-review-120-01 R3：1.2.0 起新触发的执行写 IOT）。 */
+    public static final String IOT = "IOT";
     /** 直接调用（执行页/调试/IoT 桥等既有入口）。 */
     public static final String DIRECT = "DIRECT";
 

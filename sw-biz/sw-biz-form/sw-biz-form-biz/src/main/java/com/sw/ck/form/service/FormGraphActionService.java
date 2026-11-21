@@ -16,6 +16,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +45,8 @@ public class FormGraphActionService {
     private ObjectProvider<AgentGraphInvokePort> graphInvokePortProvider;
     @Autowired
     private FormGraphActionRules graphActionRules;
+    @Autowired
+    private FormFieldValidator formFieldValidator;
 
     /** 提交前动作：依次执行全部 BEFORE_SUBMIT 动作，失败抛业务异常阻止提交；
      *  成功把出参按映射回填进提交载荷（字段 ← 图输出，未映射输出忽略）。 */
@@ -58,14 +61,26 @@ public class FormGraphActionService {
                 throw new BaseException(FormErrorCode.SUBMIT_FAILED,
                         "提交前 Graph 动作失败[" + result.errorCategory() + "]: " + result.errorMessage());
             }
+            // planning-review-120-01 F1-type：输出值类型与目标字段不符时阻止提交并点名字段，
+            // 不把不合法的值写进记录
+            List<String> bad = typeConflicts(formDef, action, result);
+            if (!bad.isEmpty()) {
+                throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+                        "Graph 动作输出类型不符，已阻止提交（动作 " + action.name() + "）: "
+                                + String.join("; ", bad));
+            }
             merged = applyOutputs(action, result, merged);
         }
         return merged;
     }
 
+    /** 按钮动作结果：出参回填映射 + 类型不符被拦下的字段原因（不回填）。 */
+    public record ButtonResult(Map<String, String> outputs, List<String> warnings) {
+    }
+
     /** 按钮动作：执行指定动作并返回回填字段值（field → value）；失败抛业务异常
      *  （由前端提示，不清空已填内容）。 */
-    public Map<String, String> runButton(FormDefEntity formDef, String actionId,
+    public ButtonResult runButton(FormDefEntity formDef, String actionId,
                                           Long recordId, Map<String, Object> fieldValues) {
         GraphAction action = graphActionRules.parse(formDef).stream()
                 .filter(candidate -> candidate.id().equals(actionId)
@@ -79,13 +94,74 @@ public class FormGraphActionService {
                     "Graph 动作失败[" + result.errorCategory() + "]: " + result.errorMessage());
         }
         Map<String, String> outputs = new LinkedHashMap<>();
+        List<String> warnings = new ArrayList<>();
         for (var mapping : action.outputMappings()) {
             String value = result.outputs() == null ? null : result.outputs().get(mapping.source());
-            if (value != null) {
-                outputs.put(mapping.field(), value);
+            if (value == null) {
+                continue;
+            }
+            // F1-type：类型不符的值不回填，提示原因（已填内容不受影响）
+            String conflict = typeConflictReason(formDef, mapping.field(), value);
+            if (conflict != null) {
+                warnings.add(conflict);
+                continue;
+            }
+            outputs.put(mapping.field(), value);
+        }
+        return new ButtonResult(outputs, warnings);
+    }
+
+    /**
+     * F1-type：全部出参映射的类型校验（提交前用）——返回「字段: 原因」列表，空=全部合法。
+     */
+    private List<String> typeConflicts(FormDefEntity formDef, GraphAction action,
+                                        AgentGraphInvocationResult result) {
+        List<String> bad = new ArrayList<>();
+        for (var mapping : action.outputMappings()) {
+            String value = result.outputs() == null ? null : result.outputs().get(mapping.source());
+            if (value == null) {
+                continue;
+            }
+            String reason = typeConflictReason(formDef, mapping.field(), value);
+            if (reason != null) {
+                bad.add(reason);
             }
         }
-        return outputs;
+        return bad;
+    }
+
+    /**
+     * 单字段类型校验：图输出是字符串，按目标字段声明类型做最基本类型检查
+     * （NUMBER 须可解析为数值、BOOL 须为 true/false/1/0；其余类型不校验，走既有字段校验）。
+     * 合法返回 null，不合法返回「字段label(name): 原因」。
+     */
+    private String typeConflictReason(FormDefEntity formDef, String fieldName, String value) {
+        Map<String, FormFieldValidator.FieldDef> fieldDefs =
+                formFieldValidator.loadAndParseFieldDefs(formDef.getId(), Map.of());
+        FormFieldValidator.FieldDef def = fieldDefs.get(fieldName);
+        if (def == null) {
+            return fieldName + ": 字段不存在";
+        }
+        String type = def.type() == null ? "" : def.type().toUpperCase();
+        String trimmed = value.trim();
+        switch (type) {
+            case "NUMBER":
+                try {
+                    new java.math.BigDecimal(trimmed);
+                } catch (NumberFormatException e) {
+                    return def.label() + "(" + fieldName + "): 数字字段收到非数值 '" + trimmed + "'";
+                }
+                break;
+            case "BOOL":
+                if (!trimmed.equalsIgnoreCase("true") && !trimmed.equalsIgnoreCase("false")
+                        && !trimmed.equals("1") && !trimmed.equals("0")) {
+                    return def.label() + "(" + fieldName + "): 布尔字段收到 '" + trimmed + "'";
+                }
+                break;
+            default:
+                break;
+        }
+        return null;
     }
 
     private Map<String, Object> applyOutputs(GraphAction action, AgentGraphInvocationResult result,
