@@ -48,6 +48,12 @@
             <artifactId>sw-security</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- 1.2.0 P67：Graph 执行器跨模块契约（AgentGraphInvokePort 实现侧）。 -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-agent-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

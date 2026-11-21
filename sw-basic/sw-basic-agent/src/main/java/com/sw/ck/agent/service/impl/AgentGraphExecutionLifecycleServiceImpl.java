@@ -97,6 +97,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @Autowired
     private AgentGraphExecutionService executionService;
     @Autowired
+    private AgentGraphSnapshotServiceImpl snapshotService;
+    @Autowired
     private LoginContextProvider loginContext;
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -175,6 +177,13 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @Override
     public AgentGraphExecutionAcceptedVO submit(Long graphDefId, String input,
                                                  Map<String, String> inputs, String idempotencyKey) {
+        return submit(graphDefId, null, input, inputs, idempotencyKey, null);
+    }
+
+    @Override
+    public AgentGraphExecutionAcceptedVO submit(Long graphDefId, Integer defVersion, String input,
+                                                 Map<String, String> inputs, String idempotencyKey,
+                                                 AgentGraphExecutionLifecycleService.BusinessLink link) {
         boolean hasStructuredInputs = inputs != null && !inputs.isEmpty();
         if (graphDefId == null || ((input == null || input.isBlank()) && !hasStructuredInputs)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "graphDefId 和入参不能为空");
@@ -194,6 +203,20 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             if (graph == null || !"PUBLISHED".equals(graph.getStatus())) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "图不存在或未发布");
             }
+            Integer effectiveVersion = defVersion == null ? graph.getDefVersion() : defVersion;
+            if (defVersion != null && (defVersion < 1
+                    || defVersion > (graph.getDefVersion() == null ? 0 : graph.getDefVersion()))) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "图版本不存在: v" + defVersion + "（当前最新 v" + graph.getDefVersion() + "）");
+            }
+            if (defVersion != null) {
+                // 固定版本绑定（P67）：必须有可解析快照（存量无快照图按 D022-06 兼容补写）
+                String snapshotJson = snapshotService.requireSnapshot(graph, defVersion).getGraphJson();
+                if (snapshotJson == null || snapshotJson.isBlank()) {
+                    throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                            "图版本快照为空，无法绑定: v" + defVersion);
+                }
+            }
             if (key != null) {
                 AgentGraphExecutionRequest existing = requestMapper.selectOne(
                         Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
@@ -212,12 +235,19 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             }
             AgentGraphExecutionRequest request = new AgentGraphExecutionRequest();
             request.setGraphDefId(graphDefId);
-            request.setGraphDefVersion(graph.getDefVersion());
+            request.setGraphDefVersion(effectiveVersion);
             request.setIdempotencyKey(key);
             request.setRequestFingerprint(fingerprint);
             request.setStatus(QUEUED);
             request.setInput(input == null ? "" : input);
             request.setInputsJson(inputsJson);
+            if (link != null) {
+                // 1.2.0 E1-7：业务关联列（来源/流程实例/节点/表单记录）随受理独立提交
+                request.setBusinessSource(link.businessSource());
+                request.setProcessInstanceId(link.processInstanceId());
+                request.setNodeId(link.nodeId());
+                request.setFormRecordId(link.formRecordId());
+            }
             requestMapper.insert(request);
             return request;
         });

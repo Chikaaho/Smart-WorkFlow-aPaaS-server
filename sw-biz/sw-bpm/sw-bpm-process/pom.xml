@@ -83,6 +83,12 @@
             <artifactId>sw-basic-iot-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- 1.2.0 P67/E1-7：实例详情反查 Graph 执行关联（来源/执行编号/耗时/结果） -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-agent-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <!--
             fastjson2 为 Phase 5 显式化的直接依赖：本模块有 4 个生产文件直接使用
             com.alibaba.fastjson2（流程设备动作配置解析、流程模板动作 JSON、表单契约字段提取）。

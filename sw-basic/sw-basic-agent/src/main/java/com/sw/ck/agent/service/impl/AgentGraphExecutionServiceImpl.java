@@ -597,11 +597,17 @@ public class AgentGraphExecutionServiceImpl
 
     @Override
     public PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId) {
+        return pageExecutions(pageParam, graphDefId, null);
+    }
+
+    @Override
+    public PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId,
+                                                            String businessSource) {
         // 租户隔离经租户拦截器自动生效；数据范围：sw_agent_graph_execution 无 dept_id 列，
         // 等效条件在 selectExecutionPage 内实现（create_by VARCHAR 兼容比较）
         DataScopeFilter scope = DataScopeFilter.resolve(loginContextProvider, deptScopeProvider);
         IPage<AgentGraphExecution> page = executionMapper.selectExecutionPage(
-                new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), graphDefId, scope);
+                new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), graphDefId, businessSource, scope);
         return PageResult.of(page.convert(this::toSummaryDTO));
     }
 
@@ -783,6 +789,7 @@ public class AgentGraphExecutionServiceImpl
         dto.setInputTokens(exec.getInputTokens());
         dto.setOutputTokens(exec.getOutputTokens());
         dto.setCreateTime(exec.getCreateTime());
+        dto.setBusinessSource(exec.getBusinessSource() == null ? "DIRECT" : exec.getBusinessSource());
         return dto;
     }
 

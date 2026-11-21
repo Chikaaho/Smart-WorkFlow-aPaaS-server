@@ -24,6 +24,30 @@ public interface AgentGraphExecutionLifecycleService {
     default AgentGraphExecutionAcceptedVO submit(Long graphDefId, String input, String idempotencyKey) {
         return submit(graphDefId, input, null, idempotencyKey);
     }
+
+    /**
+     * 业务关联（1.2.0 E1-7）：受理行的来源与回查键，随受理独立事务一并落库。
+     *
+     * @param businessSource    来源（PROCESS/FORM/DIRECT；见 AgentGraphBusinessSources）
+     * @param processInstanceId 流程实例 id（流程来源）
+     * @param nodeId            流程节点 activityId（流程来源）
+     * @param formRecordId      表单记录 id（表单来源）
+     */
+    record BusinessLink(String businessSource, String processInstanceId, String nodeId,
+                        Long formRecordId) {
+    }
+
+    /**
+     * 固定版本 + 业务关联受理（1.2.0 P67：流程服务节点 / 表单服务端动作入口）。
+     *
+     * <p>defVersion 非 null 时按该版本快照执行（P67「绑定固定版本」语义）；
+     * 图不存在/跨租户/未发布、版本无快照时拒绝。link 非 null 时写入业务关联列，
+     * 供执行列表按来源筛选与实例详情反查（E1-7）。</p>
+     */
+    AgentGraphExecutionAcceptedVO submit(Long graphDefId, Integer defVersion, String input,
+                                          Map<String, String> inputs, String idempotencyKey,
+                                          BusinessLink link);
+
     AgentGraphExecutionLifecycleVO get(Long executionId);
     AgentGraphExecutionLifecycleVO cancel(Long executionId);
     List<AgentGraphExecutionEventVO> listEvents(Long executionId, long afterSequence);

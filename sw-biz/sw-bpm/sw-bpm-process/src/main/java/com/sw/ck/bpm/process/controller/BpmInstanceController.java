@@ -1,5 +1,8 @@
 package com.sw.ck.bpm.process.controller;
 
+import com.sw.ck.agent.api.port.AgentGraphInvokePort;
+
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.sw.ck.bpm.api.vo.BpmActivityVO;
@@ -72,6 +75,9 @@ public class BpmInstanceController {
     private UserQueryFacade userQueryFacade;
     @Autowired
     private ParticipantNameService participantNameService;
+    /** 1.2.0 E1-7：Graph 执行关联反查（智能体模块未装配的隔离上下文保持 null） */
+    @Autowired(required = false)
+    private ObjectProvider<AgentGraphInvokePort> graphInvokePortProvider;
     @Autowired
     private PermissionService permissionService;
     @Autowired
@@ -174,6 +180,11 @@ public class BpmInstanceController {
                 .orElse(Map.of());
         InstanceDetailVO dto = toDetailDTO(instance, activeNodeIds, flowTrace,
                 instanceVariables.get("formData"));
+        // 1.2.0 E1-7：Graph 执行器节点产生的关联执行（新在前；按当前租户过滤）
+        AgentGraphInvokePort graphInvokePort = graphInvokePortProvider.getIfAvailable();
+        if (graphInvokePort != null) {
+            dto.setGraphExecutions(graphInvokePort.listByProcessInstance(processInstanceId));
+        }
 
         log.debug("实例详情查询: processInstanceId={}, activeNodes={}, flowTraceSize={}",
                 processInstanceId, activeNodeIds.size(), flowTrace.size());

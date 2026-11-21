@@ -2,6 +2,8 @@ package com.sw.ck.agent.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 
+import com.sw.ck.agent.api.port.AgentGraphInvokePort;
+import com.sw.ck.agent.api.port.AgentGraphVersionBinding;
 import com.sw.ck.agent.dto.AgentGraphCreateReqDTO;
 import com.sw.ck.agent.vo.AgentGraphDefVO;
 import com.sw.ck.agent.dto.AgentGraphExecuteReqDTO;
@@ -11,6 +13,8 @@ import com.sw.ck.agent.vo.AgentGraphSnapshotVO;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.service.AgentGraphDefService;
 import com.sw.ck.agent.service.AgentGraphExecutionService;
+import com.sw.ck.common.exception.CommonErrorCode;
+import com.sw.ck.common.exception.BaseException;
 import com.sw.ck.common.page.PageParam;
 import com.sw.ck.common.page.PageResult;
 import com.sw.ck.common.response.R;
@@ -46,6 +50,8 @@ public class AgentGraphDefController {
     private AgentGraphDefService agentGraphDefService;
     @Autowired
     private AgentGraphExecutionService agentGraphExecutionService;
+    @Autowired
+    private AgentGraphInvokePort graphInvokePort;
 
     /** 创建图定义（服务端生成 graphKey + 初始图 START→END，DRAFT） */
     @PostMapping
@@ -96,6 +102,19 @@ public class AgentGraphDefController {
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
     public R<List<AgentGraphSnapshotVO>> versions(@PathVariable Long id) {
         return R.ok(agentGraphDefService.listVersions(id));
+    }
+
+    /**
+     * 固定版本绑定描述（1.2.0 P67/E1-1）：开始/结束节点参数声明、执行超时上限、
+     * 是否含人工节点。流程设计器 Graph 执行器节点与发布校验共用同一数据源；
+     * 不存在/跨租户/未发布/版本无快照统一 404 语义（按不可绑定处理）。
+     */
+    @GetMapping("/{id}/versions/{version}/binding")
+    @PreAuthorize("@ss.hasPermi('agent:model:view')")
+    public R<AgentGraphVersionBinding> binding(@PathVariable Long id, @PathVariable Integer version) {
+        return R.ok(graphInvokePort.describeBinding(id, version)
+                .orElseThrow(() -> new BaseException(CommonErrorCode.NOT_FOUND.getCode(),
+                        "图版本不存在或不可绑定: #" + id + " v" + version)));
     }
 
     /** 更新图级设置（当前为执行超时秒数） */

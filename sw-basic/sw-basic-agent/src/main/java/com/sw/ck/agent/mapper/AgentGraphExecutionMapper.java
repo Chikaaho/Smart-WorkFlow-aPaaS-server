@@ -31,10 +31,31 @@ public interface AgentGraphExecutionMapper extends BaseMapper<AgentGraphExecutio
      */
     @Select("""
             <script>
-            SELECT * FROM sw_agent_graph_execution
+            SELECT sw_agent_graph_execution.*,
+              COALESCE((SELECT MAX(link_req.business_source) FROM sw_agent_graph_execution_request link_req
+                        WHERE link_req.result_execution_id = sw_agent_graph_execution.id
+                          AND link_req.business_source IN ('PROCESS', 'FORM') AND link_req.deleted = 0),
+                       'DIRECT') AS business_source
+            FROM sw_agent_graph_execution
             <where>
               deleted = 0
               <if test="graphDefId != null">AND graph_def_id = #{graphDefId}</if>
+              <if test="businessSource != null and businessSource == 'PROCESS'">
+                AND EXISTS (SELECT 1 FROM sw_agent_graph_execution_request link_req
+                            WHERE link_req.result_execution_id = sw_agent_graph_execution.id
+                              AND link_req.business_source = 'PROCESS' AND link_req.deleted = 0)
+              </if>
+              <if test="businessSource != null and businessSource == 'FORM'">
+                AND EXISTS (SELECT 1 FROM sw_agent_graph_execution_request link_req
+                            WHERE link_req.result_execution_id = sw_agent_graph_execution.id
+                              AND link_req.business_source = 'FORM' AND link_req.deleted = 0)
+              </if>
+              <if test="businessSource != null and businessSource == 'DIRECT'">
+                AND NOT EXISTS (SELECT 1 FROM sw_agent_graph_execution_request link_req
+                                WHERE link_req.result_execution_id = sw_agent_graph_execution.id
+                                  AND link_req.business_source IN ('PROCESS', 'FORM')
+                                  AND link_req.deleted = 0)
+              </if>
               <if test="scope.userIdText != null">AND create_by = #{scope.userIdText}</if>
               <if test="scope.deptIds != null and scope.deptIds.size() > 0">
                 AND create_by IN (SELECT CONCAT('', id) FROM sys_user WHERE dept_id IN
@@ -48,5 +69,6 @@ public interface AgentGraphExecutionMapper extends BaseMapper<AgentGraphExecutio
             """)
     IPage<AgentGraphExecution> selectExecutionPage(Page<AgentGraphExecution> page,
                                                    @Param("graphDefId") Long graphDefId,
+                                                   @Param("businessSource") String businessSource,
                                                    @Param("scope") DataScopeFilter scope);
 }
