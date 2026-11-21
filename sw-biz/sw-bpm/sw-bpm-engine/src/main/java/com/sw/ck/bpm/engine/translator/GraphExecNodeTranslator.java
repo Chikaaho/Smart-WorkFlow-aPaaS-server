@@ -103,7 +103,7 @@ public class GraphExecNodeTranslator extends ServiceTaskNodeTranslator {
         AgentGraphVersionBinding bound = binding.get();
         if (bound.containsHumanNode()) {
             // E1-5（裁定前口径）：同步调用不支持人工等待，发布期直接拒绝并写明原因
-            errors.add(error(node, "绑定的 Graph v" + defVersion + " 含人工节点，不能作为同步执行器"));
+            errors.add(error(node, "节点[" + nodeDisplayName(node) + "] 绑定的 Graph v" + defVersion + " 含人工节点，不能作为同步执行器"));
         }
         List<String> missingInputs = new ArrayList<>();
         for (AgentGraphVersionBinding.ParamDecl param : bound.startParams()) {
@@ -112,7 +112,7 @@ public class GraphExecNodeTranslator extends ServiceTaskNodeTranslator {
             }
         }
         if (!missingInputs.isEmpty()) {
-            errors.add(error(node, "必填入参缺少映射: " + String.join(", ", missingInputs)));
+            errors.add(error(node, "节点[" + nodeDisplayName(node) + "] 必填入参缺少映射: " + String.join(", ", missingInputs)));
         }
         Set<String> declaredOutputs = new HashSet<>();
         bound.endParams().forEach(decl -> declaredOutputs.add(decl.name()));
@@ -123,7 +123,7 @@ public class GraphExecNodeTranslator extends ServiceTaskNodeTranslator {
             }
         }
         if (!badOutputs.isEmpty()) {
-            errors.add(error(node, "出参映射引用了图未声明的输出: " + String.join(", ", badOutputs)));
+            errors.add(error(node, "节点[" + nodeDisplayName(node) + "] 出参映射引用了图未声明的输出: " + String.join(", ", badOutputs)));
         }
         Set<String> outputTargets = mappingNames(config.get("outputMappings"), "name");
         if (outputTargets.contains("") || mappingNames(config.get("inputMappings"), "source").contains("")) {
@@ -132,7 +132,7 @@ public class GraphExecNodeTranslator extends ServiceTaskNodeTranslator {
         Integer timeout = positiveInt(config.get("timeoutSeconds"));
         if (timeout != null && bound.executionTimeoutSeconds() != null
                 && timeout > bound.executionTimeoutSeconds()) {
-            errors.add(error(node, "节点超时 " + timeout + " 秒超过图自身执行超时上限 "
+            errors.add(error(node, "节点[" + nodeDisplayName(node) + "] 超时 " + timeout + " 秒超过图自身执行超时上限 "
                     + bound.executionTimeoutSeconds() + " 秒"));
         }
         return Optional.of(errors);
@@ -175,6 +175,14 @@ public class GraphExecNodeTranslator extends ServiceTaskNodeTranslator {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /** 节点显示名（config.name 缺省用 elementId）。 */
+    private String nodeDisplayName(GraphElement node) {
+        if (node.getConfig() != null && node.getConfig().get("name") instanceof String name && !name.isBlank()) {
+            return name;
+        }
+        return node.getId();
     }
 
     private String text(Object value) {
