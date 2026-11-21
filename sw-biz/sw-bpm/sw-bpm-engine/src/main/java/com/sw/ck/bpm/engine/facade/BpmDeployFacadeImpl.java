@@ -62,11 +62,48 @@ public class BpmDeployFacadeImpl implements BpmDeployFacade {
     }
 
     @Override
+    public Optional<BpmDeployResult> deployModelGraph(ProcessGraph graph, String deploymentName) {
+        BpmnModel bpmnModel = graphToBpmnTranslator.translate(graph);
+        try {
+            var deploymentBuilder = repositoryService.createDeployment()
+                    .addBpmnModel("process.bpmn20.xml", bpmnModel)
+                    .name(deploymentName);
+            // 部署跟随发布者租户：与 deployModel 同一租户口径
+            LoginUser loginUser = LoginUserHolder.get();
+            if (loginUser != null && loginUser.getTenantId() != null) {
+                deploymentBuilder.tenantId(String.valueOf(loginUser.getTenantId()));
+            }
+            Deployment deployment = deploymentBuilder.deploy();
+
+            ProcessDefinition processDef = repositoryService.createProcessDefinitionQuery()
+                    .deploymentId(deployment.getId())
+                    .singleResult();
+            if (processDef == null) {
+                log.warn("No process definition found in model deployment: deploymentId={}", deployment.getId());
+                return Optional.of(BpmDeployResult.builder().deploymentId(deployment.getId()).build());
+            }
+            log.info("BPMN model deployed via addBpmnModel: deploymentId={}, processDefinitionId={}, processDefKey={}",
+                    deployment.getId(), processDef.getId(), processDef.getKey());
+            return Optional.of(BpmDeployResult.builder()
+                    .deploymentId(deployment.getId())
+                    .processDefinitionId(processDef.getId())
+                    .build());
+        } catch (Exception e) {
+            log.error("BPMN model deployment failed: {}", e.getMessage(), e);
+            throw new BaseException(BpmErrorCode.DEPLOYMENT_FAILED);
+        }
+    }
+
+    @Override
     public Optional<BpmDeployResult> deployModel(byte[] bpmnXml, String deploymentName) {
         try {
             var deploymentBuilder = repositoryService.createDeployment()
                     .addBytes("process.bpmn20.xml", bpmnXml)
-                    .name(deploymentName);
+                    .name(deploymentName)
+                    // BPMN 由本模块 GraphToBpmnTranslator 程序化生成（非人工 XML），
+                    // 生成器自身有拓扑/配置校验；关闭 XSD 校验以绕开 fat jar 内
+                    // Flowable XSD 资源加载失败（schema is null，iso120 实测 1.2.0 批次）。
+                    .disableSchemaValidation();
             // 部署跟随发布者租户：发起/待办查询均按 tenantId 过滤，定义无租户会导致实例发起失败
             LoginUser loginUser = LoginUserHolder.get();
             if (loginUser != null && loginUser.getTenantId() != null) {

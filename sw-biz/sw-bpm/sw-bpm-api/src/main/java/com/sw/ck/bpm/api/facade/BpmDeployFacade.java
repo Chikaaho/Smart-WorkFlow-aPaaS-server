@@ -43,6 +43,20 @@ public interface BpmDeployFacade {
     Optional<byte[]> translateToBpmn(ProcessGraph graph);
 
     /**
+     * 将 {@link ProcessGraph} 翻译并以 {@code addBpmnModel} 内存模型直接部署。
+     * <p>
+     * 1.2.0 批次新增（iso120 实测）：BPMN 由本模块翻译器程序化生成，部署时
+     * 绕开 Flowable XSD 校验全链（fat jar/解包环境 XSD 资源加载均可能失败——
+     * {@code schema is null}），生成器自身的拓扑/配置校验不受影响。
+     * </p>
+     *
+     * @param graph          流程设计器图模型
+     * @param deploymentName 部署名称
+     * @return present = 部署结果（deploymentId + processDefinitionId）；部署失败抛异常
+     */
+    Optional<BpmDeployResult> deployModelGraph(ProcessGraph graph, String deploymentName);
+
+    /**
      * 部署内存中的 BPMN XML。
      * <p>
      * 经 Flowable RepositoryService 部署，返回部署结果。

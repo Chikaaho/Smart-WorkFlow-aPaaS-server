@@ -87,6 +87,7 @@ public class GraphExecNodeDelegate extends NodeDelegateSupport implements JavaDe
             throw new BaseException(BpmErrorCode.NODE_DELIVERY_FAILED.getCode(),
                     "智能体模块未装配，Graph 执行器节点无法执行");
         }
+        log.info("[iso120-diag] GRAPH_EXEC nodeConfig: {}", config);
         Map<String, String> inputs = new LinkedHashMap<>();
         for (Map<String, Object> mapping : mappings(config.get("inputMappings"))) {
             String name = asString(mapping.get("name"));
