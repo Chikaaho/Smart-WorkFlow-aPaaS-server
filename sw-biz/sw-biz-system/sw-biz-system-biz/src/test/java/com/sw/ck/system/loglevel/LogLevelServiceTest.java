@@ -66,6 +66,25 @@ class LogLevelServiceTest {
     }
 
     @Test
+    @DisplayName("ROOT 恢复默认：显式回落到配置文件根级别（生效等级随之恢复，不留 DEBUG）")
+    void rootResetFallsBackToConfiguredRoot() {
+        LoggingSystem system = realSystem();
+        LogLevel configRoot = system.getLoggerConfiguration(LoggingSystem.ROOT_LOGGER_NAME)
+                .getEffectiveLevel();
+        try {
+            service.setLevel("ROOT", "DEBUG");
+            assertThat(system.getLoggerConfiguration(LoggingSystem.ROOT_LOGGER_NAME)
+                    .getEffectiveLevel()).isEqualTo(LogLevel.DEBUG);
+            service.setLevel("ROOT", null);
+            // 修复后：恢复默认显式回落配置根级别，不再出现「配置=默认、生效=DEBUG」
+            assertThat(system.getLoggerConfiguration(LoggingSystem.ROOT_LOGGER_NAME)
+                    .getEffectiveLevel()).isEqualTo(configRoot);
+        } finally {
+            service.setLevel("ROOT", null);
+        }
+    }
+
+    @Test
     @DisplayName("非法等级拒绝；合法集合为 TRACE—OFF")
     void rejectsInvalidLevel() {
         realSystem();

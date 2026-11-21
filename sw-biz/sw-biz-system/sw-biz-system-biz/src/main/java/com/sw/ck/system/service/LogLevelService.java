@@ -36,6 +36,10 @@ public class LogLevelService {
     @Autowired
     private AuditLogService auditLogService;
 
+    /** 应用配置文件的根日志等级（首次调用时快照；ROOT「恢复默认」显式回落到它——
+     *  Log4j2 对 ROOT 清配置（null）不改变运行值，无法像普通 logger 那样继承父级）。 */
+    private volatile LogLevel rootDefaultLevel;
+
     private LoggingSystem system() {
         if (loggingSystem != null) {
             return loggingSystem;
@@ -80,6 +84,17 @@ public class LogLevelService {
             target = LogLevel.valueOf(normalized);
         }
         LoggingSystem system = system();
+        // 首次管理动作前快照根级别（此时 ROOT 一定未被本服务调整过，避免快照被改值污染）
+        if (rootDefaultLevel == null) {
+            resolveRootDefaultLevel(system);
+        }
+        boolean isRoot = LoggingSystem.ROOT_LOGGER_NAME.equalsIgnoreCase(loggerName)
+                || "ROOT".equalsIgnoreCase(loggerName);
+        if (isRoot && target == null) {
+            // planning-review-120-01 批内缺陷修复：ROOT 恢复默认 = 显式回落到应用配置文件根级别
+            // （Log4j2 对 ROOT setLevel(null) 不改变运行值，evidence 见 execution-120-04 §5）
+            target = resolveRootDefaultLevel(system);
+        }
         LogLevel before = system.getLoggerConfiguration(loggerName) == null
                 ? null : system.getLoggerConfiguration(loggerName).getConfiguredLevel();
         system.setLogLevel(loggerName, target);
@@ -89,6 +104,19 @@ public class LogLevelService {
         log.info("日志等级调整: logger={}, {} -> {}",
                 loggerName, before == null ? "默认" : before, after == null ? "默认" : after);
         return after;
+    }
+
+    /**
+     * 应用配置文件根等级快照：首次需要时取当前 ROOT 生效等级——本服务只在管理动作中
+     * 调用，首个动作前 ROOT 未被运行时调整过，effectiveLevel 即配置文件根级别。
+     */
+    private LogLevel resolveRootDefaultLevel(LoggingSystem system) {
+        if (rootDefaultLevel == null) {
+            LoggerConfiguration root = system.getLoggerConfiguration(LoggingSystem.ROOT_LOGGER_NAME);
+            rootDefaultLevel = root == null || root.getEffectiveLevel() == null
+                    ? LogLevel.INFO : root.getEffectiveLevel();
+        }
+        return rootDefaultLevel;
     }
 
     /** E2-3 操作日志：谁、哪个 logger、从什么等级改成什么等级（尽力而为，不阻断调整）。 */
