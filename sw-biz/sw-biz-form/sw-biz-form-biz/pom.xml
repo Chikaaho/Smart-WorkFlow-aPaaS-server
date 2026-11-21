@@ -55,6 +55,12 @@
             <artifactId>sw-basic-storage-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- 1.2.0 P67/E1-6：表单「调用 Graph」服务端动作经 agent-api 受控端口执行 -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-agent-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
