@@ -7,6 +7,7 @@ import com.sw.ck.system.service.LogLevelService;
 import com.sw.ck.system.vo.LogLevelVO;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.logging.LoggingSystem;
 import org.springframework.boot.logging.LoggerConfiguration;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,7 +35,17 @@ public class LogLevelController {
     @GetMapping
     @PreAuthorize("@ss.hasPermi('system:loglevel:manage')")
     public R<List<LogLevelVO>> list(@RequestParam(required = false) String keyword) {
-        return R.ok(logLevelService.list(keyword).stream().map(LogLevelVO::of).toList());
+        return R.ok(logLevelService.list(keyword).stream().map(configuration -> {
+            // E2-2 补图口径（review-120-02）：ROOT 在 Log4j2 下 configuredLevel 恒 null，
+            // 配置等级列按生效等级展示（与 setLevel 返回口径一致）
+            if (LoggingSystem.ROOT_LOGGER_NAME.equals(configuration.getName())
+                    && configuration.getConfiguredLevel() == null) {
+                return new LogLevelVO(configuration.getName(),
+                        configuration.getEffectiveLevel() == null ? null : configuration.getEffectiveLevel().name(),
+                        configuration.getEffectiveLevel() == null ? null : configuration.getEffectiveLevel().name());
+            }
+            return LogLevelVO.of(configuration);
+        }).toList());
     }
 
     /**
