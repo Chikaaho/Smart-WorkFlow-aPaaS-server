@@ -58,14 +58,14 @@ public class FormGraphActionService {
         for (GraphAction action : actions) {
             AgentGraphInvocationResult result = execute(formDef.getFormKey(), action, merged, null);
             if (!result.success()) {
-                throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+                throw new BaseException(FormErrorCode.GRAPH_ACTION_FAILED,
                         "提交前 Graph 动作失败[" + result.errorCategory() + "]: " + result.errorMessage());
             }
             // planning-review-120-01 F1-type：输出值类型与目标字段不符时阻止提交并点名字段，
             // 不把不合法的值写进记录
             List<String> bad = typeConflicts(formDef, action, result);
             if (!bad.isEmpty()) {
-                throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+                throw new BaseException(FormErrorCode.GRAPH_ACTION_FAILED,
                         "Graph 动作输出类型不符，已阻止提交（动作 " + action.name() + "）: "
                                 + String.join("; ", bad));
             }
@@ -90,7 +90,7 @@ public class FormGraphActionService {
                         "Graph 动作不存在: " + actionId));
         AgentGraphInvocationResult result = execute(formDef.getFormKey(), action, fieldValues, recordId);
         if (!result.success()) {
-            throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+            throw new BaseException(FormErrorCode.GRAPH_ACTION_FAILED,
                     "Graph 动作失败[" + result.errorCategory() + "]: " + result.errorMessage());
         }
         Map<String, String> outputs = new LinkedHashMap<>();
@@ -181,7 +181,7 @@ public class FormGraphActionService {
         AgentGraphInvokePort port = graphInvokePortProvider == null
                 ? null : graphInvokePortProvider.getIfAvailable();
         if (port == null) {
-            throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+            throw new BaseException(FormErrorCode.GRAPH_ACTION_FAILED,
                     "智能体模块未装配，Graph 动作不可用: " + action.name());
         }
         LoginUser previous = LoginUserHolder.get();
@@ -198,7 +198,7 @@ public class FormGraphActionService {
             for (var mapping : action.inputMappings()) {
                 Object value = fieldValues == null ? null : fieldValues.get(mapping.field());
                 if (value == null || String.valueOf(value).isBlank()) {
-                    throw new BaseException(FormErrorCode.SUBMIT_FAILED,
+                    throw new BaseException(FormErrorCode.GRAPH_ACTION_FAILED,
                             "Graph 动作入参字段缺失或为空: " + mapping.field()
                                     + "（动作 " + action.name() + "）");
                 }
