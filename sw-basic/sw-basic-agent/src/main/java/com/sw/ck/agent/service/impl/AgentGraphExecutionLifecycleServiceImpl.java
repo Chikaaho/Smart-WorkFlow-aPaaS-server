@@ -382,6 +382,15 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         try {
             AgentExecutionEventContext.set((type, nodeId, payload) ->
                     appendEvent(request, type, nodeId, payload));
+            AgentExecutionEventContext.setRequestId(executionId);
+            // T2：执行行还没创建时先预分配 id 并写入受理行关联（当前线程无外层事务，立即提交）；
+            // 执行服务随后按该 id 插入执行行，列表在 RUNNING 期间即可按 PROCESS 筛选。
+            if (request.getResultExecutionId() == null) {
+                Long plannedExecutionId = IdWorker.getId();
+                AgentExecutionEventContext.setPlannedExecutionId(plannedExecutionId);
+                request.setResultExecutionId(plannedExecutionId);
+                requestMapper.updateById(request);
+            }
             appendEvent(request, "STATE", null, RUNNING);
             Map<String, String> structuredInputs = fromJson(request.getInputsJson());
             // G3：带暂停状态的执行从人工节点恢复；否则从头执行

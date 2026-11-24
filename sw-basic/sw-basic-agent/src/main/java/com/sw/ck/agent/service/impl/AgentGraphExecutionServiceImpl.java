@@ -13,11 +13,14 @@ import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecution;
+import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
 import com.sw.ck.agent.entity.AgentGraphExecutionNode;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionRequestMapper;
+import com.sw.ck.agent.orchestration.AgentExecutionEventContext;
 import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
@@ -56,6 +59,9 @@ import java.util.concurrent.TimeoutException;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -132,6 +138,10 @@ public class AgentGraphExecutionServiceImpl
     private AgentToolExternalConfigMapper externalToolMapper;
     @Autowired
     private AgentGraphExecutionMapper executionMapper;
+    @Autowired
+    private AgentGraphExecutionRequestMapper executionRequestMapper;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
     @Autowired
     private AgentGraphExecutionNodeMapper executionNodeMapper;
     @Autowired
@@ -373,7 +383,26 @@ public class AgentGraphExecutionServiceImpl
             // E1-3：结构化入参（流程/表单/直调）也要进入执行详情；旧文本入参保持原样
             exec.setInput(input == null || input.isBlank()
                     ? (structured ? toJson(inputs) : "") : input);
+            // T2：顶层新执行复用受理阶段预分配的 id，受理行关联在运行中即可见
+            if (depth == 0 && resumeExecutionId == null
+                    && AgentExecutionEventContext.getPlannedExecutionId() != null) {
+                exec.setId(AgentExecutionEventContext.getPlannedExecutionId());
+            }
             executionMapper.insert(exec);
+            // T2：受理行在执行行创建时立即回填关联，执行列表在 RUNNING 期间即可显示正确来源
+            Long lifecycleRequestId = AgentExecutionEventContext.getRequestId();
+            Long createdExecutionId = exec.getId();
+            if (lifecycleRequestId != null && createdExecutionId != null) {
+                // 必须独立事务立即提交：runLifecycle 外层事务要到图执行结束才提交，
+                // 否则运行期间列表仍看不到关联，来源会被归一成 DIRECT（T2）。
+                TransactionTemplate linkTx = new TransactionTemplate(transactionManager);
+                linkTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                linkTx.executeWithoutResult(status -> executionRequestMapper.update(null,
+                        Wrappers.<AgentGraphExecutionRequest>lambdaUpdate()
+                                .eq(AgentGraphExecutionRequest::getId, lifecycleRequestId)
+                                .isNull(AgentGraphExecutionRequest::getResultExecutionId)
+                                .set(AgentGraphExecutionRequest::getResultExecutionId, createdExecutionId)));
+            }
         }
         final AgentGraphExecution currentExec = exec;
 
