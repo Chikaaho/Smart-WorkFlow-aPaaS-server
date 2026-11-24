@@ -106,6 +106,8 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     private TransactionTemplate transactionTemplate;
     /** 受理专用模板（REQUIRES_NEW：受理先独立提交再派发，跨模块触发可见性保证）。 */
     private TransactionTemplate acceptTemplate;
+    /** 调用方等待超时登记（E1-4）：工作线程收尾时按 TIMEOUT 落终态。 */
+    private final ConcurrentHashMap<Long, String> callerTimeouts = new ConcurrentHashMap<>();
     private ThreadPoolExecutor executor;
     private final ConcurrentHashMap<Long, Thread> runningThreads = new ConcurrentHashMap<>();
     @Autowired
@@ -332,6 +334,21 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         return toDto(requireOwned(requestId));
     }
 
+    @Override
+    public boolean markCallerTimeout(Long executionId, String message) {
+        if (executionId == null) {
+            return false;
+        }
+        // 只登记超时意图并中断工作线程：不能在此跨事务 UPDATE 受理行——
+        // 工作线程事务已持有该行锁，REQUIRES_NEW 会与调用方 Flowable 事务互相等待。
+        callerTimeouts.put(executionId, message);
+        Thread thread = runningThreads.get(executionId);
+        if (thread != null) {
+            thread.interrupt();
+        }
+        return true;
+    }
+
     private void dispatch(Long executionId, LoginUser loginUser) {
         try {
             executor.execute(() -> run(executionId, loginUser));
@@ -388,7 +405,12 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             AgentGraphExecuteRespVO result = outcome.response;
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
             String outputsJson = result.isSuccess() ? toJson(result.getOutputs()) : null;
-            if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
+            String callerTimeout = callerTimeouts.remove(executionId);
+            if (callerTimeout != null) {
+                // E1-4：调用方已按 TIMEOUT 返回，请求层与节点层口径统一
+                finish(executionId, FAILED, "TIMEOUT", callerTimeout,
+                        result.getExecutionId(), started, null);
+            } else if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
                 finish(executionId, CANCELLED, null, "执行已取消", result.getExecutionId(), started, null);
             } else if (result.isSuccess()) {
                 finish(executionId, SUCCESS, null, null, result.getExecutionId(), started, outputsJson);
@@ -403,7 +425,10 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             }
         } catch (Exception error) {
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
-            if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
+            String callerTimeout = callerTimeouts.remove(executionId);
+            if (callerTimeout != null) {
+                finish(executionId, FAILED, "TIMEOUT", callerTimeout, null, started, null);
+            } else if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
                 finish(executionId, CANCELLED, null, "执行已取消", null, started, null);
             } else {
                 finish(executionId, FAILED, "EXECUTION_ERROR", "图执行失败，请查看节点记录", null, started, null);
@@ -411,6 +436,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         } finally {
             AgentExecutionEventContext.clear();
             runningThreads.remove(executionId);
+            callerTimeouts.remove(executionId);
             LoginUserHolder.clear();
         }
     }
@@ -933,7 +959,9 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         dto.setGraphDefId(request.getGraphDefId());
         dto.setGraphDefVersion(request.getGraphDefVersion());
         dto.setStatus(request.getStatus());
-        dto.setInput(request.getInput());
+        // E1-3：结构化入参只落在 inputs_json 时，详情页「输入内容」回退展示该 JSON
+        dto.setInput(request.getInput() == null || request.getInput().isBlank()
+                ? request.getInputsJson() : request.getInput());
         dto.setErrorCategory(request.getErrorCategory());
         dto.setErrorMessage(request.getErrorMessage());
         dto.setLatencyMs(request.getLatencyMs());

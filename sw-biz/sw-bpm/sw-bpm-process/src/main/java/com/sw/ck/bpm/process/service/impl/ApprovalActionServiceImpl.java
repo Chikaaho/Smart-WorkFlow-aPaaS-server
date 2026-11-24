@@ -31,6 +31,9 @@ public class ApprovalActionServiceImpl extends BaseServiceImpl<ApprovalActionRec
     public List<ApprovalActionRecord> pageByActor(long actorId, int offset, int limit) {
         return lambdaQuery()
                 .eq(ApprovalActionRecord::getActorId, actorId)
+                // E4-2：实例级审计动作（task_id=ACTION#<processInstanceId>）不是可打开的真实任务，
+                // 已办列表与计数一并排除，保证每行 taskId 都能回查到任务/历史任务。
+                .notLikeRight(ApprovalActionRecord::getTaskId, "ACTION#")
                 // 唯一次键：同 createTime 记录仍有确定性全序，分页不漏不重（A5）
                 .orderByDesc(ApprovalActionRecord::getCreateTime)
                 .orderByDesc(ApprovalActionRecord::getTaskId)
@@ -42,6 +45,7 @@ public class ApprovalActionServiceImpl extends BaseServiceImpl<ApprovalActionRec
     public long countByActor(long actorId) {
         return lambdaQuery()
                 .eq(ApprovalActionRecord::getActorId, actorId)
+                .notLikeRight(ApprovalActionRecord::getTaskId, "ACTION#")
                 .count();
     }
 

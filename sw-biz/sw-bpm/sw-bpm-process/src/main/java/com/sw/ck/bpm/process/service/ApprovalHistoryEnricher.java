@@ -173,6 +173,10 @@ public final class ApprovalHistoryEnricher {
 
     /** 意见字段展示文本：人员姓名、日期本地格式（yyyy-MM-dd HH:mm）、多选拼接。 */
     public static String opinionDisplayValue(String type, Object value, Map<Long, String> userNames) {
+        // E4-1：读取侧统一解包 DynamicData（该类型只有 @JsonValue，toString 仍是对象串）
+        if (value instanceof DynamicData data) {
+            value = data.getValue();
+        }
         if (value == null) {
             return "";
         }

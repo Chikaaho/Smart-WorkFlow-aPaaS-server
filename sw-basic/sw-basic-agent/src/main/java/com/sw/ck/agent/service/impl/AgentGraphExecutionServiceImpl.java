@@ -370,7 +370,9 @@ public class AgentGraphExecutionServiceImpl
             exec.setGraphDefId(entity.getId());
             exec.setGraphDefVersion(defVersion == null ? entity.getDefVersion() : defVersion);
             exec.setStatus(STATUS_RUNNING);
-            exec.setInput(input == null ? "" : input);
+            // E1-3：结构化入参（流程/表单/直调）也要进入执行详情；旧文本入参保持原样
+            exec.setInput(input == null || input.isBlank()
+                    ? (structured ? toJson(inputs) : "") : input);
             executionMapper.insert(exec);
         }
         final AgentGraphExecution currentExec = exec;
@@ -484,7 +486,13 @@ public class AgentGraphExecutionServiceImpl
             resp.setOutputs(resolveOutputs(graph, interpreter));
         }
         exec.setStatus(resp.isSuccess() ? STATUS_SUCCESS : STATUS_FAILED);
-        exec.setResultText(resp.getOutput());
+        // E1-3：结构化出参（END outputs）在旧 result_text 为空时进入执行详情；不改响应 output 语义
+        String outputText = resp.getOutput();
+        if ((outputText == null || outputText.isBlank())
+                && resp.getOutputs() != null && !resp.getOutputs().isEmpty()) {
+            outputText = toJson(resp.getOutputs());
+        }
+        exec.setResultText(outputText);
         String errorCategory = failure == null ? null : classifyError(failure);
         exec.setErrorCategory(errorCategory);
         // X3：分类随响应返回，生命周期受理行与执行行保持同一分类（如 HUMAN_TIMEOUT）

@@ -129,6 +129,11 @@ public final class RestrictedExpressionEvaluator {
         } else if (path.startsWith("variables.")) {
             path = path.substring(10);
         }
+        // E1-4：流程变量允许点号扁平键（如 graphExec.node_ge.status）——先按整键精确命中，
+        // 再退回逐级 Map 下钻；否则设计器提示的 Graph 执行状态变量无法在条件表达式中引用。
+        if (variables.containsKey(path)) {
+            return variables.get(path);
+        }
         for (String part : path.split("\\.")) {
             if (part.isBlank()) return null;
             if (current instanceof Map<?, ?> map) current = map.get(part);

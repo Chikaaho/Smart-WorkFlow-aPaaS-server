@@ -52,6 +52,12 @@ public interface AgentGraphExecutionLifecycleService {
     AgentGraphExecutionLifecycleVO cancel(Long executionId);
     List<AgentGraphExecutionEventVO> listEvents(Long executionId, long afterSequence);
 
+    /**
+     * E1-4：调用方（流程节点/表单动作）等待超时时，由调用方把受理行直接置为
+     * FAILED/TIMEOUT（独立事务），与节点变量的 TIMEOUT 口径统一。返回是否命中。
+     */
+    boolean markCallerTimeout(Long executionId, String message);
+
     /** 提交人工任务（G3-2）：处理人填写并选择决策后继续执行。 */
     AgentGraphExecutionLifecycleVO submitHumanTask(Long executionId, Long taskId,
                                                     Map<String, String> values,

@@ -185,6 +185,10 @@ public class AgentGraphInvokePortImpl implements AgentGraphInvokePort {
             }
             if (STATUS_FAILED.equals(status)) {
                 String category = row.getErrorCategory() == null ? "GRAPH_FAILED" : row.getErrorCategory();
+                // E1-4：图自身超时与调用方等待超时对节点统一报 TIMEOUT
+                if ("GRAPH_TIMEOUT".equals(category)) {
+                    category = "TIMEOUT";
+                }
                 return new AgentGraphInvocationResult(false, executionId, null, category,
                         row.getErrorMessage() == null ? "图执行失败" : row.getErrorMessage(),
                         row.getLatencyMs());
@@ -201,6 +205,9 @@ public class AgentGraphInvokePortImpl implements AgentGraphInvokePort {
             }
             if (System.currentTimeMillis() >= deadline) {
                 cancelQuietly(executionId);
+                // E1-4：请求层与节点层统一为 TIMEOUT（独立事务先落终态，工作线程收尾不覆盖）
+                lifecycleService.markCallerTimeout(executionId,
+                        "等待图执行超时（超过 " + waitSeconds + " 秒），已请求取消");
                 return AgentGraphInvocationResult.failure(executionId, "TIMEOUT",
                         "等待图执行超时（超过 " + waitSeconds + " 秒），已请求取消");
             }
@@ -209,6 +216,7 @@ public class AgentGraphInvokePortImpl implements AgentGraphInvokePort {
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 cancelQuietly(executionId);
+                lifecycleService.markCallerTimeout(executionId, "同步等待被中断，已请求取消");
                 return AgentGraphInvocationResult.failure(executionId, "TIMEOUT", "同步等待被中断，已请求取消");
             }
         }
