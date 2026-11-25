@@ -61,6 +61,9 @@ public enum FormErrorCode implements ErrorCode {
     SUBMIT_FAILED(1499, "form.submit_failed", "表单提交失败"),
     SUBMIT_DEFINITION_INVALID(1404, "form.submit_definition_invalid", "表单定义配置异常，请检查后重试"),
 
+    /** 1.2.0 E1-6：表单「调用 Graph」动作失败（明细由异常消息携带；目录不设条目以免覆盖字段/节点名）。 */
+    GRAPH_ACTION_FAILED(1405, "form.graph_action_failed", "Graph 动作执行失败"),
+
     // ==================== 数据查询（1500-1599） ====================
     QUERY_FORM_NOT_EXIST(1500, "form.query_form_not_exist", "表单不存在或未发布"),
     QUERY_FILTER_FIELD_UNKNOWN(1501, "form.query_filter_field_unknown", "过滤字段不在表单定义中"),

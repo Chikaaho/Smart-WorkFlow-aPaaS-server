@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.sw.ck</groupId>
+        <artifactId>sw-basic</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>sw-basic-agent-api</artifactId>
+    <packaging>jar</packaging>
+
+    <name>Smart-WorkFlow :: Basic :: Agent :: API</name>
+    <description>
+        智能体跨模块契约层：Graph 执行器调用端口（1.2.0 P67）。流程服务节点与表单服务端动作
+        经本端口按固定版本同步调用已发布 Graph，并按业务关联（来源/流程实例/节点/表单记录）
+        回查执行记录。仅承载跨模块调用契约，编译依赖限定为 JDK 类型。
+    </description>
+
+    <!-- 与 sw-basic-iot-api 同边界：契约类型只用 JDK 类型，不声明任何依赖。 -->
+</project>

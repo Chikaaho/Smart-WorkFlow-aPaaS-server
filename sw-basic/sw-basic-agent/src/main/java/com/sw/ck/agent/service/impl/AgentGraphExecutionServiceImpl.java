@@ -13,11 +13,14 @@ import com.sw.ck.agent.dto.graph.GraphElement;
 import com.sw.ck.agent.dto.graph.ProcessGraph;
 import com.sw.ck.agent.entity.AgentGraphDef;
 import com.sw.ck.agent.entity.AgentGraphExecution;
+import com.sw.ck.agent.entity.AgentGraphExecutionRequest;
 import com.sw.ck.agent.entity.AgentGraphExecutionNode;
 import com.sw.ck.agent.entity.tool.AgentToolExternalConfig;
 import com.sw.ck.agent.entity.tool.AgentToolInternalConfig;
 import com.sw.ck.agent.mapper.AgentGraphDefMapper;
 import com.sw.ck.agent.mapper.AgentGraphExecutionMapper;
+import com.sw.ck.agent.mapper.AgentGraphExecutionRequestMapper;
+import com.sw.ck.agent.orchestration.AgentExecutionEventContext;
 import com.sw.ck.agent.mapper.AgentGraphExecutionNodeMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolExternalConfigMapper;
 import com.sw.ck.agent.mapper.tool.AgentToolInternalConfigMapper;
@@ -56,6 +59,9 @@ import java.util.concurrent.TimeoutException;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -132,6 +138,10 @@ public class AgentGraphExecutionServiceImpl
     private AgentToolExternalConfigMapper externalToolMapper;
     @Autowired
     private AgentGraphExecutionMapper executionMapper;
+    @Autowired
+    private AgentGraphExecutionRequestMapper executionRequestMapper;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
     @Autowired
     private AgentGraphExecutionNodeMapper executionNodeMapper;
     @Autowired
@@ -370,8 +380,29 @@ public class AgentGraphExecutionServiceImpl
             exec.setGraphDefId(entity.getId());
             exec.setGraphDefVersion(defVersion == null ? entity.getDefVersion() : defVersion);
             exec.setStatus(STATUS_RUNNING);
-            exec.setInput(input == null ? "" : input);
+            // E1-3：结构化入参（流程/表单/直调）也要进入执行详情；旧文本入参保持原样
+            exec.setInput(input == null || input.isBlank()
+                    ? (structured ? toJson(inputs) : "") : input);
+            // T2：顶层新执行复用受理阶段预分配的 id，受理行关联在运行中即可见
+            if (depth == 0 && resumeExecutionId == null
+                    && AgentExecutionEventContext.getPlannedExecutionId() != null) {
+                exec.setId(AgentExecutionEventContext.getPlannedExecutionId());
+            }
             executionMapper.insert(exec);
+            // T2：受理行在执行行创建时立即回填关联，执行列表在 RUNNING 期间即可显示正确来源
+            Long lifecycleRequestId = AgentExecutionEventContext.getRequestId();
+            Long createdExecutionId = exec.getId();
+            if (lifecycleRequestId != null && createdExecutionId != null) {
+                // 必须独立事务立即提交：runLifecycle 外层事务要到图执行结束才提交，
+                // 否则运行期间列表仍看不到关联，来源会被归一成 DIRECT（T2）。
+                TransactionTemplate linkTx = new TransactionTemplate(transactionManager);
+                linkTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                linkTx.executeWithoutResult(status -> executionRequestMapper.update(null,
+                        Wrappers.<AgentGraphExecutionRequest>lambdaUpdate()
+                                .eq(AgentGraphExecutionRequest::getId, lifecycleRequestId)
+                                .isNull(AgentGraphExecutionRequest::getResultExecutionId)
+                                .set(AgentGraphExecutionRequest::getResultExecutionId, createdExecutionId)));
+            }
         }
         final AgentGraphExecution currentExec = exec;
 
@@ -414,10 +445,16 @@ public class AgentGraphExecutionServiceImpl
                         LoginUserHolder.set(loginUser);
                     }
                     try {
-                        // G1-4：结构化入参优先；无结构化入参走旧单文本契约（写入默认变量）
-                        Map<String, String> effectiveInputs = structured
-                                ? inputs
-                                : Map.of(AgentGraphInterpreter.DEFAULT_VARIABLE_NAME, input == null ? "" : input);
+                        // G1-4：结构化入参优先；无结构化入参走旧单文本契约（写入默认变量）。
+                        // G1-4 回归修复（1.2.0 E1 实测）：结构化入参路径下默认变量 input 也要写入
+                        // （值 = 请求 input 文本，可为空串）——「默认变量恒存在」是解释器的既有承诺，
+                        // END 等未命名变量节点的读入参依赖它；缺了会让含此类节点的旧图/新图失败。
+                        Map<String, String> effectiveInputs = new HashMap<>();
+                        if (structured && inputs != null) {
+                            effectiveInputs.putAll(inputs);
+                        }
+                        effectiveInputs.putIfAbsent(AgentGraphInterpreter.DEFAULT_VARIABLE_NAME,
+                                input == null ? "" : input);
                         return interpreter.run(graph, effectiveInputs, runOptions);
                     } finally {
                         LoginUserHolder.clear();
@@ -478,7 +515,13 @@ public class AgentGraphExecutionServiceImpl
             resp.setOutputs(resolveOutputs(graph, interpreter));
         }
         exec.setStatus(resp.isSuccess() ? STATUS_SUCCESS : STATUS_FAILED);
-        exec.setResultText(resp.getOutput());
+        // E1-3：结构化出参（END outputs）在旧 result_text 为空时进入执行详情；不改响应 output 语义
+        String outputText = resp.getOutput();
+        if ((outputText == null || outputText.isBlank())
+                && resp.getOutputs() != null && !resp.getOutputs().isEmpty()) {
+            outputText = toJson(resp.getOutputs());
+        }
+        exec.setResultText(outputText);
         String errorCategory = failure == null ? null : classifyError(failure);
         exec.setErrorCategory(errorCategory);
         // X3：分类随响应返回，生命周期受理行与执行行保持同一分类（如 HUMAN_TIMEOUT）
@@ -597,11 +640,17 @@ public class AgentGraphExecutionServiceImpl
 
     @Override
     public PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId) {
+        return pageExecutions(pageParam, graphDefId, null);
+    }
+
+    @Override
+    public PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId,
+                                                            String businessSource) {
         // 租户隔离经租户拦截器自动生效；数据范围：sw_agent_graph_execution 无 dept_id 列，
         // 等效条件在 selectExecutionPage 内实现（create_by VARCHAR 兼容比较）
         DataScopeFilter scope = DataScopeFilter.resolve(loginContextProvider, deptScopeProvider);
         IPage<AgentGraphExecution> page = executionMapper.selectExecutionPage(
-                new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), graphDefId, scope);
+                new Page<>(pageParam.getPageNum(), pageParam.getPageSize()), graphDefId, businessSource, scope);
         return PageResult.of(page.convert(this::toSummaryDTO));
     }
 
@@ -783,6 +832,7 @@ public class AgentGraphExecutionServiceImpl
         dto.setInputTokens(exec.getInputTokens());
         dto.setOutputTokens(exec.getOutputTokens());
         dto.setCreateTime(exec.getCreateTime());
+        dto.setBusinessSource(exec.getBusinessSource() == null ? "DIRECT" : exec.getBusinessSource());
         return dto;
     }
 

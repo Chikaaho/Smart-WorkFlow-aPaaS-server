@@ -48,10 +48,10 @@ class I6G7UpgradeDrillH2Test {
                 .load();
         var result = flyway.migrate();
         assertTrue(result.success, "基线迁移应成功");
-        assertEquals(32, result.migrationsExecuted,
-                "全新库应执行 32 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0/V1.1.0 + 20 个 R__）");
-        assertEquals("1.1.0", flyway.info().current().getVersion().getVersion(),
-                "终点当前版本应为最后一个 versioned 迁移（V1.1.0）");
+        assertEquals(33, result.migrationsExecuted,
+                "全新库应执行 33 条（V0.2.0 基线种子 + V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0/V1.1.0/V1.2.0 + 20 个 R__）");
+        assertEquals("1.2.0", flyway.info().current().getVersion().getVersion(),
+                "终点当前版本应为最后一个 versioned 迁移（V1.2.0）");
 
         // ---------- 2. 写入代表性数据（真实 INSERT，非 schema 构造） ----------
         try (Connection conn = DriverManager.getConnection(DB, USER, PASSWORD); Statement st = conn.createStatement()) {
@@ -140,9 +140,9 @@ class I6G7UpgradeDrillH2Test {
                 .locations(allLocations)
                 .load();
         var result = phase2.migrate();
-        assertTrue(result.success, "第二阶段迁移（含 V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0/V1.1.0）应成功");
-        assertEquals("1.1.0", phase2.info().current().getVersion().getVersion(),
-                "升级后终点应为 V1.1.0");
+        assertTrue(result.success, "第二阶段迁移（含 V0.2.2/V0.2.3/V0.2.4/V0.2.5/V0.2.9/V0.2.8/V0.4.0/V1.0.0/V1.1.0/V1.2.0）应成功");
+        assertEquals("1.2.0", phase2.info().current().getVersion().getVersion(),
+                "升级后终点应为 V1.2.0");
 
         // ---------- 4. 断言 D022-03 搬运结果 ----------
         try (Connection conn = DriverManager.getConnection(UPGRADE_DB, USER, PASSWORD);

@@ -56,6 +56,12 @@
             <artifactId>sw-biz-form-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- 1.2.0 P67：Graph 执行器服务节点经 agent-api 受控端口同步调用已发布图 -->
+        <dependency>
+            <groupId>com.sw.ck</groupId>
+            <artifactId>sw-basic-agent-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>com.sw.ck</groupId>
             <artifactId>sw-basic-notify-api</artifactId>

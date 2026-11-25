@@ -39,12 +39,16 @@ public class AgentGraphExecutionController {
     @Autowired
     private AgentGraphExecutionService agentGraphExecutionService;
 
-    /** 执行历史列表（分页，create_time 倒序；可按图定义 id 过滤；不含 input/output 大字段） */
+    /**
+     * 执行历史列表（分页，create_time 倒序；可按图定义 id 过滤；不含 input/output 大字段）。
+     * businessSource 过滤（1.2.0 E1-7）：PROCESS / FORM / DIRECT（DIRECT 含无受理行的直调执行）。
+     */
     @GetMapping
     @PreAuthorize("@ss.hasPermi('agent:model:view')")
     public R<PageResult<AgentGraphExecutionVO>> page(PageParam pageParam,
-                                                      @RequestParam(required = false) Long graphDefId) {
-        return R.ok(agentGraphExecutionService.pageExecutions(pageParam, graphDefId));
+                                                      @RequestParam(required = false) Long graphDefId,
+                                                      @RequestParam(required = false) String businessSource) {
+        return R.ok(agentGraphExecutionService.pageExecutions(pageParam, graphDefId, businessSource));
     }
 
     /** 执行详情（含 input/output 大字段；执行记录不存在/跨租户 → 404 语义） */

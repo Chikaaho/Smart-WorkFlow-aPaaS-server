@@ -31,14 +31,14 @@ import static org.junit.jupiter.api.Assertions.fail;
 class LastLimitCorpusTest {
 
     // 1.1.3/P72 新增 1 处（AgentGraphExecutionLifecycleServiceImpl#requestByChildExecutionRow
-    // 的 LIMIT 1 回链查询）：135 → 136，写法仍为可移植 LIMIT 尾部
-    private static final int EXPECTED_SITES = 136;
+    // 的 LIMIT 1 回链查询）：135 → 139，写法仍为可移植 LIMIT 尾部
+    private static final int EXPECTED_SITES = 139;
     private static final Pattern LIMIT_WITH_NUMBER = Pattern.compile("(?i)^limit\\s+\\d+$");
     private static final Pattern LIMIT_PREFIX = Pattern.compile("(?i)^limit\\s+$");
     private static final Pattern OFFSET_PREFIX = Pattern.compile("(?i)^\\s*offset\\s*$");
 
     @Test
-    @DisplayName("136 处 .last 均为 LIMIT [OFFSET] 写法，Oracle / SQL Server 改写不抛异常")
+    @DisplayName("139 处 .last 均为 LIMIT [OFFSET] 写法，Oracle / SQL Server 改写不抛异常")
     void lastSitesArePortable() throws IOException {
         Path root = serverRoot();
         List<Site> sites = new ArrayList<>();

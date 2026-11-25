@@ -26,6 +26,6 @@ class SeedBaseMigrationTest {
                 .locations("classpath:db/migration/postgresql")
                 .load()
                 .migrate();
-        assertEquals(32, result.migrationsExecuted, "PG 基准库应执行 32 条迁移");
+        assertEquals(33, result.migrationsExecuted, "PG 基准库应执行 33 条迁移");
     }
 }

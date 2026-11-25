@@ -41,6 +41,8 @@ public class AgentGraphExecutionVO {
 
     /** 本次图执行全部 LLM 节点输出 Token 汇总（未知时为 null） */
     private Long outputTokens;
+    /** 业务来源（1.2.0 E1-7：PROCESS/FORM/DIRECT；受理行为 null 时按 DIRECT） */
+    private String businessSource;
 
     /** 创建时间（执行发起时间） */
     private LocalDateTime createTime;

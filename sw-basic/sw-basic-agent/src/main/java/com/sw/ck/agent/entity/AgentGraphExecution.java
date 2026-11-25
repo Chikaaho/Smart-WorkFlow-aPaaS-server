@@ -58,6 +58,9 @@ public class AgentGraphExecution extends BaseEntity {
 
     /** 本次图执行全部 LLM 节点输入 Token 汇总（未知时不参与计算） */
     private Long inputTokens;
+    /** 业务来源（1.2.0 E1-7 行级展示列；非表列，由执行分页子查询按受理行回填） */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String businessSource;
 
     /** 本次图执行全部 LLM 节点输出 Token 汇总（未知时不参与计算） */
     private Long outputTokens;

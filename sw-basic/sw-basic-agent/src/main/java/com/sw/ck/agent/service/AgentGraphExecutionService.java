@@ -96,6 +96,9 @@ public interface AgentGraphExecutionService {
      */
     PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId);
 
+    /** 执行历史分页（1.2.0 E1-7：businessSource 过滤 PROCESS/FORM/DIRECT，DIRECT 含无受理行的直调执行）。 */
+    PageResult<AgentGraphExecutionVO> pageExecutions(PageParam pageParam, Long graphDefId, String businessSource);
+
     /**
      * 执行详情（Step12，含 input/output 大字段；不存在/跨租户 → NOT_FOUND）。
      */

@@ -98,6 +98,10 @@ public class FormSubmitService {
     @Autowired(required = false)
     private FormAppAccessGuard appAccessGuard;
 
+    /** 1.2.0 E1-6：提交前 Graph 动作（可选注入；隔离上下文/旧测试构造不注入时跳过）。 */
+    @Autowired(required = false)
+    private FormGraphActionService graphActionService;
+
     // ==================== 主入口 ====================
 
     /**
@@ -331,6 +335,12 @@ public class FormSubmitService {
         // Step 4: 校验字段（隐藏字段已被过滤，不参与必填校验）
         // ==========================================================
         formFieldValidator.validateFields(fieldDefs, effectiveData, dictFacade);
+
+        // 1.2.0 E1-6：提交前「调用 Graph」动作——服务端同步执行，失败阻止提交并提示原因；
+        // 成功出参回填进提交载荷（字段校验按用户输入执行，图输出按映射直接回填落库）。
+        if (graphActionService != null) {
+            effectiveData = graphActionService.runBeforeSubmit(formDef, effectiveData);
+        }
 
         // P62 C1 保护：INSERT 写入全部用户列，受保护模型禁止经普通提交创建（须走受控事务动作）
         if (c1PolicyService != null) {

@@ -174,6 +174,37 @@ public class BpmCommandController {
     }
 
     /**
+     * E1-4：发起人按表单记录 ID 回查 FLOW_START 子命令终态（仅受理人本人）。
+     * 用于 BLOCK 启动失败时发起页展示 failure_reason：此时 Flowable 事务回滚、
+     * 实例行不存在，实例详情入口不可达，命令记录是唯一权威来源。
+     */
+    @GetMapping("/flow-start/{recordId}")
+    public R<CommandStatusRespVO> flowStartStatus(@PathVariable String recordId) {
+        LoginUser loginUser = LoginUserHolder.get();
+        BpmCommand command = bpmCommandService.lambdaQuery()
+                .eq(BpmCommand::getTenantId, loginUser.getTenantId())
+                .eq(BpmCommand::getInitiatorId, loginUser.getUserId())
+                .eq(BpmCommand::getCommandKey, "FLOW_START:" + recordId)
+                .orderByDesc(BpmCommand::getId)
+                .last("LIMIT 1")
+                .one();
+        if (command == null) {
+            return R.ok(null);
+        }
+        CommandStatusRespVO dto = new CommandStatusRespVO();
+        dto.setCommandId(command.getId());
+        dto.setCommandType(command.getCommandType());
+        dto.setChannel(command.getChannel());
+        dto.setStatus(command.getStatus());
+        dto.setResult(command.getResult());
+        dto.setFailureReason(command.getFailureReason());
+        dto.setRetryCount(command.getRetryCount());
+        dto.setCreateTime(command.getCreateTime());
+        dto.setFinishedAt(command.getFinishedAt());
+        return R.ok(dto);
+    }
+
+    /**
      * 实际启动结果关联（B1，提示08）：DRAFT_SUBMIT 完成且携带 recordId 时，
      * 以受理时确定的唯一关联键 FLOW_START:{recordId} 解析本次业务发起的子命令
      * 只读视图（子命令与父命令同为受理发起人，越权边界不变、纯只读、不新建任何

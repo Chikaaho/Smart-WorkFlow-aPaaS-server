@@ -25,6 +25,7 @@
         <module>sw-basic-iot-api</module>
         <module>sw-basic-iot</module>
         <module>sw-basic-knowledge</module>
+        <module>sw-basic-agent-api</module>
         <module>sw-basic-agent</module>
     </modules>
 </project>

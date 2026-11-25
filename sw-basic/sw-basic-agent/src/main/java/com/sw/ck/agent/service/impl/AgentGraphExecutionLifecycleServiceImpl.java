@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sw.ck.agent.api.port.AgentGraphBusinessSources;
 import com.sw.ck.agent.vo.AgentGraphExecuteRespVO;
 import com.sw.ck.agent.vo.AgentGraphExecutionAcceptedVO;
 import com.sw.ck.agent.vo.AgentGraphExecutionEventVO;
@@ -97,12 +98,16 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @Autowired
     private AgentGraphExecutionService executionService;
     @Autowired
+    private AgentGraphSnapshotServiceImpl snapshotService;
+    @Autowired
     private LoginContextProvider loginContext;
     @Autowired
     private PlatformTransactionManager transactionManager;
     private TransactionTemplate transactionTemplate;
     /** 受理专用模板（REQUIRES_NEW：受理先独立提交再派发，跨模块触发可见性保证）。 */
     private TransactionTemplate acceptTemplate;
+    /** 调用方等待超时登记（E1-4）：工作线程收尾时按 TIMEOUT 落终态。 */
+    private final ConcurrentHashMap<Long, String> callerTimeouts = new ConcurrentHashMap<>();
     private ThreadPoolExecutor executor;
     private final ConcurrentHashMap<Long, Thread> runningThreads = new ConcurrentHashMap<>();
     @Autowired
@@ -175,6 +180,17 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
     @Override
     public AgentGraphExecutionAcceptedVO submit(Long graphDefId, String input,
                                                  Map<String, String> inputs, String idempotencyKey) {
+        // 执行页/调试 API 直调（R3：直接调用的新请求明确写 DIRECT）；IoT 桥/流程/表单
+        // 走六参入口显式携带来源
+        return submit(graphDefId, null, input, inputs, idempotencyKey,
+                new AgentGraphExecutionLifecycleService.BusinessLink(
+                        AgentGraphBusinessSources.DIRECT, null, null, null));
+    }
+
+    @Override
+    public AgentGraphExecutionAcceptedVO submit(Long graphDefId, Integer defVersion, String input,
+                                                 Map<String, String> inputs, String idempotencyKey,
+                                                 AgentGraphExecutionLifecycleService.BusinessLink link) {
         boolean hasStructuredInputs = inputs != null && !inputs.isEmpty();
         if (graphDefId == null || ((input == null || input.isBlank()) && !hasStructuredInputs)) {
             throw new BaseException(CommonErrorCode.PARAM_ERROR, "graphDefId 和入参不能为空");
@@ -194,6 +210,20 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             if (graph == null || !"PUBLISHED".equals(graph.getStatus())) {
                 throw new BaseException(CommonErrorCode.PARAM_ERROR, "图不存在或未发布");
             }
+            Integer effectiveVersion = defVersion == null ? graph.getDefVersion() : defVersion;
+            if (defVersion != null && (defVersion < 1
+                    || defVersion > (graph.getDefVersion() == null ? 0 : graph.getDefVersion()))) {
+                throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                        "图版本不存在: v" + defVersion + "（当前最新 v" + graph.getDefVersion() + "）");
+            }
+            if (defVersion != null) {
+                // 固定版本绑定（P67）：必须有可解析快照（存量无快照图按 D022-06 兼容补写）
+                String snapshotJson = snapshotService.requireSnapshot(graph, defVersion).getGraphJson();
+                if (snapshotJson == null || snapshotJson.isBlank()) {
+                    throw new BaseException(CommonErrorCode.PARAM_ERROR,
+                            "图版本快照为空，无法绑定: v" + defVersion);
+                }
+            }
             if (key != null) {
                 AgentGraphExecutionRequest existing = requestMapper.selectOne(
                         Wrappers.<AgentGraphExecutionRequest>lambdaQuery()
@@ -212,12 +242,19 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             }
             AgentGraphExecutionRequest request = new AgentGraphExecutionRequest();
             request.setGraphDefId(graphDefId);
-            request.setGraphDefVersion(graph.getDefVersion());
+            request.setGraphDefVersion(effectiveVersion);
             request.setIdempotencyKey(key);
             request.setRequestFingerprint(fingerprint);
             request.setStatus(QUEUED);
             request.setInput(input == null ? "" : input);
             request.setInputsJson(inputsJson);
+            if (link != null) {
+                // 1.2.0 E1-7：业务关联列（来源/流程实例/节点/表单记录）随受理独立提交
+                request.setBusinessSource(link.businessSource());
+                request.setProcessInstanceId(link.processInstanceId());
+                request.setNodeId(link.nodeId());
+                request.setFormRecordId(link.formRecordId());
+            }
             requestMapper.insert(request);
             return request;
         });
@@ -297,6 +334,21 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         return toDto(requireOwned(requestId));
     }
 
+    @Override
+    public boolean markCallerTimeout(Long executionId, String message) {
+        if (executionId == null) {
+            return false;
+        }
+        // 只登记超时意图并中断工作线程：不能在此跨事务 UPDATE 受理行——
+        // 工作线程事务已持有该行锁，REQUIRES_NEW 会与调用方 Flowable 事务互相等待。
+        callerTimeouts.put(executionId, message);
+        Thread thread = runningThreads.get(executionId);
+        if (thread != null) {
+            thread.interrupt();
+        }
+        return true;
+    }
+
     private void dispatch(Long executionId, LoginUser loginUser) {
         try {
             executor.execute(() -> run(executionId, loginUser));
@@ -330,6 +382,15 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         try {
             AgentExecutionEventContext.set((type, nodeId, payload) ->
                     appendEvent(request, type, nodeId, payload));
+            AgentExecutionEventContext.setRequestId(executionId);
+            // T2：执行行还没创建时先预分配 id 并写入受理行关联（当前线程无外层事务，立即提交）；
+            // 执行服务随后按该 id 插入执行行，列表在 RUNNING 期间即可按 PROCESS 筛选。
+            if (request.getResultExecutionId() == null) {
+                Long plannedExecutionId = IdWorker.getId();
+                AgentExecutionEventContext.setPlannedExecutionId(plannedExecutionId);
+                request.setResultExecutionId(plannedExecutionId);
+                requestMapper.updateById(request);
+            }
             appendEvent(request, "STATE", null, RUNNING);
             Map<String, String> structuredInputs = fromJson(request.getInputsJson());
             // G3：带暂停状态的执行从人工节点恢复；否则从头执行
@@ -353,7 +414,12 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             AgentGraphExecuteRespVO result = outcome.response;
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
             String outputsJson = result.isSuccess() ? toJson(result.getOutputs()) : null;
-            if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
+            String callerTimeout = callerTimeouts.remove(executionId);
+            if (callerTimeout != null) {
+                // E1-4：调用方已按 TIMEOUT 返回，请求层与节点层口径统一
+                finish(executionId, FAILED, "TIMEOUT", callerTimeout,
+                        result.getExecutionId(), started, null);
+            } else if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
                 finish(executionId, CANCELLED, null, "执行已取消", result.getExecutionId(), started, null);
             } else if (result.isSuccess()) {
                 finish(executionId, SUCCESS, null, null, result.getExecutionId(), started, outputsJson);
@@ -368,7 +434,10 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
             }
         } catch (Exception error) {
             AgentGraphExecutionRequest latest = requestMapper.selectById(executionId);
-            if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
+            String callerTimeout = callerTimeouts.remove(executionId);
+            if (callerTimeout != null) {
+                finish(executionId, FAILED, "TIMEOUT", callerTimeout, null, started, null);
+            } else if (Thread.currentThread().isInterrupted() || CANCEL_REQUESTED.equals(latest.getStatus())) {
                 finish(executionId, CANCELLED, null, "执行已取消", null, started, null);
             } else {
                 finish(executionId, FAILED, "EXECUTION_ERROR", "图执行失败，请查看节点记录", null, started, null);
@@ -376,6 +445,7 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         } finally {
             AgentExecutionEventContext.clear();
             runningThreads.remove(executionId);
+            callerTimeouts.remove(executionId);
             LoginUserHolder.clear();
         }
     }
@@ -898,7 +968,9 @@ public class AgentGraphExecutionLifecycleServiceImpl implements AgentGraphExecut
         dto.setGraphDefId(request.getGraphDefId());
         dto.setGraphDefVersion(request.getGraphDefVersion());
         dto.setStatus(request.getStatus());
-        dto.setInput(request.getInput());
+        // E1-3：结构化入参只落在 inputs_json 时，详情页「输入内容」回退展示该 JSON
+        dto.setInput(request.getInput() == null || request.getInput().isBlank()
+                ? request.getInputsJson() : request.getInput());
         dto.setErrorCategory(request.getErrorCategory());
         dto.setErrorMessage(request.getErrorMessage());
         dto.setLatencyMs(request.getLatencyMs());

@@ -28,6 +28,14 @@ public class AgentGraphExecutionRequest extends BaseEntity {
     private Long parentExecutionId;
     /** 人工节点暂停状态 JSON（G3：等待期间持久化恢复点） */
     private String pauseStateJson;
+    /** 业务来源（1.2.0 E1-7：PROCESS/FORM/DIRECT；存量行为 null，读侧按 DIRECT 展示） */
+    private String businessSource;
+    /** 业务关联：流程实例 id（流程服务节点触发时写入） */
+    private String processInstanceId;
+    /** 业务关联：流程节点 activityId */
+    private String nodeId;
+    /** 业务关联：表单记录 id（表单服务端动作触发时写入） */
+    private Long formRecordId;
     private Long resultExecutionId;
     private String errorCategory;
     private String errorMessage;

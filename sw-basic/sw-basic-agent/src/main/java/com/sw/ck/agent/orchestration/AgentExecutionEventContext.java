@@ -15,12 +15,32 @@ public final class AgentExecutionEventContext {
     }
 
     private static final InheritableThreadLocal<Listener> CURRENT = new InheritableThreadLocal<>();
+    /** E1-7/T2：当前执行所属受理行 id（执行行创建时立即回写关联，运行中来源即可见）。 */
+    private static final InheritableThreadLocal<Long> REQUEST_ID = new InheritableThreadLocal<>();
+    /** T2：预分配的执行行 id（受理行先写关联，执行服务按该 id 插入，运行中来源即可见）。 */
+    private static final InheritableThreadLocal<Long> PLANNED_EXECUTION_ID = new InheritableThreadLocal<>();
 
     private AgentExecutionEventContext() {
     }
 
     public static void set(Listener listener) {
         CURRENT.set(listener);
+    }
+
+    public static void setRequestId(Long requestId) {
+        REQUEST_ID.set(requestId);
+    }
+
+    public static Long getRequestId() {
+        return REQUEST_ID.get();
+    }
+
+    public static void setPlannedExecutionId(Long executionId) {
+        PLANNED_EXECUTION_ID.set(executionId);
+    }
+
+    public static Long getPlannedExecutionId() {
+        return PLANNED_EXECUTION_ID.get();
     }
 
     public static Listener get() {
@@ -41,5 +61,7 @@ public final class AgentExecutionEventContext {
 
     public static void clear() {
         CURRENT.remove();
+        REQUEST_ID.remove();
+        PLANNED_EXECUTION_ID.remove();
     }
 }
