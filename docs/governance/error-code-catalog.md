@@ -22,7 +22,7 @@
    诊断经 `eventRef` 关联的服务端日志定位。
 5. 成功响应不出现 `errorKey`/`eventRef`，保持与 0.1.0 相同的字节形状。
 
-## 2. 全量登记（206 常量 / 201 个唯一数值码 / 5 枚举）
+## 2. 全量登记（207 常量 / 202 个唯一数值码 / 5 枚举）
 
 | 命名空间 | 常量 | code | errorKey | 当前 msg（zh-CN 默认） |
 |---|---|---|---|---|
@@ -75,6 +75,7 @@
 | form | `SUBMIT_DICT_INVALID` | 1403 | `form.submit_dict_invalid` | 字典值不在允许范围内 |
 | form | `SUBMIT_FAILED` | 1499 | `form.submit_failed` | 表单提交失败 |
 | form | `SUBMIT_DEFINITION_INVALID` | 1404 | `form.submit_definition_invalid` | 表单定义配置异常 |
+| form | `GRAPH_ACTION_FAILED` | 1405 | `form.graph_action_failed` | Graph 动作执行失败 |
 | form | `QUERY_FORM_NOT_EXIST` | 1500 | `form.query_form_not_exist` | 表单不存在或未发布 |
 | form | `QUERY_FILTER_FIELD_UNKNOWN` | 1501 | `form.query_filter_field_unknown` | 过滤字段不在表单定义中 |
 | form | `QUERY_FILTER_FIELD_NOT_FILTERABLE` | 1502 | `form.query_filter_field_not_filterable` | 该字段类型不支持筛选 |

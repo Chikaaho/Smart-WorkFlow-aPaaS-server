@@ -38,6 +38,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       保证 0.1.0 旧调用方看到的成功响应完全一致。</li>
  * </ol>
  *
+ * <p>1.2.0/E1-6 新增 form.graph_action_failed（FORM 枚举 GRAPH_ACTION_FAILED 1405）：
+ * 206 → 207 常量、201 → 202 唯一数值码，docs/governance/error-code-catalog.md §2 同批登记。</p>
+ *
  * <p>放在 sw-bootstrap 是因为只有启动模块同时可见全部 5 个枚举（依赖方向铁律下，
  * sw-common 不可见业务模块枚举）。本测试不启动 Spring 上下文。</p>
  */
@@ -94,7 +97,7 @@ class ErrorCodeCatalogTest {
 
         assertTrue(malformed.isEmpty(), "errorKey 缺失或形式非法: " + malformed);
         assertTrue(duplicates.isEmpty(), "errorKey 必须全局唯一，发现重复: " + duplicates);
-        assertEquals(206, allConstants().size(),
+        assertEquals(207, allConstants().size(),
                 "ErrorCode 常量总数变化时必须同步 docs/governance/error-code-catalog.md §2");
     }
 
@@ -117,7 +120,7 @@ class ErrorCodeCatalogTest {
         assertEquals(new TreeSet<>(REGISTERED_DUPLICATE_CODES), actualDuplicates,
                 "数值码重复集合与 catalog §3 登记不一致：新错误不得复用冲突值，"
                         + "若确需重复必须同时更新目录与本测试的 REGISTERED_DUPLICATE_CODES");
-        assertEquals(201, byCode.size(),
+        assertEquals(202, byCode.size(),
                 "唯一数值码数量变化时必须同步 docs/governance/error-code-catalog.md §2");
     }
 
