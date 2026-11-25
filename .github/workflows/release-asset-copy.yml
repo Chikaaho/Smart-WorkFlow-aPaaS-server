@@ -1,0 +1,37 @@
+name: Copy release asset
+
+# 一次性运维工具：把既有 release 的制品资产复制到目标 release，并发布目标 release。
+# 用途：本机到 GitHub 的上传通道对大制品（>200MB）不稳定时，由 Actions 内网完成搬运。
+on:
+  workflow_dispatch:
+    inputs:
+      from_tag:
+        description: 源 release tag
+        required: true
+      to_tag:
+        description: 目标 release tag（必须已存在，可为 draft）
+        required: true
+      asset:
+        description: 资产文件名
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download asset from source release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ inputs.from_tag }}" -R "${{ github.repository }}" -p "${{ inputs.asset }}"
+
+      - name: Upload asset to target release and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.to_tag }}" "${{ inputs.asset }}" -R "${{ github.repository }}" --clobber
+          gh release edit "${{ inputs.to_tag }}" -R "${{ github.repository }}" --draft=false --latest
+          gh release view "${{ inputs.to_tag }}" -R "${{ github.repository }}" --json tagName,isDraft,isLatest,assets
